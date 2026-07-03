@@ -27,14 +27,24 @@ y deben ejecutarse con ese modelo.
 
 ## Fase 1 — Victorias rápidas (todas Opus 4.8, ejecutar en este orden)
 
-### F1.1 · Mapas más grandes — Opus 4.8 · riesgo bajo
+### F1.1 · Mapas más grandes + minimapa — Opus 4.8 · riesgo bajo-medio
 
 - 2 mapas nuevos en `packages/shared/src/balance/maps.ts`:
-  - **La Campaña** 32×20, 3-4 rutas, tema grass o volcano. El mapa "épico" para salas llenas.
+  - **El Concilio** 32×20, estilo **Green TD**: 4-6 entradas repartidas por los bordes,
+    cada una serpentea por "su territorio" y TODAS convergen en el **castillo central**
+    (salida única compartida, como La Encrucijada/Delta pero radial). Cada jugador
+    defiende su flanco; las vidas se pierden juntas en el centro. Tema grass.
   - **La Torre** 14×24 (¡vertical!) — pensado para celular en modo retrato.
+- **Minimapa** (cliente, `renderer.ts`): esquina superior derecha, visible cuando
+  `zoom > 1.15` o el mapa supera ~24 celdas de ancho. Render barato: `drawImage` del
+  `mapLayer` ya cacheado a escala mini + puntos de enemigos (rojo/élite morado) +
+  puntos de torres + **rectángulo del viewport** estilo WC3. Tap/arrastre en el
+  minimapa = recentrar cámara (usar el API `panBy`/zoom existente). Toggleable,
+  compacto en móvil (~110 px), oculto en pantallas muy bajas.
 - La validación estructural de `simtest` ya cubre mapas nuevos automáticamente.
-- Aceptación: simtest valida y los bots juegan en ambos; miniaturas se ven bien en el
-  selector (las genera `drawMiniMap` solo); jugable con zoom/paneo en móvil.
+- Aceptación: simtest valida y los bots juegan en ambos mapas; miniaturas del selector
+  bien (las genera `drawMiniMap` solo); en móvil, navegar El Concilio con zoom +
+  minimapa es cómodo (tap en el minimapa lleva la cámara ahí).
 
 ### F1.2 · Estandarte: auras de fuerza y velocidad, mejorables — Opus 4.8 · riesgo medio
 

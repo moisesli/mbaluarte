@@ -18,6 +18,9 @@ import {
   ELITE_EXTRA_LIVES,
   ELITE_HP_MULT,
   ELITE_RADIUS_MULT,
+  HORDE_CAP,
+  HORDE_LAP_HP_FLOOR,
+  HORDE_LAP_HP_LOSS,
   INTERLUDE_SEC,
   TICK_RATE,
   WAVE_BONUS_BASE,
@@ -85,6 +88,7 @@ function spawnEnemy(
     auraRadius: 0,
     auraHps: 0,
     deathSpawn: 0,
+    laps: 0,
   };
   state.enemies.push(enemy);
   return enemy;
@@ -574,20 +578,51 @@ function stepEnemies(state: GameState, ctx: SimContext, events: GameEvent[]): vo
       }
     }
 
-    // llegó al final: fuga (los élites cuestan vidas extra)
+    // llegó al final del camino
     if (enemy.wpIdx >= wps.length) {
-      const cost = def.livesCost + (enemy.elite ? ELITE_EXTRA_LIVES : 0);
-      state.lives = Math.max(0, state.lives - cost);
-      enemy.hp = 0; // sale del juego sin bounty
-      events.push({ e: 'leak', lives: state.lives, type: enemy.type });
-      if (state.lives <= 0 && !state.over) {
-        state.over = { victory: false };
-        events.push({ e: 'gameover', victory: false });
+      if (state.mode === 'horde') {
+        // BUCLE: no escapa ni quita vidas — se teletransporta al inicio de su
+        // camino conservando su hp actual, pero gana un stack de CANSANCIO.
+        const start = ctx.waypoints[enemy.pathIdx][0];
+        enemy.x = start.x;
+        enemy.y = start.y;
+        enemy.wpIdx = 1;
+        enemy.travelled = 0;
+        // cansancio: −10% del maxHp BASE por vuelta (suelo 10%). Reconstruimos el
+        // maxHp base a partir de la retención de la vuelta actual y aplicamos la
+        // de la siguiente, clampeando la hp. Determinista (solo aritmética).
+        const prevRetention = Math.max(HORDE_LAP_HP_FLOOR, 1 - enemy.laps * HORDE_LAP_HP_LOSS);
+        const baseMaxHp = enemy.maxHp / prevRetention;
+        enemy.laps += 1;
+        const nextRetention = Math.max(HORDE_LAP_HP_FLOOR, 1 - enemy.laps * HORDE_LAP_HP_LOSS);
+        enemy.maxHp = Math.max(1, Math.round(baseMaxHp * nextRetention));
+        if (enemy.hp > enemy.maxHp) enemy.hp = enemy.maxHp;
+      } else {
+        // fuga clásica (los élites cuestan vidas extra)
+        const cost = def.livesCost + (enemy.elite ? ELITE_EXTRA_LIVES : 0);
+        state.lives = Math.max(0, state.lives - cost);
+        enemy.hp = 0; // sale del juego sin bounty
+        events.push({ e: 'leak', lives: state.lives, type: enemy.type });
+        if (state.lives <= 0 && !state.over) {
+          state.over = { victory: false };
+          events.push({ e: 'gameover', victory: false });
+        }
       }
     }
   }
 
   state.enemies = state.enemies.filter((e) => e.hp > 0);
+
+  // DERROTA POR SATURACIÓN (horda): si hay demasiados enemigos vivos a la vez,
+  // la fortaleza cae. Se evalúa tras el filtrado; el spawn de esta oleada ya
+  // ocurrió en stepWaves (antes de stepEnemies), así que el conteo es fiel.
+  if (state.mode === 'horde' && !state.over) {
+    const cap = HORDE_CAP[state.difficulty] ?? HORDE_CAP.normal;
+    if (state.enemies.length >= cap) {
+      state.over = { victory: false };
+      events.push({ e: 'gameover', victory: false });
+    }
+  }
   void players;
 }
 
@@ -629,8 +664,12 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
     }
   }
 
-  // fin de oleada: cola vacía y sin enemigos vivos
-  if (state.spawnQueue.length === 0 && state.enemies.length === 0) {
+  // fin de oleada: cola de spawn vacía. En classic/endless exigimos además que no
+  // queden enemigos vivos; en HORDA no, porque la horda da vueltas indefinidamente
+  // y nunca se vaciaría el mapa — la siguiente oleada arranca al vaciarse la cola.
+  const waveCleared =
+    state.spawnQueue.length === 0 && (state.mode === 'horde' || state.enemies.length === 0);
+  if (waveCleared) {
     const bonus = WAVE_BONUS_BASE + state.wave * WAVE_BONUS_PER_WAVE;
     for (const p of state.players) {
       p.gold += bonus;

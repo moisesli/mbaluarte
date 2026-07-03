@@ -8,6 +8,17 @@ export const CLASSIC_WAVES = 20;
 export const GAME_SPEEDS = [1, 2, 3] as const;
 
 export const START_LIVES = 20;
+
+// ---------- modo horda ----------
+// Los enemigos no se escapan: dan vueltas en bucle. Se pierde por SATURACIÓN
+// (demasiados vivos a la vez). Cap de enemigos vivos por dificultad; al alcanzarlo
+// la partida termina en derrota.
+export const HORDE_CAP: Record<string, number> = { easy: 45, normal: 38, hard: 32 };
+// Cansancio (anti-esponja): cada vuelta completada baja el maxHp efectivo del
+// enemigo un −10% de su maxHp BASE (el que tenía al nacer, antes de dar vueltas),
+// acumulable, con un suelo del 10% para que nunca llegue a 0 de golpe.
+export const HORDE_LAP_HP_LOSS = 0.1;
+export const HORDE_LAP_HP_FLOOR = 0.1;
 export const SELL_REFUND = 0.7;
 export const CALL_WAVE_GOLD_PER_SEC = 2; // oro por segundo restante al llamar la oleada antes
 export const FIRST_INTERLUDE_SEC = 25;
@@ -59,5 +70,5 @@ export const PLAYER_COLORS = [
   '#e57373', // rojo
 ];
 
-export const BALANCE_VERSION = 2;
+export const BALANCE_VERSION = 3;
 export const PROTOCOL_VERSION = 1;

@@ -14,6 +14,7 @@ import {
   stepGame,
   towerLevel,
   BALANCE_VERSION,
+  HORDE_CAP,
   MAPS,
   TICK_RATE,
   TOWERS,
@@ -288,7 +289,7 @@ console.log('— Regresión: las crías de spawnOnDeath sobreviven a un golpe de
     id: 1000, type: 'slime', x: 5.5, y: 2.5, hp: ENEMIES.slime.hp, maxHp: ENEMIES.slime.hp,
     pathIdx: 0, wpIdx: 1, travelled: 5, slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0,
     poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
-    dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0,
+    dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
   };
   st.enemies.push(slime);
   const cannon: TowerState = {
@@ -328,7 +329,7 @@ console.log('— Estandarte: refuerza el daño de las torres cercanas (sin apila
       id: 1000, type: 'brute', x: 5.5, y: 2.5, hp: 100000, maxHp: 100000,
       pathIdx: 0, wpIdx: 1, travelled: 0, slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0,
       poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
-      dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0,
+      dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
     };
     st.enemies.push(enemy);
     const archer: TowerState = {
@@ -470,6 +471,93 @@ console.log('— Repetición (replay): reconstruye el estado final EXACTO —');
 
   const bytes = JSON.stringify(replay).length;
   console.log(`   replay: ${log.length} entradas, ${bytes} bytes (~${(bytes / 1024).toFixed(1)} KB), ${replay.finalTick} ticks`);
+}
+
+console.log('— Modo Horda: bucle, cansancio y derrota por saturación —');
+
+interface HordeResult {
+  state: GameState;
+  maxAlive: number;
+  maxLaps: number;
+  loopedAny: boolean; // algún enemigo reinició su recorrido (travelled volvió a 0 con wpIdx=1)
+  tiredAny: boolean; // algún enemigo con laps>0 vio su maxHp reducido bajo su base
+  maxWave: number;
+  ticks: number;
+}
+
+// Corre una partida de horda con 2 bots defendiendo. Difícil (cap 32) para que la
+// saturación llegue dentro del presupuesto de ticks. Devuelve diagnósticos del
+// bucle y el cansancio. Tope de ticks para probar que NO cuelga infinito.
+function runHorde(seed: number, difficulty: 'easy' | 'normal' | 'hard', maxTicks: number): HordeResult {
+  const map = getMap(MAP_ID);
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const state = createGame(MAP_ID, 'horde', difficulty, seed, [
+    { id: 'p1', name: 'Ana', color: '#4fc3f7' },
+    { id: 'p2', name: 'Beto', color: '#f06292' },
+  ]);
+  const candidates = buildCellCandidates(MAP_ID);
+  const counters = new Map<string, number>();
+  // maxHp base observado la primera vez que vemos a cada enemigo (aún con laps=0)
+  const baseMaxHp = new Map<number, number>();
+  const prevTravelled = new Map<number, number>();
+  let maxAlive = 0;
+  let maxLaps = 0;
+  let loopedAny = false;
+  let tiredAny = false;
+  let maxWave = 0;
+  let i = 0;
+  for (; i < maxTicks && !state.over; i++) {
+    stepGame(state, simCtx, botCommands(state, candidates, counters));
+    maxWave = Math.max(maxWave, state.wave);
+    maxAlive = Math.max(maxAlive, state.enemies.length);
+    for (const e of state.enemies) {
+      if (!baseMaxHp.has(e.id) && e.laps === 0) baseMaxHp.set(e.id, e.maxHp);
+      // BUCLE: el recorrido acumulado (travelled) baja de un tick al siguiente = se
+      // teletransportó al inicio (nunca decrece con el movimiento normal)
+      const prev = prevTravelled.get(e.id);
+      if (prev !== undefined && e.travelled < prev - 1e-6) loopedAny = true;
+      prevTravelled.set(e.id, e.travelled);
+      if (e.laps > 0) {
+        maxLaps = Math.max(maxLaps, e.laps);
+        // CANSANCIO: su maxHp actual quedó por debajo del base que tenía sin vueltas
+        const base = baseMaxHp.get(e.id);
+        if (base !== undefined && e.maxHp < base) tiredAny = true;
+      }
+    }
+  }
+  return { state, maxAlive, maxLaps, loopedAny, tiredAny, maxWave, ticks: i };
+}
+
+{
+  const HORDE_SEED = 20260703;
+  const HORDE_MAX_TICKS = TICK_RATE * 60 * 12; // 12 min de tope: si no termina antes, algo cuelga
+  const h = runHorde(HORDE_SEED, 'hard', HORDE_MAX_TICKS);
+  const cap = HORDE_CAP.hard;
+  console.log(
+    `   horda(hard): terminó en ${h.ticks} ticks (${(h.ticks / TICK_RATE).toFixed(0)}s) · ` +
+      `oleada máx ${h.maxWave} · vivos máx ${h.maxAlive}/${cap} · vueltas máx ${h.maxLaps} · ` +
+      `over=${JSON.stringify(h.state.over)}`,
+  );
+
+  assert(h.maxWave >= 8, `la horda aguanta varias oleadas antes de saturar (llegó a la ${h.maxWave})`);
+  assert(h.loopedAny, 'los enemigos hacen BUCLE (reinician su camino en vez de escapar)');
+  assert(h.maxLaps > 0, `hay enemigos que completan vueltas (máx ${h.maxLaps})`);
+  assert(h.tiredAny, 'el CANSANCIO reduce el maxHp de los que dan vueltas (anti-esponja)');
+  assert(
+    h.state.over !== null && h.state.over.victory === false,
+    `la partida TERMINA por saturación en derrota (over=${JSON.stringify(h.state.over)})`,
+  );
+  assert(
+    h.state.enemies.length >= cap,
+    `la derrota ocurrió al alcanzar el cap de saturación (${h.state.enemies.length} >= ${cap})`,
+  );
+  assert(h.ticks < HORDE_MAX_TICKS, `NO cuelga infinito: terminó en ${h.ticks} < ${HORDE_MAX_TICKS} ticks`);
+
+  // determinismo: misma semilla → mismo estado final
+  const h2 = runHorde(HORDE_SEED, 'hard', HORDE_MAX_TICKS);
+  const hashH1 = JSON.stringify([h.state.tick, h.state.wave, h.state.rng, h.state.nextId, h.state.enemies.length, h.state.players.map((p) => p.gold)]);
+  const hashH2 = JSON.stringify([h2.state.tick, h2.state.wave, h2.state.rng, h2.state.nextId, h2.state.enemies.length, h2.state.players.map((p) => p.gold)]);
+  assert(hashH1 === hashH2, `la horda es determinista (misma semilla → mismo estado final, tick ${h.state.tick})`);
 }
 
 console.log('— Determinismo: misma semilla + mismos comandos → mismo estado —');

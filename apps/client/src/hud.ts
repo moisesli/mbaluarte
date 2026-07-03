@@ -3,6 +3,7 @@ import {
   CALL_WAVE_GOLD_PER_SEC,
   ENEMIES,
   ENEMY_ORDER,
+  HORDE_CAP,
   SELL_REFUND,
   TARGET_MODES,
   TOWERS,
@@ -342,22 +343,38 @@ export function onTick(snap: Snap): void {
   const gs = store.game;
   if (!gs) return;
 
+  const horde = gs.init.mode === 'horde';
   const lives = $('hud-lives');
-  lives.textContent = `❤️ ${snap.lives}`;
-  lives.classList.toggle('danger', snap.lives <= 5);
+  const aliveChip = $('hud-alive');
+
+  if (horde) {
+    // En horda no hay vidas: se pierde por SATURACIÓN. El chip 👾 pasa a ser la
+    // "vida" — enemigos vivos / cap. Amarillo desde 70%, rojo desde 90% (pulso).
+    lives.hidden = true;
+    const cap = HORDE_CAP[gs.init.difficulty] ?? HORDE_CAP.normal;
+    const alive = snap.enemies.length;
+    aliveChip.hidden = false;
+    aliveChip.textContent = `👾 ${alive}/${cap}`;
+    const frac = alive / cap;
+    aliveChip.classList.toggle('warn', frac >= 0.7 && frac < 0.9);
+    aliveChip.classList.toggle('danger', frac >= 0.9);
+  } else {
+    lives.hidden = false;
+    lives.textContent = `❤️ ${snap.lives}`;
+    lives.classList.toggle('danger', snap.lives <= 5);
+    aliveChip.classList.remove('warn', 'danger');
+    // enemigos vivos durante la oleada
+    if (snap.active && snap.enemies.length > 0) {
+      aliveChip.hidden = false;
+      aliveChip.textContent = `👾 ${snap.enemies.length}`;
+    } else {
+      aliveChip.hidden = true;
+    }
+  }
 
   $('hud-wave').textContent =
     snap.totalWaves > 0 ? `Oleada ${snap.wave}/${snap.totalWaves}` : `Oleada ${snap.wave} ∞`;
   $('hud-gold').textContent = `🪙 ${myGold(gs)}`;
-
-  // enemigos vivos durante la oleada
-  const aliveChip = $('hud-alive');
-  if (snap.active && snap.enemies.length > 0) {
-    aliveChip.hidden = false;
-    aliveChip.textContent = `👾 ${snap.enemies.length}`;
-  } else {
-    aliveChip.hidden = true;
-  }
 
   // botón de llamar oleada, con el bonus de oro que ganarías ahora mismo
   // (los espectadores no llaman oleadas: nunca lo ven)

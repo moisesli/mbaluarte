@@ -40,6 +40,7 @@ export function createGame(
     lives: START_LIVES,
     maxLives: START_LIVES,
     wave: 0,
+    // classic tiene fin por número de oleadas; endless y horde son infinitos (0)
     totalWaves: mode === 'classic' ? CLASSIC_WAVES : 0,
     waveState: 'interlude',
     interludeLeft: FIRST_INTERLUDE_SEC * TICK_RATE,

@@ -1,5 +1,5 @@
 export type Difficulty = 'easy' | 'normal' | 'hard';
-export type GameMode = 'classic' | 'endless';
+export type GameMode = 'classic' | 'endless' | 'horde';
 export type TargetMode = 'first' | 'last' | 'strong' | 'weak' | 'near';
 
 export type TowerTypeId =
@@ -152,6 +152,7 @@ export interface EnemyState {
   auraRadius: number; // aura de curación a aliados (vampírico)
   auraHps: number;
   deathSpawn: number; // crías que suelta al morir (explosivo)
+  laps: number; // modo horda: vueltas completadas (cansancio: −10% maxHp base por vuelta)
 }
 
 export interface TowerState {

@@ -300,6 +300,8 @@ html, body {
 }
 .stat.gold { color: var(--accent-hi); }
 .stat.danger { color: var(--danger); border-color: rgba(239, 83, 80, 0.5); animation: pulse 0.8s infinite; }
+/* horda: aviso ámbar cuando la saturación pasa del 70% (rojo con .danger al 90%) */
+.stat.warn { color: var(--accent-hi); border-color: rgba(255, 213, 79, 0.5); }
 @keyframes pulse { 50% { opacity: 0.55; } }
 
 #hud-players {

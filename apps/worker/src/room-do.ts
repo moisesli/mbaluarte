@@ -416,13 +416,15 @@ export class RoomDO {
         towersBuilt: p.stats.towersBuilt,
       })),
     };
-    if (g.mode === 'endless') {
+    // récords: endless (Infinito) y horde (Horda) puntúan por oleada alcanzada
+    if (g.mode === 'endless' || g.mode === 'horde') {
       void saveScore(this.env, {
         names: g.players.map((p) => p.name),
         wave: g.wave,
         mapId: g.mapId,
         difficulty: g.difficulty,
         date: new Date().toISOString(),
+        mode: g.mode,
       });
     }
     setTimeout(() => {

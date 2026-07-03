@@ -355,13 +355,15 @@ export class Room {
         towersBuilt: p.stats.towersBuilt,
       })),
     };
-    if (g.mode === 'endless') {
+    // récords: endless (Infinito) y horde (Horda) puntúan por oleada alcanzada
+    if (g.mode === 'endless' || g.mode === 'horde') {
       saveHighscore({
         names: g.players.map((p) => p.name),
         wave: g.wave,
         mapId: g.mapId,
         difficulty: g.difficulty,
         date: new Date().toISOString(),
+        mode: g.mode,
       });
     }
     // dejar correr unos ticks más para que el cliente vea la explosión final

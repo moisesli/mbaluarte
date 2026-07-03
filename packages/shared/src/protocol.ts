@@ -35,7 +35,7 @@ export interface LobbyPlayer {
 // haría throw en getMap() al iniciar la partida y tumbaría el proceso/DO entero.
 export function sanitizeSettings(s: Partial<RoomSettings> | undefined): RoomSettings {
   const mapId = s?.mapId && MAPS.some((m) => m.id === s.mapId) ? s.mapId : MAPS[0].id;
-  const mode = s?.mode === 'endless' ? 'endless' : 'classic';
+  const mode: GameMode = s?.mode === 'endless' ? 'endless' : s?.mode === 'horde' ? 'horde' : 'classic';
   const difficulty = s?.difficulty === 'easy' || s?.difficulty === 'hard' ? s.difficulty : 'normal';
   return { mapId, mode, difficulty };
 }
@@ -174,6 +174,9 @@ export interface HighscoreEntry {
   mapId: string;
   difficulty: Difficulty;
   date: string;
+  // modo con récord. Opcional para compatibilidad con récords antiguos (sin campo),
+  // que se asumen 'endless' (el único modo que guardaba récords antes de F2.2).
+  mode?: 'endless' | 'horde';
 }
 
 // ---------- Mensajes cliente -> servidor ----------

@@ -2,7 +2,7 @@ import './style.css';
 import { ENEMIES, ENEMY_ORDER, GAME_SPEEDS, TOWERS, type GameEvent } from '@td/shared';
 import { net, wsPathJoin } from './net.js';
 import { pushFrame, saveName, startGameStore, store } from './store.js';
-import { addPing, addShake, initRenderer, resetRenderer, towerFired } from './renderer.js';
+import { addPing, addShake, initRenderer, isMinimapOn, resetRenderer, toggleMinimap, towerFired } from './renderer.js';
 import { initInput } from './input.js';
 import { buildTowerBar, hidePanel, onTick, toast, addChat, refreshPanel, syncSpeedButton } from './hud.js';
 import { hideEnd, homeError, initHome, initLobby, renderLobby, showEnd, switchScreen } from './screens.js';
@@ -286,6 +286,15 @@ function wireHudButtons(): void {
   $('btn-ping').addEventListener('click', () => {
     store.pingArmed = !store.pingArmed;
     $('btn-ping').classList.toggle('armed', store.pingArmed);
+  });
+
+  // minimapa: mostrar/ocultar (persistido en localStorage vía el renderer)
+  const miniBtn = $('btn-minimap');
+  const syncMini = () => miniBtn.classList.toggle('off', !isMinimapOn());
+  syncMini();
+  miniBtn.addEventListener('click', () => {
+    toggleMinimap();
+    syncMini();
   });
 
   const muteBtn = $('btn-mute');

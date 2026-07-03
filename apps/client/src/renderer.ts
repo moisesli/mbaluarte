@@ -127,6 +127,21 @@ const MAX_ZOOM = 3.2;
 let mapLayer: HTMLCanvasElement | null = null;
 let mapLayerKey = '';
 let mapLayerScale = 40; // px por celda dentro de la capa estática
+
+// ---------- minimapa ----------
+// recuadro en coordenadas de PANTALLA calculado en cada frame (o null si oculto)
+let miniRect: { x: number; y: number; w: number; h: number; s: number } | null = null;
+let miniOn = localStorage.getItem('td_minimap') !== '0'; // visible por defecto
+
+export function isMinimapOn(): boolean {
+  return miniOn;
+}
+
+export function toggleMinimap(): boolean {
+  miniOn = !miniOn;
+  localStorage.setItem('td_minimap', miniOn ? '1' : '0');
+  return miniOn;
+}
 let placeCtx: PlacementContext | null = null;
 let placeCtxMap = '';
 let lastTime = performance.now();
@@ -188,6 +203,19 @@ export function resetCamera(): void {
   zoom = 1;
   panX = 0;
   panY = 0;
+}
+
+// Centra la cámara sobre un punto del mundo (celdas). Ajusta panX/panY; el
+// siguiente computeView() los recorta a los límites del mapa. Usado por el
+// minimapa. No cambia el zoom.
+export function centerOn(worldX: number, worldY: number): void {
+  const gs = store.game;
+  if (!gs) return;
+  const s = baseScale * zoom;
+  const mapW = gs.map.gridW * s;
+  const mapH = gs.map.gridH * s;
+  panX = mapW / 2 - worldX * s;
+  panY = mapH / 2 - worldY * s;
 }
 
 // limpieza total al empezar una partida nueva: cámara, sacudida, partículas
@@ -2221,6 +2249,104 @@ function syncPlaceBubble(gs: GameStore): void {
   }
 }
 
+// ---------- minimapa in-game ----------
+
+// ¿debe mostrarse el minimapa ahora? oculto en pantallas muy bajas.
+function minimapVisible(map: MapDef): boolean {
+  if (!miniOn) return false;
+  if (canvas.clientHeight < 500) return false;
+  return zoom > 1.15 || map.gridW > 24 || map.gridH > 16;
+}
+
+// Dibuja el minimapa como overlay en la esquina superior derecha, en
+// coordenadas de pantalla (NO afectado por cámara/zoom). Barato: un drawImage
+// del mapLayer ya cacheado + puntos + rectángulo del viewport. Actualiza
+// miniRect para el hit-test de input.ts.
+function drawMiniMap(gs: GameStore, now: number): void {
+  miniRect = null;
+  const map = gs.map;
+  if (!minimapVisible(map)) return;
+
+  const w = canvas.clientWidth;
+  const compact = w < 560;
+  const boxMax = compact ? 100 : 140;
+  const s = boxMax / Math.max(map.gridW, map.gridH); // px por celda en el mini
+  const mw = map.gridW * s;
+  const mh = map.gridH * s;
+  const margin = 10;
+  const bx = w - mw - margin;
+  const by = PAD_TOP + 6;
+  miniRect = { x: bx, y: by, w: mw, h: mh, s };
+
+  g.save();
+  // marco + fondo sutil
+  g.globalAlpha = 0.92;
+  g.fillStyle = 'rgba(10,12,20,0.9)';
+  roundRect(g, bx - 4, by - 4, mw + 8, mh + 8, 6);
+  g.fill();
+
+  // terreno cacheado escalado al recuadro
+  if (mapLayer) {
+    g.save();
+    roundRect(g, bx, by, mw, mh, 3);
+    g.clip();
+    g.drawImage(mapLayer, bx, by, mw, mh);
+    g.restore();
+  }
+
+  const snap = gs.latest;
+  if (snap) {
+    // torres: punto del color del dueño
+    for (const t of snap.towers) {
+      const owner = gs.init.players[t[5]];
+      g.fillStyle = owner?.color ?? '#ccc';
+      g.beginPath();
+      g.arc(bx + (t[2] + 0.5) * s, by + (t[3] + 0.5) * s, Math.max(1.2, s * 0.35), 0, Math.PI * 2);
+      g.fill();
+    }
+    // enemigos: rojo normal, morado si élite (flag 8)
+    for (const e of snap.enemies) {
+      const elite = (e[5] & 8) !== 0;
+      g.fillStyle = elite ? '#c77dff' : '#ff5252';
+      g.beginPath();
+      g.arc(bx + e[2] * s, by + e[3] * s, Math.max(1.2, s * (elite ? 0.42 : 0.32)), 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+
+  // rectángulo del viewport: qué parte del mapa se ve en pantalla ahora.
+  // world visible = [(0-ox)/scale .. (W-ox)/scale] × [(0-oy)/scale .. (H-oy)/scale]
+  const vx0 = (0 - view.ox) / view.scale;
+  const vy0 = (0 - view.oy) / view.scale;
+  const vx1 = (w - view.ox) / view.scale;
+  const vy1 = (canvas.clientHeight - view.oy) / view.scale;
+  const rx0 = bx + Math.max(0, vx0) * s;
+  const ry0 = by + Math.max(0, vy0) * s;
+  const rx1 = bx + Math.min(map.gridW, vx1) * s;
+  const ry1 = by + Math.min(map.gridH, vy1) * s;
+  g.globalAlpha = 1;
+  g.strokeStyle = 'rgba(255,255,255,0.95)';
+  g.lineWidth = 1.5;
+  g.strokeRect(rx0 + 0.5, ry0 + 0.5, Math.max(2, rx1 - rx0), Math.max(2, ry1 - ry0));
+
+  // marco exterior
+  g.strokeStyle = 'rgba(255,255,255,0.28)';
+  g.lineWidth = 1;
+  roundRect(g, bx - 4, by - 4, mw + 8, mh + 8, 6);
+  g.stroke();
+  g.restore();
+  void now;
+}
+
+// Hit-test para input.ts: si (px,py) en coords de pantalla cae dentro del
+// minimapa, devuelve la coordenada de MUNDO (celdas) correspondiente; si no, null.
+export function minimapHit(px: number, py: number): { x: number; y: number } | null {
+  const r = miniRect;
+  if (!r) return null;
+  if (px < r.x || py < r.y || px > r.x + r.w || py > r.y + r.h) return null;
+  return { x: (px - r.x) / r.s, y: (py - r.y) / r.s };
+}
+
 // ---------- viñeta ----------
 
 let vignette: CanvasGradient | null = null;
@@ -2295,5 +2421,6 @@ function loop(): void {
   g.restore();
 
   drawVignette();
+  drawMiniMap(gs, now);
   syncPlaceBubble(gs);
 }

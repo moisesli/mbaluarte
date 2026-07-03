@@ -1,7 +1,7 @@
 import { placementError, TOWER_ORDER, TOWERS, type PlacementError, type TowerTypeId } from '@td/shared';
 import { net } from './net.js';
 import { store } from './store.js';
-import { getPlacementCtx, getView, panBy, resetCamera, zoomAt } from './renderer.js';
+import { centerOn, getPlacementCtx, getView, minimapHit, panBy, resetCamera, zoomAt } from './renderer.js';
 import { hidePanel, showPanel, syncTowerBar, toast } from './hud.js';
 import { unlockAudio } from './audio.js';
 
@@ -138,7 +138,19 @@ export function initInput(canvas: HTMLCanvasElement): void {
 
   interface Ptr { x: number; y: number; startX: number; startY: number; moved: boolean }
   const pointers = new Map<number, Ptr>();
+  // id del puntero que está manipulando el minimapa (arrastre = recentrar).
+  // Ese gesto se consume: ni coloca torres, ni pinea, ni panea el mapa grande.
+  let miniPtr = -1;
   let pinchDist = 0;
+
+  // recentra la cámara a partir de un punto de pantalla dentro del minimapa
+  const recenterFromMini = (clientX: number, clientY: number): boolean => {
+    const rect = canvas.getBoundingClientRect();
+    const hit = minimapHit(clientX - rect.left, clientY - rect.top);
+    if (!hit) return false;
+    centerOn(hit.x, hit.y);
+    return true;
+  };
   let lastTapTime = 0;
   let lastTapX = 0;
   let lastTapY = 0;
@@ -168,6 +180,14 @@ export function initInput(canvas: HTMLCanvasElement): void {
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {}
+    // el minimapa manda: si el toque cae dentro, recentra y consume el gesto
+    // (antes de cualquier lógica de tap/ping/paneo/colocación).
+    if (pointers.size === 0 && recenterFromMini(e.clientX, e.clientY)) {
+      miniPtr = e.pointerId;
+      cancelLongPress();
+      if (navigator.vibrate) navigator.vibrate(8);
+      return;
+    }
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: false });
     if (pointers.size >= 2) {
       recalcPinch();
@@ -200,6 +220,13 @@ export function initInput(canvas: HTMLCanvasElement): void {
 
   canvas.addEventListener('pointermove', (e) => {
     const gs = store.game;
+
+    // arrastre dentro del minimapa: seguir recentrando la cámara
+    if (e.pointerId === miniPtr) {
+      recenterFromMini(e.clientX, e.clientY);
+      return;
+    }
+
     const p = pointers.get(e.pointerId);
 
     if (!p) {
@@ -239,6 +266,11 @@ export function initInput(canvas: HTMLCanvasElement): void {
   });
 
   const endPointer = (e: PointerEvent) => {
+    // fin de un gesto sobre el minimapa: ya se consumió, no generar tap/ping
+    if (e.pointerId === miniPtr) {
+      miniPtr = -1;
+      return;
+    }
     const p = pointers.get(e.pointerId);
     pointers.delete(e.pointerId);
     cancelLongPress();
@@ -269,6 +301,7 @@ export function initInput(canvas: HTMLCanvasElement): void {
   };
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', (e) => {
+    if (e.pointerId === miniPtr) miniPtr = -1;
     pointers.delete(e.pointerId);
     cancelLongPress();
     recalcPinch();

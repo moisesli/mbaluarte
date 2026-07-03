@@ -541,6 +541,11 @@ html, body {
   animation: pulse 0.8s infinite;
 }
 
+/* botón de minimapa desactivado */
+#btn-minimap.off {
+  opacity: 0.4;
+}
+
 #hud-chat {
   position: absolute;
   left: 12px;

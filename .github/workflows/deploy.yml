@@ -1,0 +1,72 @@
+name: Sync upstream & deploy to Cloudflare
+
+# Se ejecuta:
+#  - en cada push a main (tus propios cambios)
+#  - cada 6 horas: sincroniza el repo padre (EijunnN/fortaleza-td) y redespliega
+#  - manualmente desde la pestaña Actions (workflow_dispatch)
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+# Evita despliegues solapados (el cron y un push simultáneo).
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Trae los commits nuevos del repo padre y los mezcla en este fork.
+      # Nuestros únicos cambios propios son .github/ y wrangler.jsonc (aditivos),
+      # así que la mezcla es limpia salvo que el upstream toque esas mismas líneas.
+      - name: Sync from upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/EijunnN/fortaleza-td.git || true
+          git fetch upstream
+          BEFORE=$(git rev-parse HEAD)
+          git merge --no-edit upstream/main
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" != "$AFTER" ]; then
+            git push origin main
+            echo "::notice::Sincronizados commits nuevos del upstream."
+          else
+            echo "::notice::Ya estaba al día con el upstream."
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build client
+        run: pnpm --filter @td/client build
+
+      - name: Deploy Worker to Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm --filter @td/worker exec wrangler deploy

@@ -47,6 +47,14 @@ export const ENEMY_ICONS: Record<EnemyTypeId, string> = {
   slimelet: '💧',
   ghost: '👻',
   golem: '🗿',
+  // F4.1
+  sapper: '🔨',
+  thief: '💰',
+  berserker: '🐗',
+  skywhale: '🐋',
+  wraith: '👤',
+  chimera: '🦁',
+  behemoth: '🦏',
 };
 
 // ---------- paletas por tema ----------
@@ -1244,6 +1252,22 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
     g.save();
     g.translate(x + s / 2, y + s / 2);
     drawTowerArt(type, s, level, t, anim, owner?.color ?? '#888', id === selected, spec);
+    // ATURDIDA (Zapador / Behemot): estrellitas girando sobre la torre + tinte gris
+    const stunned = (tw[10] ?? 0) === 1;
+    if (stunned) {
+      g.fillStyle = 'rgba(120,130,150,0.35)';
+      g.beginPath();
+      g.arc(0, 0, s * 0.4, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#ffe082';
+      g.font = `${Math.max(8, s * 0.28)}px serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      for (let si = 0; si < 3; si++) {
+        const a = t * 4 + (si * Math.PI * 2) / 3 + id;
+        g.fillText('✦', Math.cos(a) * s * 0.34, -s * 0.42 + Math.sin(a) * s * 0.1);
+      }
+    }
     g.restore();
   }
 
@@ -1796,6 +1820,7 @@ function drawEnemies(interp: InterpResult, now: number): void {
     const def = ENEMIES[type];
     const isBoss = (e.flags & 4) !== 0;
     const isElite = (e.flags & 8) !== 0;
+    const isImmune = (e.flags & 16) !== 0;
     const affixes = isElite ? affixesFromMask(e.affix) : [];
     const x = toX(e.x);
     let y = toY(e.y);
@@ -1826,6 +1851,32 @@ function drawEnemies(interp: InterpResult, now: number): void {
     g.save();
     g.translate(x, y);
     drawEnemyArt(type, def.color, r, t, e.id, bob, s);
+
+    // INMUNE a magia: tinte azulado + escudo runado giratorio. Marca visual clara
+    // de que hielo/veneno/execute/tesla no le hacen mella (solo daño físico).
+    if (isImmune) {
+      g.fillStyle = 'rgba(96,165,250,0.32)';
+      g.beginPath();
+      g.arc(0, 0, r * 1.02, 0, Math.PI * 2);
+      g.fill();
+      // escudo runado: anillo de trazos claros que rota lentamente
+      const rot = t * 0.8 + e.id;
+      g.strokeStyle = 'rgba(191,219,254,0.95)';
+      g.lineWidth = Math.max(1.5, r * 0.14);
+      g.setLineDash([r * 0.32, r * 0.28]);
+      g.beginPath();
+      g.arc(0, 0, r * 1.32, rot, rot + Math.PI * 2);
+      g.stroke();
+      g.setLineDash([]);
+      // pequeñas runas (puntos) en el anillo
+      g.fillStyle = 'rgba(147,197,253,0.9)';
+      for (let ri = 0; ri < 4; ri++) {
+        const a = rot + (ri * Math.PI) / 2;
+        g.beginPath();
+        g.arc(Math.cos(a) * r * 1.32, Math.sin(a) * r * 1.32, Math.max(1, r * 0.1), 0, Math.PI * 2);
+        g.fill();
+      }
+    }
 
     // anillo de élite
     if (isElite) {
@@ -2255,6 +2306,264 @@ function drawEnemyArt(type: EnemyTypeId, color: string, r: number, t: number, id
       g.beginPath();
       g.arc(-r * 0.28, -r * 0.35, r * 0.14, 0, Math.PI * 2);
       g.arc(r * 0.28, -r * 0.35, r * 0.14, 0, Math.PI * 2);
+      g.fill();
+      break;
+    }
+    case 'sapper': {
+      // gnomo con un gran martillo que golpea (bob impulsa el swing)
+      bodyCircle(r * 0.9);
+      eyes(r * 0.3, -r * 0.1, Math.max(1, r * 0.13), true);
+      // casco
+      g.fillStyle = shade(color, 0.7);
+      g.beginPath();
+      g.arc(0, -r * 0.25, r * 0.95, Math.PI, 0);
+      g.fill();
+      // martillo al hombro, oscilando
+      g.save();
+      g.rotate(-0.5 + Math.sin(t * 4 + id) * 0.35);
+      g.strokeStyle = '#6d4c41';
+      g.lineWidth = Math.max(2, r * 0.18);
+      g.beginPath();
+      g.moveTo(r * 0.5, r * 0.2);
+      g.lineTo(r * 1.3, -r * 0.9);
+      g.stroke();
+      g.fillStyle = '#9e9e9e';
+      roundRect(g, r * 1.05, -r * 1.35, r * 0.7, r * 0.55, r * 0.1);
+      g.fill();
+      g.restore();
+      break;
+    }
+    case 'thief': {
+      // silueta encapuchada con una bolsa de oro; leve inclinación al correr
+      g.save();
+      g.rotate(bob * 0.05);
+      const grad = g.createRadialGradient(-r * 0.2, -r * 0.3, r * 0.2, 0, 0, r);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, color);
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(1.2, r * 0.12);
+      // capucha puntiaguda
+      g.beginPath();
+      g.moveTo(0, -r * 1.25);
+      g.lineTo(r * 0.9, r * 0.4);
+      g.quadraticCurveTo(0, r * 0.85, -r * 0.9, r * 0.4);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      // ojos brillantes en la sombra de la capucha
+      g.fillStyle = '#ffe082';
+      g.beginPath();
+      g.arc(-r * 0.22, -r * 0.1, r * 0.1, 0, Math.PI * 2);
+      g.arc(r * 0.22, -r * 0.1, r * 0.1, 0, Math.PI * 2);
+      g.fill();
+      // bolsa de oro
+      g.fillStyle = '#ffca28';
+      g.strokeStyle = '#8d6e63';
+      g.lineWidth = Math.max(1, r * 0.08);
+      g.beginPath();
+      g.arc(r * 0.75, r * 0.35, r * 0.32, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = '#7a5c00';
+      g.font = `bold ${Math.max(6, r * 0.5)}px serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('$', r * 0.75, r * 0.37);
+      g.restore();
+      break;
+    }
+    case 'berserker': {
+      // jabalí furioso; enrojece y "vibra" cuando está herido (lo lee el render por bob)
+      const rage = 0.5 + Math.abs(Math.sin(t * 12 + id)) * 0.5;
+      const grad = g.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.2, 0, 0, r * 1.15);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, color);
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(1.5, r * 0.12);
+      g.beginPath();
+      g.ellipse(0, 0, r * 1.1, r * 0.9, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      // colmillos
+      g.fillStyle = '#efebe9';
+      for (const side of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(side * r * 0.55, r * 0.25);
+        g.quadraticCurveTo(side * r * 0.95, r * 0.05, side * r * 0.7, -r * 0.3);
+        g.lineTo(side * r * 0.45, r * 0.05);
+        g.closePath();
+        g.fill();
+      }
+      // ojos rojos furiosos
+      g.fillStyle = `rgba(255,60,30,${0.6 + rage * 0.4})`;
+      g.beginPath();
+      g.arc(-r * 0.32, -r * 0.2, r * 0.13, 0, Math.PI * 2);
+      g.arc(r * 0.32, -r * 0.2, r * 0.13, 0, Math.PI * 2);
+      g.fill();
+      // vaho de las fosas nasales
+      g.fillStyle = 'rgba(255,255,255,0.35)';
+      g.beginPath();
+      g.arc(-r * 0.15, r * 0.35, r * 0.1, 0, Math.PI * 2);
+      g.arc(r * 0.15, r * 0.35, r * 0.1, 0, Math.PI * 2);
+      g.fill();
+      break;
+    }
+    case 'skywhale': {
+      // ballena voladora rechoncha con alas que baten lento
+      const flap = Math.sin(t * 4 + id);
+      g.fillStyle = shade(color, 0.85);
+      for (const side of [-1, 1]) {
+        g.save();
+        g.rotate(side * flap * 0.2);
+        g.beginPath();
+        g.moveTo(side * r * 0.7, -r * 0.1);
+        g.quadraticCurveTo(side * r * 2.0, -r * 0.7, side * r * 1.7, r * 0.5);
+        g.quadraticCurveTo(side * r * 1.1, r * 0.3, side * r * 0.7, r * 0.3);
+        g.closePath();
+        g.fill();
+        g.restore();
+      }
+      const grad = g.createRadialGradient(-r * 0.3, -r * 0.4, r * 0.2, 0, 0, r * 1.2);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, color);
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(1.5, r * 0.1);
+      g.beginPath();
+      g.ellipse(0, 0, r * 1.2, r * 0.9, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      // vientre claro
+      g.fillStyle = 'rgba(255,255,255,0.35)';
+      g.beginPath();
+      g.ellipse(0, r * 0.35, r * 0.8, r * 0.4, 0, 0, Math.PI * 2);
+      g.fill();
+      eyes(r * 0.45, -r * 0.15, Math.max(1, r * 0.12));
+      break;
+    }
+    case 'wraith': {
+      // espectro mayor: como el fantasma pero más grande, oscuro y semitransparente
+      g.globalAlpha = 0.5 + Math.sin(t * 2 + id) * 0.12;
+      const grad = g.createRadialGradient(-r * 0.3, -r * 0.4, r * 0.2, 0, 0, r * 1.3);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, shade(color, 0.6));
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(0, -r * 0.15, r * 1.05, Math.PI, 0);
+      const n = 5;
+      for (let i = 0; i <= n; i++) {
+        const fx = r * 1.05 - (i * 2 * r * 1.05) / n;
+        const fy = r * 0.6 + Math.sin(t * 5 + i * 2 + id) * r * 0.2;
+        g.quadraticCurveTo(fx + (r * 1.05) / n, fy + r * 0.25, fx, fy);
+      }
+      g.closePath();
+      g.fill();
+      // guadaña espectral
+      g.globalAlpha = 0.75;
+      g.strokeStyle = 'rgba(220,220,255,0.9)';
+      g.lineWidth = Math.max(1.5, r * 0.1);
+      g.beginPath();
+      g.moveTo(r * 0.7, -r * 1.0);
+      g.lineTo(r * 0.9, r * 0.6);
+      g.stroke();
+      g.beginPath();
+      g.arc(r * 0.7, -r * 1.0, r * 0.5, Math.PI * 1.1, Math.PI * 1.8);
+      g.stroke();
+      // ojos vacíos brillantes
+      g.fillStyle = 'rgba(200,220,255,0.95)';
+      g.beginPath();
+      g.ellipse(-r * 0.28, -r * 0.25, r * 0.13, r * 0.19, 0, 0, Math.PI * 2);
+      g.ellipse(r * 0.28, -r * 0.25, r * 0.13, r * 0.19, 0, 0, Math.PI * 2);
+      g.fill();
+      g.globalAlpha = 1;
+      break;
+    }
+    case 'chimera': {
+      // jefe volador: cabeza leonina + alas grandes que baten
+      const flap = Math.sin(t * 5 + id);
+      g.fillStyle = shade(color, 0.8);
+      for (const side of [-1, 1]) {
+        g.save();
+        g.rotate(side * (0.3 + flap * 0.3));
+        g.beginPath();
+        g.moveTo(side * r * 0.6, -r * 0.2);
+        g.lineTo(side * r * 2.1, -r * 1.1);
+        g.lineTo(side * r * 1.9, r * 0.1);
+        g.lineTo(side * r * 2.0, r * 0.9);
+        g.lineTo(side * r * 0.7, r * 0.3);
+        g.closePath();
+        g.fill();
+        g.restore();
+      }
+      // cuerpo
+      const grad = g.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.2, 0, 0, r * 1.2);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, color);
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(2, r * 0.1);
+      g.beginPath();
+      g.arc(0, 0, r * 1.05, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      // melena
+      g.fillStyle = shade(color, 0.7);
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2;
+        g.beginPath();
+        g.moveTo(Math.cos(a) * r * 0.9, Math.sin(a) * r * 0.9);
+        g.lineTo(Math.cos(a) * r * 1.5, Math.sin(a) * r * 1.5);
+        g.lineTo(Math.cos(a + 0.3) * r * 0.9, Math.sin(a + 0.3) * r * 0.9);
+        g.closePath();
+        g.fill();
+      }
+      bodyCircle(r * 0.9);
+      eyes(r * 0.32, -r * 0.1, Math.max(1.5, r * 0.15), true);
+      // fauces
+      g.fillStyle = '#3a0d18';
+      g.beginPath();
+      g.arc(0, r * 0.3, r * 0.35, 0, Math.PI);
+      g.fill();
+      break;
+    }
+    case 'behemoth': {
+      // jefe terrestre colosal: mole rocosa acorazada con placas
+      const grad = g.createRadialGradient(-r * 0.4, -r * 0.4, r * 0.3, 0, 0, r * 1.4);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, shade(color, 0.7));
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(2, r * 0.1);
+      roundRect(g, -r * 1.1, -r * 0.95, r * 2.2, r * 1.9, r * 0.35);
+      g.fill();
+      g.stroke();
+      // placas de armadura
+      g.strokeStyle = shade(color, 0.5);
+      g.lineWidth = Math.max(1.5, r * 0.08);
+      for (let i = -1; i <= 1; i++) {
+        g.beginPath();
+        g.moveTo(i * r * 0.5, -r * 0.9);
+        g.lineTo(i * r * 0.5, r * 0.9);
+        g.stroke();
+      }
+      // cuernos gruesos
+      g.fillStyle = '#efebe9';
+      for (const side of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(side * r * 0.6, -r * 0.8);
+        g.quadraticCurveTo(side * r * 1.4, -r * 1.5, side * r * 1.0, -r * 1.7);
+        g.lineTo(side * r * 0.5, -r * 1.0);
+        g.closePath();
+        g.fill();
+      }
+      // ojos brillantes de furia
+      const glow = 0.6 + Math.sin(t * 3 + id) * 0.4;
+      g.fillStyle = `rgba(255,120,60,${0.7 + glow * 0.3})`;
+      g.beginPath();
+      g.arc(-r * 0.35, -r * 0.25, r * 0.16, 0, Math.PI * 2);
+      g.arc(r * 0.35, -r * 0.25, r * 0.16, 0, Math.PI * 2);
       g.fill();
       break;
     }

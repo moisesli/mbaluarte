@@ -54,6 +54,7 @@ export function applyCommands(
           invested: lvl.cost,
           kills: 0,
           damage: 0,
+          stunnedUntil: 0,
         });
         events.push({ e: 'place', x: cmd.cx + 0.5, y: cmd.cy + 0.5, towerType: cmd.towerType });
         break;

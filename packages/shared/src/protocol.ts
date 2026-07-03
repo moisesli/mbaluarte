@@ -43,11 +43,11 @@ export function sanitizeSettings(s: Partial<RoomSettings> | undefined): RoomSett
 // ---------- Snapshot compacto (arrays para ahorrar bytes) ----------
 
 // enemigo: [id, typeIdx, x, y, hpFrac, flags, affixMask]
-//   flags: 1=slow 2=poison 4=boss 8=elite   affixMask: bits de balance/affixes
+//   flags: 1=slow 2=poison 4=boss 8=elite 16=inmune   affixMask: bits de balance/affixes
 export type SnapEnemy = [number, number, number, number, number, number, number];
-// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec]
-//   spec: -1 sin especializar, 0/1 rama elegida
-export type SnapTower = [number, number, number, number, number, number, number, number, number, number];
+// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec, stunned]
+//   spec: -1 sin especializar, 0/1 rama elegida; stunned: 0/1 (aturdida por Zapador/Behemot)
+export type SnapTower = [number, number, number, number, number, number, number, number, number, number, number];
 // proyectil: [id, kindIdx(0 bullet,1 shell,2 bomb), x, y, colorIdx(=typeIdx de torre)]
 export type SnapProj = [number, number, number, number, number];
 
@@ -67,6 +67,11 @@ export interface Snap {
   active: boolean; // false = interludio
   interludeSec: number;
   nextWave: [number, number][]; // [enemyTypeIdx, count]
+  // telegrafía de la PRÓXIMA oleada (durante el interludio): 🛡 inmune / ⭐ bendecida / 🦅 aérea / ☠ jefe
+  nextImmune: boolean;
+  nextBlessed: boolean;
+  nextFlying: boolean;
+  nextBossType: number; // typeIdx del jefe de la próxima oleada, o -1
   players: SnapPlayer[];
   enemies: SnapEnemy[];
   towers: SnapTower[];
@@ -92,6 +97,10 @@ export function buildSnap(state: GameState): Snap {
     active: state.waveState === 'active',
     interludeSec: Math.max(0, Math.ceil(state.interludeLeft / TICK_RATE)),
     nextWave: state.nextWaveComp.map((c: WaveComp) => [enemyTypeIdx.get(c.type) ?? 0, c.count]),
+    nextImmune: state.nextWaveImmune,
+    nextBlessed: state.nextWaveBlessed,
+    nextFlying: state.nextWaveFlying,
+    nextBossType: state.nextWaveBoss ? (enemyTypeIdx.get(state.nextWaveBoss) ?? -1) : -1,
     players: state.players.map((p) => ({
       id: p.id,
       gold: Math.floor(p.gold),
@@ -106,6 +115,7 @@ export function buildSnap(state: GameState): Snap {
       if (e.poisonUntil > state.tick) flags |= 2;
       if (ENEMIES[e.type].boss) flags |= 4;
       if (e.elite) flags |= 8;
+      if (e.spellImmune) flags |= 16;
       return [
         e.id,
         enemyTypeIdx.get(e.type) ?? 0,
@@ -129,6 +139,7 @@ export function buildSnap(state: GameState): Snap {
           t.kills,
           Math.round(t.damage),
           t.spec,
+          t.stunnedUntil > state.tick ? 1 : 0,
         ] as SnapTower,
     ),
     projs: state.projectiles.map((p) => {

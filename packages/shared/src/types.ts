@@ -25,7 +25,15 @@ export type EnemyTypeId =
   | 'slime'
   | 'slimelet'
   | 'ghost'
-  | 'golem';
+  | 'golem'
+  // F4.1 — nuevos monstruos y jefes (al FINAL del orden)
+  | 'sapper' // Zapador: aturde la torre más cercana al camino
+  | 'thief' // Ladrón: si escapa roba oro (no quita vidas)
+  | 'berserker' // Berserker: corre más rápido bajo el 50% de vida
+  | 'skywhale' // Coloso alado: volador tanque
+  | 'wraith' // Espectro mayor: esquiva 50%, inmune a veneno, lento
+  | 'chimera' // jefe volador de media partida
+  | 'behemoth'; // jefe terrestre pesado que aturde torres al cruzar esquinas
 
 // Afijos de enemigos élite. Cada uno modifica el estado del enemigo (ver step.ts).
 export type AffixId =
@@ -108,6 +116,13 @@ export interface EnemyDef {
   boss?: boolean;
   cost: number; // costo de presupuesto para el generador de oleadas
   minWave: number; // oleada mínima en la que puede aparecer
+  // --- F4.1 ---
+  spellImmune?: boolean; // inmune a slow del hielo, veneno, execute; el Tesla le hace −70%
+  stealGold?: number; // Ladrón: oro que roba al equipo si escapa (no quita vidas)
+  berserkBelow?: number; // Berserker: fracción de hp (0..1) bajo la cual acelera
+  berserkMult?: number; // multiplicador de velocidad al enfurecerse (p. ej. 1.8)
+  sapper?: boolean; // Zapador: se detiene junto a la torre más cercana y la aturde
+  stunOnCorner?: { radius: number; seconds: number }; // Behemot: aturde torres al cruzar cada esquina
 }
 
 export interface MapDef {
@@ -153,6 +168,10 @@ export interface EnemyState {
   auraHps: number;
   deathSpawn: number; // crías que suelta al morir (explosivo)
   laps: number; // modo horda: vueltas completadas (cansancio: −10% maxHp base por vuelta)
+  // --- F4.1 ---
+  spellImmune: boolean; // inmune a magia (slow/veneno/execute; Tesla −70%)
+  stunTowerId: number; // Zapador: torre que está aturdiendo (0 = ninguna aún)
+  lastWpIdx: number; // Behemot: último waypoint cruzado (para aturdir una vez por esquina)
 }
 
 export interface TowerState {
@@ -168,6 +187,7 @@ export interface TowerState {
   invested: number; // oro total gastado (para venta)
   kills: number;
   damage: number;
+  stunnedUntil: number; // tick hasta el que la torre está aturdida (no dispara). 0 = libre
 }
 
 export interface ProjectileState {
@@ -214,6 +234,10 @@ export interface SpawnEntry {
   pathIdx: number;
   elite?: boolean;
   affixes?: AffixId[];
+  // F4.1
+  immune?: boolean; // oleada inmune: el enemigo nace spellImmune
+  blessed?: boolean; // oleada bendecida: aplica un afijo común sin el ×2.6 de hp
+  blessedAffix?: AffixId; // el afijo común de la oleada bendecida
 }
 
 export interface WaveComp {
@@ -234,8 +258,15 @@ export interface GameState {
   waveState: 'interlude' | 'active';
   interludeLeft: number; // ticks
   nextWaveComp: WaveComp[]; // vista previa de la próxima oleada
+  // etiquetas de la PRÓXIMA oleada (telegrafía: 🛡 inmune / ⭐ bendecida / 🦅 aérea / ☠ jefe)
+  nextWaveImmune: boolean;
+  nextWaveBlessed: boolean;
+  nextWaveFlying: boolean;
+  nextWaveBoss: EnemyTypeId | null;
   pendingWave: SpawnEntry[] | null; // oleada ya generada, esperando el fin del interludio
   pendingBoss: boolean;
+  pendingBossType: EnemyTypeId | null; // jefe de la oleada pendiente (para el anuncio)
+  blessedBonusMult: number; // multiplicador del bono de fin de oleada de la oleada ACTIVA (1 normal, 1.5 bendecida)
   spawnQueue: SpawnEntry[];
   spawnCooldown: number; // ticks hasta el próximo spawn
   enemies: EnemyState[];
@@ -305,6 +336,7 @@ export type GameEvent =
   | { e: 'death'; x: number; y: number; type: EnemyTypeId; bounty: number; killer: string; elite: boolean }
   | { e: 'miss'; x: number; y: number }
   | { e: 'leak'; lives: number; type: EnemyTypeId }
+  | { e: 'steal'; gold: number; x: number; y: number } // el Ladrón escapó y robó oro
   | { e: 'wave_start'; wave: number; comp: WaveComp[] }
   | { e: 'wave_end'; wave: number; bonus: number }
   | { e: 'income'; playerId: string; amount: number; x: number; y: number }

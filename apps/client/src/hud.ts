@@ -403,6 +403,18 @@ export function onTick(snap: Snap): void {
   const preview = $('hud-preview');
   if (!snap.active && snap.nextWave.length > 0) {
     preview.hidden = false;
+    // etiquetas de tipo (telegrafía Green TD): 🛡 inmune · ⭐ bendecida · 🦅 aérea · ☠ jefe
+    const tags: string[] = [];
+    if (snap.nextImmune) tags.push('<span class="wave-tag immune" title="Inmune a la magia: solo daño físico">🛡 inmune</span>');
+    if (snap.nextBlessed) tags.push('<span class="wave-tag blessed" title="¡Oleada bendecida: doble botín!">⭐ bendecida</span>');
+    if (snap.nextBossType >= 0) {
+      const bossType = ENEMY_ORDER[snap.nextBossType];
+      const bossFlying = ENEMIES[bossType]?.flying;
+      tags.push(`<span class="wave-tag boss" title="${ENEMIES[bossType]?.name ?? 'Jefe'}">${bossFlying ? '🦅' : '☠'} ${ENEMIES[bossType]?.name ?? 'jefe'}</span>`);
+    } else if (snap.nextFlying) {
+      tags.push('<span class="wave-tag flying" title="Domina lo aéreo: necesitas anti-aire">🦅 aérea</span>');
+    }
+    $('hud-preview-tags').innerHTML = tags.join('');
     $('hud-preview-list').innerHTML = snap.nextWave
       .map(([typeIdx, count]) => {
         const type = ENEMY_ORDER[typeIdx];

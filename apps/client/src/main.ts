@@ -80,6 +80,12 @@ function processEvents(events: GameEvent[]): void {
         addShake(4);
         sfx.leak();
         break;
+      case 'steal':
+        toast(`🪙 ¡El Ladrón te robó ${ev.gold} de oro!`);
+        floatText(ev.x, ev.y - 0.3, `-🪙${ev.gold}`, '#ef5350', 14);
+        addShake(3);
+        sfx.leak();
+        break;
       case 'wave_start':
         toast(`⚔️ ¡Oleada ${ev.wave}!`, 'info');
         sfx.wave();

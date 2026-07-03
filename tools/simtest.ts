@@ -16,10 +16,12 @@ import {
   BALANCE_VERSION,
   HORDE_CAP,
   MAPS,
+  START_LIVES,
   TICK_RATE,
   TOWERS,
   TOWER_ORDER,
   type EnemyState,
+  type EnemyTypeId,
   type GameEvent,
   type GameState,
   type PlayerCommand,
@@ -32,6 +34,26 @@ import {
 const MAP_ID = 'sendero';
 const SEED = 123456789;
 const MAX_TICKS = TICK_RATE * 60 * 12; // 12 minutos de juego
+
+// Fábricas para pruebas dirigidas (construir estado a mano sin repetir 25 campos).
+function mkEnemy(type: EnemyTypeId, over: Partial<EnemyState> = {}): EnemyState {
+  const def = ENEMIES[type];
+  return {
+    id: 1000, type, x: 5.5, y: 2.5, hp: def.hp, maxHp: def.hp,
+    pathIdx: 0, wpIdx: 1, travelled: 0, slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0,
+    poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
+    dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
+    spellImmune: def.spellImmune ?? false, stunTowerId: 0, lastWpIdx: 1,
+    ...over,
+  };
+}
+function mkTower(type: TowerTypeId, over: Partial<TowerState> = {}): TowerState {
+  return {
+    id: 2000, type, cx: 5, cy: 1, level: 3, spec: -1, owner: 'p1',
+    cooldownLeft: 0, targetMode: 'first', invested: 100, kills: 0, damage: 0, stunnedUntil: 0,
+    ...over,
+  };
+}
 
 function buildCellCandidates(mapId: string): [number, number][] {
   const map = getMap(mapId);
@@ -249,6 +271,12 @@ assert(
   a.state.over !== null || a.state.tick === MAX_TICKS,
   `la partida termina o sigue estable (over=${JSON.stringify(a.state.over)})`,
 );
+// F4.1: a pesar de las oleadas inmunes/jefes nuevos, los bots (que construyen físico
+// de reserva: arquero/cañón/francotirador/mortero) SIGUEN GANANDO el clásico en normal.
+assert(
+  a.state.over?.victory === true,
+  `los bots GANAN el clásico en normal (oleada ${a.maxWave}, ${a.state.lives} vidas, over=${JSON.stringify(a.state.over)})`,
+);
 assert((a.eventCounts.get('wave_end') ?? 0) >= 4, 'se completan oleadas');
 assert((a.eventCounts.get('hit') ?? 0) > 50, 'hay impactos de proyectiles');
 assert((a.eventCounts.get('chain') ?? 0) > 0, 'la torre tesla dispara cadenas');
@@ -290,11 +318,12 @@ console.log('— Regresión: las crías de spawnOnDeath sobreviven a un golpe de
     pathIdx: 0, wpIdx: 1, travelled: 5, slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0,
     poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
     dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
+    spellImmune: false, stunTowerId: 0, lastWpIdx: 1,
   };
   st.enemies.push(slime);
   const cannon: TowerState = {
     id: 2000, type: 'cannon', cx: 5, cy: 1, level: 3, spec: -1, owner: 'p1',
-    cooldownLeft: 0, targetMode: 'first', invested: 440, kills: 0, damage: 0,
+    cooldownLeft: 0, targetMode: 'first', invested: 440, kills: 0, damage: 0, stunnedUntil: 0,
   };
   st.towers.push(cannon);
 
@@ -330,17 +359,18 @@ console.log('— Estandarte: refuerza el daño de las torres cercanas (sin apila
       pathIdx: 0, wpIdx: 1, travelled: 0, slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0,
       poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
       dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
+      spellImmune: false, stunTowerId: 0, lastWpIdx: 1,
     };
     st.enemies.push(enemy);
     const archer: TowerState = {
       id: 2000, type: 'archer', cx: 5, cy: 1, level: 1, spec: -1, owner: 'p1',
-      cooldownLeft: 0, targetMode: 'first', invested: 50, kills: 0, damage: 0,
+      cooldownLeft: 0, targetMode: 'first', invested: 50, kills: 0, damage: 0, stunnedUntil: 0,
     };
     st.towers.push(archer);
     for (let i = 0; i < banners; i++) {
       st.towers.push({
         id: 3000 + i, type: 'banner', cx: 6 + i, cy: 1, level: 1, spec: -1, owner: 'p1',
-        cooldownLeft: 0, targetMode: 'first', invested: 90, kills: 0, damage: 0,
+        cooldownLeft: 0, targetMode: 'first', invested: 90, kills: 0, damage: 0, stunnedUntil: 0,
       });
     }
     // un tick: el arquero está listo y dispara; leemos el proyectil emitido
@@ -558,6 +588,271 @@ function runHorde(seed: number, difficulty: 'easy' | 'normal' | 'hard', maxTicks
   const hashH1 = JSON.stringify([h.state.tick, h.state.wave, h.state.rng, h.state.nextId, h.state.enemies.length, h.state.players.map((p) => p.gold)]);
   const hashH2 = JSON.stringify([h2.state.tick, h2.state.wave, h2.state.rng, h2.state.nextId, h2.state.enemies.length, h2.state.players.map((p) => p.gold)]);
   assert(hashH1 === hashH2, `la horda es determinista (misma semilla → mismo estado final, tick ${h.state.tick})`);
+}
+
+console.log('— F4.1 · Sistema de oleadas Green TD: inmunes, bendecidas y jefes —');
+{
+  // (1) aparecen oleadas inmunes y bendecidas en 20 oleadas
+  const rng = { rng: SEED };
+  let immuneIn20 = 0;
+  let blessedIn20 = 0;
+  let immuneTotal = 0;
+  let blessedTotal = 0;
+  const chimeraWaves: number[] = [];
+  let groundBossWave = 0;
+  const enemyTypesSeen = new Set<string>();
+  for (let w = 1; w <= 40; w++) {
+    const gen = generateWave(rng, w, 2, 1);
+    if (gen.immune) { immuneTotal++; if (w <= 20) immuneIn20++; }
+    if (gen.blessed) { blessedTotal++; if (w <= 20) blessedIn20++; }
+    if (gen.bossType === 'chimera') chimeraWaves.push(w);
+    if (gen.bossType === 'behemoth') groundBossWave = w;
+    for (const e of gen.entries) enemyTypesSeen.add(e.type);
+    // consistencia: toda entrada de una oleada inmune lleva immune=true
+    if (gen.immune && gen.entries.some((e) => !e.immune)) throw new Error(`oleada inmune ${w} con entradas no-inmunes`);
+    // consistencia: las bendecidas llevan afijo común y NO coinciden con inmune/jefe
+    if (gen.blessed && (gen.immune || gen.hasBoss)) throw new Error(`oleada bendecida ${w} combinada con inmune/jefe`);
+    // consistencia: la oleada de la Quimera (jefe volador) NO es inmune (triple castigo)
+    if (gen.bossType === 'chimera' && gen.immune) throw new Error(`la oleada de la Quimera ${w} no debe ser inmune`);
+  }
+  assert(immuneIn20 >= 2, `aparecen oleadas INMUNES en 20 oleadas (${immuneIn20}: caen en 10 y 20; 15 se exime por ser jefe volador)`);
+  assert(immuneTotal >= 4, `hay varias oleadas inmunes en 40 (${immuneTotal}: 10,20,30,40 — las 15/25/35 de la Quimera se eximen)`);
+  void blessedIn20;
+
+  // Las oleadas bendecidas son probabilísticas (1/15 desde la 6): en una semilla dada
+  // pueden no caer en las primeras 20. Con la semilla 999 SÍ cae (en la 8) — verifica
+  // que aparecen y que llevan un afijo común aplicado a TODA la oleada.
+  {
+    const rng2 = { rng: 999 };
+    let firstBlessed = 0;
+    let commonAffixOk = false;
+    for (let w = 1; w <= 20; w++) {
+      const gen = generateWave(rng2, w, 2, 1);
+      if (gen.blessed && !firstBlessed) {
+        firstBlessed = w;
+        // todas las entradas no-jefe llevan el MISMO afijo común
+        const nonBoss = gen.entries.filter((e) => e.blessed);
+        commonAffixOk = nonBoss.length > 0 && nonBoss.every((e) => e.blessedAffix === gen.blessedAffix);
+      }
+    }
+    assert(firstBlessed > 0 && firstBlessed <= 20, `aparece una oleada BENDECIDA en 20 oleadas (semilla 999, oleada ${firstBlessed})`);
+    assert(commonAffixOk, 'la oleada bendecida aplica UN afijo común a toda la oleada');
+  }
+  assert(blessedTotal >= 1, `hay oleadas bendecidas con la semilla del test (${blessedTotal})`);
+  assert(chimeraWaves.includes(15) && chimeraWaves.includes(25), `la Quimera (jefe volador) cae en 15/25/35 del clásico (${chimeraWaves.join(',')})`);
+  assert(groundBossWave >= 30, `el Behemot (jefe terrestre) aparece en oleadas altas (oleada ${groundBossWave})`);
+  const newMonsters = ['sapper', 'thief', 'berserker', 'skywhale', 'wraith'].filter((t) => enemyTypesSeen.has(t));
+  assert(newMonsters.length === 5, `los 5 monstruos nuevos salen por el pool (${newMonsters.join(',')})`);
+}
+
+console.log('— F4.1 · Inmunidad mágica: la magia no afecta a un inmune, lo físico sí —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+
+  // Construye un enemigo inmune parado en rango y mide el daño de EFECTO (veneno)
+  // de una torre de VENENO vs el daño FÍSICO de un arquero.
+  function tickDamageOn(immune: boolean, towerType: TowerTypeId): number {
+    const st = createGame('sendero', 'endless', 'normal', 555, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const enemy = mkEnemy('brute', { id: 1500, hp: 100000, maxHp: 100000, spellImmune: immune, x: 5.5, y: 2.5 });
+    st.enemies.push(enemy);
+    const tower = mkTower(towerType, { id: 2500, cx: 5, cy: 1, level: 3, invested: 300 });
+    st.towers.push(tower);
+    const hp0 = enemy.hp;
+    // varios ticks para que el veneno haga su DoT (o el proyectil impacte y envenene)
+    for (let i = 0; i < TICK_RATE * 3; i++) stepGame(st, simCtx, []);
+    const alive = st.enemies.find((e) => e.id === 1500);
+    return alive ? hp0 - alive.hp : hp0;
+  }
+
+  const poisonVsImmune = tickDamageOn(true, 'poison');
+  const poisonVsNormal = tickDamageOn(false, 'poison');
+  const archerVsImmune = tickDamageOn(true, 'archer');
+  // el veneno a un inmune SOLO puede hacer el poco daño de impacto físico del dardo,
+  // nunca el DoT: mucho menos que a un normal.
+  assert(poisonVsImmune < poisonVsNormal * 0.5, `el veneno hace mucho menos daño a un inmune (${poisonVsImmune.toFixed(0)} vs ${poisonVsNormal.toFixed(0)} normal)`);
+  assert(archerVsImmune > 0, `el arquero (físico) SÍ le pega al inmune (${archerVsImmune.toFixed(0)})`);
+
+  // Tesla: −70% a inmunes. Un impacto directo.
+  function teslaHit(immune: boolean): number {
+    const st = createGame('sendero', 'endless', 'normal', 556, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const enemy = mkEnemy('brute', { id: 1600, hp: 100000, maxHp: 100000, spellImmune: immune, x: 5.5, y: 2.5 });
+    st.enemies.push(enemy);
+    st.towers.push(mkTower('tesla', { id: 2600, cx: 5, cy: 1, level: 3, invested: 500 }));
+    const hp0 = enemy.hp;
+    stepGame(st, simCtx, []); // un disparo del tesla
+    const alive = st.enemies.find((e) => e.id === 1600);
+    return alive ? hp0 - alive.hp : hp0;
+  }
+  const teslaImmune = teslaHit(true);
+  const teslaNormal = teslaHit(false);
+  assert(teslaImmune > 0 && teslaImmune < teslaNormal, `el Tesla hace daño reducido a los inmunes (${teslaImmune} vs ${teslaNormal} normal, ~−70%)`);
+
+  // Execute (Cañón de Riel, umbral 0.15) NO remata a un inmune; a un normal, sí.
+  // maxHp 4000 → umbral 600. El disparo (480) deja al enemigo en ~520 hp: sobrevive
+  // al impacto directo pero cae en rango de execute. El normal muere por execute; el
+  // inmune queda vivo con ~520 hp (execute es mágico).
+  function executeResult(immune: boolean): { killed: boolean; hpLeft: number } {
+    const st = createGame('sendero', 'endless', 'normal', 557, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const enemy = mkEnemy('brute', { id: 1700, hp: 1000, maxHp: 4000, spellImmune: immune, x: 5.5, y: 2.5 });
+    st.enemies.push(enemy);
+    st.towers.push(mkTower('sniper', { id: 2700, spec: 0, cx: 5, cy: 1, level: 3, invested: 800 })); // Cañón de Riel (execute)
+    stepGame(st, simCtx, []); // un disparo
+    const alive = st.enemies.find((e) => e.id === 1700);
+    return { killed: !alive, hpLeft: alive ? alive.hp : 0 };
+  }
+  const exImmune = executeResult(true);
+  const exNormal = executeResult(false);
+  assert(!exImmune.killed && exImmune.hpLeft > 0, `el execute (Cañón de Riel) NO remata a un inmune malherido (queda con ${exImmune.hpLeft.toFixed(0)} hp)`);
+  assert(exNormal.killed, 'el execute SÍ remata a un enemigo normal malherido');
+}
+
+console.log('— F4.1 · Zapador: aturde la torre más cercana (deja de disparar) —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 558, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+
+  // arquero en (5,1); un zapador PARADO justo al lado (dentro de 1.6) y un blanco gordo
+  const archer = mkTower('archer', { id: 2800, cx: 5, cy: 1, level: 3, invested: 200 });
+  st.towers.push(archer);
+  const sapper = mkEnemy('sapper', { id: 1800, hp: 100000, maxHp: 100000, x: 5.5, y: 2.5, wpIdx: 1 });
+  st.enemies.push(sapper);
+  const dummy = mkEnemy('brute', { id: 1801, hp: 100000, maxHp: 100000, x: 5.5, y: 2.7, wpIdx: 1 });
+  st.enemies.push(dummy);
+
+  let firedWhileStunned = false;
+  let wasStunned = false;
+  for (let i = 0; i < TICK_RATE * 2; i++) {
+    const dmgBefore = archer.damage;
+    stepGame(st, simCtx, []);
+    const st2 = st.towers.find((t) => t.id === 2800)!;
+    if (st2.stunnedUntil > st.tick - 1) wasStunned = true;
+    // mientras el zapador vive y aturde, el arquero no debe hacer daño nuevo
+    if (st.enemies.some((e) => e.id === 1800) && archer.damage > dmgBefore) firedWhileStunned = true;
+  }
+  assert(wasStunned, 'el Zapador aturde a la torre más cercana (stunnedUntil futuro)');
+  assert(!firedWhileStunned, 'la torre ATURDIDA no dispara mientras el Zapador vive');
+
+  // al morir el zapador (lo quitamos a mano), el aturdimiento expira y la torre vuelve a disparar
+  st.enemies = st.enemies.filter((e) => e.id !== 1800);
+  const dmgBefore = st.towers.find((t) => t.id === 2800)!.damage;
+  for (let i = 0; i < TICK_RATE; i++) stepGame(st, simCtx, []);
+  assert(st.towers.find((t) => t.id === 2800)!.damage > dmgBefore, 'la torre se LIBERA y vuelve a disparar cuando el Zapador muere');
+}
+
+console.log('— F4.1 · Behemot: aturde las torres en radio al cruzar una esquina —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 561, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 25; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const wps = simCtx.waypoints[0];
+  // torre junto al PRIMER waypoint interior; el behemot llega y lo cruza → aturde
+  const wp1 = wps[1];
+  const tower = mkTower('archer', { id: 2900, cx: Math.round(wp1.x - 0.5), cy: Math.round(wp1.y - 0.5), level: 3, invested: 200 });
+  st.towers.push(tower);
+  // behemot casi encima del waypoint 1 (a punto de cruzarlo)
+  const behemoth = mkEnemy('behemoth', { id: 1850, hp: 500000, maxHp: 500000, x: wp1.x, y: wp1.y - 0.05, wpIdx: 1, lastWpIdx: 1 });
+  st.enemies.push(behemoth);
+  let stunnedByCorner = false;
+  for (let i = 0; i < TICK_RATE * 3; i++) {
+    stepGame(st, simCtx, []);
+    if (st.towers.find((t) => t.id === 2900)!.stunnedUntil > st.tick) stunnedByCorner = true;
+  }
+  assert(stunnedByCorner, 'el Behemot aturde las torres en radio al cruzar una esquina');
+}
+
+console.log('— F4.1 · Oleada bendecida: afijo común + bono ×1.5 —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 562, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 7; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  st.blessedBonusMult = 1.5; // simula una oleada bendecida activa
+  // un enemigo bendecido: aplica un afijo común (swift) sin el ×2.6 de élite
+  const gob = mkEnemy('goblin', { id: 1950 });
+  const baseHp = gob.hp;
+  st.enemies.push(gob);
+  // el bono de fin de oleada se multiplica por 1.5
+  const goldBefore = st.players[0].gold;
+  // vaciar la cola dispara el fin de oleada (spawnQueue vacía + sin enemigos vivos)
+  st.enemies = [];
+  let bonusSeen = 0;
+  for (let i = 0; i < TICK_RATE; i++) {
+    const events = stepGame(st, simCtx, []);
+    for (const ev of events) if (ev.e === 'wave_end') bonusSeen = ev.bonus;
+    if (bonusSeen) break;
+  }
+  const normalBonus = 20 + 7 * 4; // WAVE_BONUS_BASE + wave*WAVE_BONUS_PER_WAVE
+  assert(bonusSeen === Math.round(normalBonus * 1.5), `el bono de una oleada bendecida es ×1.5 (${bonusSeen} == ${Math.round(normalBonus * 1.5)})`);
+  assert(st.players[0].gold > goldBefore, 'el bono bendecido se reparte al equipo');
+  void baseHp;
+}
+
+console.log('— F4.1 · Ladrón: roba oro al escapar (no quita vidas) —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 559, [
+    { id: 'p1', name: 'A', color: '#fff' },
+    { id: 'p2', name: 'B', color: '#000' },
+  ]);
+  st.nextId = 8000; st.wave = 3; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const wps = simCtx.waypoints[0];
+  // ladrón en el ÚLTIMO waypoint para que fugue de inmediato
+  const thief = mkEnemy('thief', { id: 1900, x: wps[wps.length - 1].x, y: wps[wps.length - 1].y, wpIdx: wps.length - 1, travelled: 999 });
+  st.enemies.push(thief);
+  const livesBefore = st.lives;
+  const goldBefore = st.players.reduce((s, p) => s + p.gold, 0);
+  let stole = 0;
+  for (let i = 0; i < TICK_RATE && st.enemies.some((e) => e.id === 1900); i++) {
+    const events = stepGame(st, simCtx, []);
+    for (const ev of events) if (ev.e === 'steal') stole = ev.gold;
+  }
+  const goldAfter = st.players.reduce((s, p) => s + p.gold, 0);
+  assert(st.lives === livesBefore, `el Ladrón NO quita vidas (${livesBefore} → ${st.lives})`);
+  assert(stole > 0 && goldAfter < goldBefore, `el Ladrón robó oro al equipo (−${goldBefore - goldAfter}, evento steal ${stole})`);
+}
+
+console.log('— F4.1 · Fuga escalonada + START_LIVES 30 —');
+{
+  assert(START_LIVES === 30, `START_LIVES subió a 30 (${START_LIVES})`);
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  // mismo goblin fugándose en oleada 5 vs oleada 15: la 15 cuesta +1 vida (floor(15/10))
+  function leakCost(wave: number): number {
+    const st = createGame('sendero', 'endless', 'normal', 560, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = wave; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const wps = simCtx.waypoints[0];
+    const g = mkEnemy('goblin', { id: 2100, x: wps[wps.length - 1].x, y: wps[wps.length - 1].y, wpIdx: wps.length - 1, travelled: 999 });
+    st.enemies.push(g);
+    const before = st.lives;
+    for (let i = 0; i < TICK_RATE && st.enemies.some((e) => e.id === 2100); i++) stepGame(st, simCtx, []);
+    return before - st.lives;
+  }
+  const cost5 = leakCost(5);
+  const cost15 = leakCost(15);
+  assert(cost5 === 1, `una fuga temprana (oleada 5) cuesta 1 vida (${cost5})`);
+  assert(cost15 === 2, `una fuga tardía (oleada 15) cuesta 2 vidas — fuga escalonada (${cost15})`);
+}
+
+console.log('— F4.1 · Determinismo de las oleadas F4.1 (misma semilla → mismas oleadas) —');
+{
+  function waveHashes(): string {
+    const rng = { rng: 987654321 };
+    const out: string[] = [];
+    for (let w = 1; w <= 25; w++) {
+      const gen = generateWave(rng, w, 3, 2);
+      out.push(`${w}:${gen.immune ? 'I' : ''}${gen.blessed ? 'B' : ''}${gen.bossType ?? ''}:${gen.entries.map((e) => e.type).join(',')}`);
+    }
+    return out.join('|');
+  }
+  assert(waveHashes() === waveHashes(), 'la generación de oleadas F4.1 es determinista');
 }
 
 console.log('— Determinismo: misma semilla + mismos comandos → mismo estado —');

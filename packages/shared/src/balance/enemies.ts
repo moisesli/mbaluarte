@@ -14,6 +14,14 @@ export const ENEMY_ORDER: EnemyTypeId[] = [
   'slimelet',
   'ghost',
   'golem',
+  // F4.1 — al FINAL para no romper índices de snapshot
+  'sapper',
+  'thief',
+  'berserker',
+  'skywhale',
+  'wraith',
+  'chimera',
+  'behemoth',
 ];
 
 export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
@@ -189,6 +197,133 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     boss: true,
     spawnOnDeath: { type: 'brute', count: 3 },
     cost: 0, // los jefes se colocan a mano en el guion de oleadas
+    minWave: 99,
+  },
+
+  // ---------- F4.1 · nuevos monstruos ----------
+  sapper: {
+    // Se detiene junto a la torre más cercana al camino y la aturde mientras viva.
+    // Sin armadura, hp medio: prioridad de fuego evidente. Físico (no inmune) para
+    // que cualquier build pueda quitárselo de encima.
+    id: 'sapper',
+    name: 'Zapador',
+    hp: 120,
+    speed: 1.1,
+    bounty: 14,
+    armor: 0,
+    radius: 0.3,
+    livesCost: 1,
+    flying: false,
+    color: '#ffb300',
+    sapper: true,
+    cost: 13,
+    minWave: 8,
+  },
+  thief: {
+    // Rápido y frágil; no quita vidas: si escapa roba oro repartido al equipo.
+    id: 'thief',
+    name: 'Ladrón',
+    hp: 40,
+    speed: 2.7,
+    bounty: 8,
+    armor: 0,
+    radius: 0.24,
+    livesCost: 0,
+    flying: false,
+    color: '#ab47bc',
+    stealGold: 25,
+    cost: 9,
+    minWave: 6,
+  },
+  berserker: {
+    // Al bajar del 40% de vida corre ×1.5: recompensa el burst (matarlo antes de que
+    // se enfurezca) y castiga el chip lento. hp moderado para que las torres puedan
+    // rematarlo antes de que escape; caro para que no salgan enjambres.
+    id: 'berserker',
+    name: 'Berserker',
+    hp: 175,
+    speed: 1.0,
+    bounty: 22,
+    armor: 1,
+    radius: 0.36,
+    livesCost: 2,
+    flying: false,
+    color: '#d84315',
+    berserkBelow: 0.4,
+    berserkMult: 1.5,
+    cost: 20,
+    minWave: 11,
+  },
+  skywhale: {
+    // Volador TANQUE: hoy todo lo aéreo es frágil; este castiga no tener buen
+    // anti-aire (arquero/hielo/veneno/tesla/francotirador/metralla).
+    id: 'skywhale',
+    name: 'Coloso Alado',
+    hp: 470,
+    speed: 0.85,
+    bounty: 34,
+    armor: 2,
+    radius: 0.5,
+    livesCost: 2,
+    flying: true,
+    color: '#5c6bc0',
+    cost: 26,
+    minWave: 14,
+  },
+  wraith: {
+    // Esquiva 50% e inmune a veneno (spellImmune); contrapeso: lento. Los disparos
+    // instantáneos (francotirador/tesla) lo aciertan siempre, así que no es
+    // invulnerable, solo un puzzle de targeting.
+    id: 'wraith',
+    name: 'Espectro Mayor',
+    hp: 110,
+    speed: 0.85,
+    bounty: 16,
+    armor: 0,
+    radius: 0.28,
+    livesCost: 1,
+    flying: false,
+    color: '#b39ddb',
+    dodge: 0.45,
+    spellImmune: true,
+    cost: 13,
+    minWave: 12,
+  },
+
+  // ---------- F4.1 · jefes ----------
+  chimera: {
+    // Jefe VOLADOR de media partida (oleadas 15/25/35 del clásico). Obliga a tener
+    // anti-aire; invalida cañón/mortero. Botín alto.
+    id: 'chimera',
+    name: 'Quimera',
+    hp: 2500,
+    speed: 0.7,
+    bounty: 210,
+    armor: 3,
+    radius: 0.55,
+    livesCost: 4,
+    flying: true,
+    color: '#ec407a',
+    boss: true,
+    cost: 0,
+    minWave: 99,
+  },
+  behemoth: {
+    // Jefe terrestre pesado (endless/horde altos). Al cruzar cada esquina aturde
+    // todas las torres en radio ~2 durante 2 s. hp enorme.
+    id: 'behemoth',
+    name: 'Behemot',
+    hp: 5200,
+    speed: 0.5,
+    bounty: 260,
+    armor: 8,
+    radius: 0.6,
+    livesCost: 6,
+    flying: false,
+    color: '#6d4c41',
+    boss: true,
+    stunOnCorner: { radius: 2, seconds: 2 },
+    cost: 0,
     minWave: 99,
   },
 };

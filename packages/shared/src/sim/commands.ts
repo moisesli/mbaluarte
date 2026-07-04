@@ -1,5 +1,6 @@
 import type { GameEvent, GameState, MapDef, PlayerCommand } from '../types.js';
 import { TOWERS, towerLevel, hasRank2, rank2Cost } from '../balance/towers.js';
+import { FUSION_ORDER, findFusion } from '../balance/fusions.js';
 import { CALL_WAVE_GOLD_PER_SEC, SELL_REFUND, TICK_RATE } from '../constants.js';
 import { placementError, type PlacementContext } from './grid.js';
 
@@ -58,6 +59,7 @@ export function applyCommands(
           stunnedUntil: 0,
           charges: lvl.charges ?? 0,
           growthBonus: 0,
+          fusion: -1,
         });
         events.push({ e: 'place', x: cmd.cx + 0.5, y: cmd.cy + 0.5, towerType: cmd.towerType });
         break;
@@ -73,6 +75,11 @@ export function applyCommands(
         // la Trampa de púas no se mejora (se agota y desaparece)
         if (TOWERS[tower.type].onPathOnly) {
           reject(events, playerId, 'La Trampa no se puede mejorar');
+          break;
+        }
+        // una torre fusionada no admite más mejoras (F4.3)
+        if (tower.fusion >= 0) {
+          reject(events, playerId, 'Una fusión no se puede mejorar');
           break;
         }
         // Rango II: una torre ya especializada (nivel 3, spec elegida) con `rank2`
@@ -122,6 +129,11 @@ export function applyCommands(
         if (!tower) break;
         if (tower.owner !== playerId) {
           reject(events, playerId, 'Solo el dueño puede especializar esta torre');
+          break;
+        }
+        // una torre fusionada no se especializa (su fusión ES su identidad, F4.3)
+        if (tower.fusion >= 0) {
+          reject(events, playerId, 'Una fusión no se puede especializar');
           break;
         }
         if (tower.level < 3) {
@@ -175,6 +187,59 @@ export function applyCommands(
         const tower = state.towers.find((t) => t.id === cmd.towerId);
         if (!tower || tower.owner !== playerId) break;
         tower.targetMode = cmd.mode;
+        break;
+      }
+
+      // F4.3 · Fusión: dos torres ESPECIALIZADAS, ADYACENTES (Chebyshev 1), del
+      // MISMO dueño, cuyos tipos formen una receta. Consume ambas y deja UNA torre
+      // fusionada en la celda de `keepId` (la otra celda queda libre). Gratis: el
+      // coste son las dos torres; `invested` se suma para el refund de venta.
+      case 'fuse': {
+        const a = state.towers.find((t) => t.id === cmd.towerId);
+        const b = state.towers.find((t) => t.id === cmd.otherId);
+        if (!a || !b || a.id === b.id) break;
+        if (a.owner !== playerId || b.owner !== playerId) {
+          reject(events, playerId, 'Solo puedes fusionar torres tuyas');
+          break;
+        }
+        if (a.fusion >= 0 || b.fusion >= 0) {
+          reject(events, playerId, 'Esa torre ya es una fusión');
+          break;
+        }
+        if (a.spec < 0 || b.spec < 0) {
+          reject(events, playerId, 'Ambas torres deben estar especializadas');
+          break;
+        }
+        if (Math.max(Math.abs(a.cx - b.cx), Math.abs(a.cy - b.cy)) > 1) {
+          reject(events, playerId, 'Las torres deben estar adyacentes');
+          break;
+        }
+        const recipe = findFusion(a.type, b.type);
+        if (!recipe) {
+          reject(events, playerId, 'Esos tipos no forman ninguna receta');
+          break;
+        }
+        const keep = cmd.keepId === a.id ? a : cmd.keepId === b.id ? b : null;
+        if (!keep) {
+          reject(events, playerId, 'Celda de destino inválida');
+          break;
+        }
+        const other = keep === a ? b : a;
+        // la torre conservada SE CONVIERTE en la fusión: level 3 fijo, spec −1,
+        // sin más mejoras. El Rango II de los ingredientes se ignora (documentado
+        // en fusions.ts); su inversión viaja en `invested`. kills/daño se suman
+        // para no perder el historial; el crecimiento (growthBonus) no se hereda.
+        keep.fusion = FUSION_ORDER.indexOf(recipe.id);
+        keep.level = 3;
+        keep.spec = -1;
+        keep.invested += other.invested;
+        keep.kills += other.kills;
+        keep.damage += other.damage;
+        keep.cooldownLeft = 0;
+        keep.charges = 0;
+        keep.growthBonus = 0;
+        state.towers = state.towers.filter((t) => t.id !== other.id);
+        events.push({ e: 'fuse', x: keep.cx + 0.5, y: keep.cy + 0.5, fusion: recipe.id, name: recipe.name });
         break;
       }
 

@@ -4,6 +4,7 @@ import {
   activeStats,
   ENEMIES,
   ENEMY_ORDER,
+  fusionByIndex,
   INTERP_DELAY_MS,
   TOWERS,
   TOWER_ORDER,
@@ -11,10 +12,13 @@ import {
   makePlacementContext,
   pathWaypoints,
   type EnemyTypeId,
+  type FusionId,
   type MapDef,
   type PlacementContext,
   type Snap,
   type SnapEnemy,
+  type SnapTower,
+  type TowerLevelDef,
   type TowerTypeId,
 } from '@td/shared';
 import { store, type GameStore, type SnapFrame } from './store.js';
@@ -1108,10 +1112,17 @@ export interface ClientAura {
   haste: number;
 }
 
+// Stats de una torre del snapshot TENIENDO EN CUENTA su fusión (F4.3): si la
+// tupla trae índice de fusión, mandan los stats de la receta; espeja `statsOf`.
+function tupleStats(tw: SnapTower): TowerLevelDef {
+  const f = fusionByIndex(tw[13] ?? -1);
+  return f ? f.stats : activeStats(TOWER_ORDER[tw[1]], tw[4], tw[9] ?? -1);
+}
+
 export function computeBannerAuras(snap: Snap): Map<number, ClientAura> {
   const out = new Map<number, ClientAura>();
   for (const banner of snap.towers) {
-    const blvl = activeStats(TOWER_ORDER[banner[1]], banner[4], banner[9] ?? -1);
+    const blvl = tupleStats(banner);
     const dmg = blvl.auraDamage ?? 0;
     const haste = blvl.auraHaste ?? 0;
     if (dmg <= 0 && haste <= 0) continue; // no es estandarte (o aura nula)
@@ -1120,8 +1131,9 @@ export function computeBannerAuras(snap: Snap): Map<number, ClientAura> {
     for (const tw of snap.towers) {
       if (tw[0] === banner[0]) continue;
       const twType = TOWER_ORDER[tw[1]];
-      const tlvl = activeStats(twType, tw[4], tw[9] ?? -1);
-      if (tlvl.auraDamage !== undefined || tlvl.auraHaste !== undefined) continue; // otro estandarte
+      const tlvl = tupleStats(tw);
+      // un estandarte puro no recibe auras; el Señor de la Guerra (alsoFires) sí
+      if ((tlvl.auraDamage !== undefined || tlvl.auraHaste !== undefined) && !tlvl.alsoFires) continue;
       if (tlvl.incomePerWave) continue; // la mina
       if (tlvl.auraBounty !== undefined) continue; // el Alquimista (no dispara)
       if (TOWERS[twType].onPathOnly) continue; // la Trampa de púas
@@ -1139,11 +1151,11 @@ export function computeBannerAuras(snap: Snap): Map<number, ClientAura> {
 }
 
 // Cuenta cuántas torres (no estandartes, no minas) hay dentro del aura de un
-// Estandarte concreto. Usado por el panel del HUD ("Reforzando N torres").
+// Estandarte concreto (o fusión con aura). Usado por el panel del HUD.
 export function countBannerTargets(snap: Snap, bannerId: number): number {
   const banner = snap.towers.find((t) => t[0] === bannerId);
   if (!banner) return 0;
-  const blvl = activeStats(TOWER_ORDER[banner[1]], banner[4], banner[9] ?? -1);
+  const blvl = tupleStats(banner);
   if (blvl.auraDamage === undefined && blvl.auraHaste === undefined) return 0;
   const bx = banner[2] + 0.5;
   const by = banner[3] + 0.5;
@@ -1151,8 +1163,8 @@ export function countBannerTargets(snap: Snap, bannerId: number): number {
   for (const tw of snap.towers) {
     if (tw[0] === bannerId) continue;
     const twType = TOWER_ORDER[tw[1]];
-    const tlvl = activeStats(twType, tw[4], tw[9] ?? -1);
-    if (tlvl.auraDamage !== undefined || tlvl.auraHaste !== undefined) continue;
+    const tlvl = tupleStats(tw);
+    if ((tlvl.auraDamage !== undefined || tlvl.auraHaste !== undefined) && !tlvl.alsoFires) continue;
     if (tlvl.incomePerWave) continue;
     if (tlvl.auraBounty !== undefined) continue;
     if (TOWERS[twType].onPathOnly) continue;
@@ -1174,6 +1186,8 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
   for (const tw of snap.towers) {
     const [id, typeIdx, cx, cy, level, ownerIdx] = tw;
     const spec = tw[9] ?? -1;
+    const fusionIdx = tw[13] ?? -1;
+    const fusion = fusionByIndex(fusionIdx);
     const type = TOWER_ORDER[typeIdx];
     const owner = gs.init.players[ownerIdx];
     const x = toX(cx);
@@ -1185,8 +1199,8 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
       anim = { angle: -Math.PI / 2, recoil: 0, flash: 0 };
       towerAnim.set(id, anim);
     }
-    const lvl = activeStats(type, level, spec);
-    const canAir = towerTargetsAir(type, spec);
+    const lvl = tupleStats(tw);
+    const canAir = fusion ? fusion.targetsAir : towerTargetsAir(type, spec);
     const target = nearestEnemyAngle(interp, cx + 0.5, cy + 0.5, lvl.range, type, canAir);
     if (target !== null) anim.angle = lerpAngle(anim.angle, target, Math.min(1, dt * 10));
     anim.recoil = Math.max(0, anim.recoil - dt * 5);
@@ -1254,8 +1268,9 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
       }
     }
 
-    // rango de la torre seleccionada
-    if (id === selected) {
+    // rango de la torre seleccionada (la Gran Bertha alcanza TODO el mapa:
+    // se omite el círculo, que taparía el mapa entero)
+    if (id === selected && lvl.range < 90) {
       const pulse = 0.5 + Math.sin(t * 4) * 0.08;
       g.fillStyle = 'rgba(255,255,255,0.07)';
       g.strokeStyle = `rgba(255,213,79,${pulse})`;
@@ -1274,7 +1289,7 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
 
     g.save();
     g.translate(x + s / 2, y + s / 2);
-    drawTowerArt(type, s, level, t, anim, owner?.color ?? '#888', id === selected, spec);
+    drawTowerArt(type, s, level, t, anim, owner?.color ?? '#888', id === selected, spec, fusionIdx);
     // Trampa de púas: contador de cargas restantes + barra de desgaste bajo la placa.
     const charges = tw[11] ?? 0;
     if (type === 'trap' && charges > 0) {
@@ -1321,6 +1336,7 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
 }
 
 // Arte vectorial de cada torre, dibujado centrado en (0,0), celda de tamaño s.
+// `fusionIdx` >= 0: torre fusionada (F4.3) — arte combinado propio de la receta.
 function drawTowerArt(
   type: TowerTypeId,
   s: number,
@@ -1330,18 +1346,21 @@ function drawTowerArt(
   ownerColor: string,
   selected: boolean,
   spec = -1,
+  fusionIdx = -1,
 ): void {
   const def = TOWERS[type];
+  const fusion = fusionByIndex(fusionIdx);
   const specialized = spec >= 0;
-  // sube de tamaño con el nivel; las especializaciones son notablemente más grandes
-  const grow = (1 + (level - 1) * 0.07) * (specialized ? 1.22 : 1);
+  // sube de tamaño con el nivel; especializaciones y fusiones son más grandes
+  const grow = fusion ? 1.3 : (1 + (level - 1) * 0.07) * (specialized ? 1.22 : 1);
 
-  // halo de poder de las torres especializadas (palpita en su color)
-  if (specialized) {
+  // halo de poder de las torres especializadas/fusionadas (palpita en su color)
+  if (specialized || fusion) {
+    const haloColor = fusion ? fusion.color : def.color;
     const pulse = 0.5 + Math.sin(t * 3) * 0.5;
     const halo = g.createRadialGradient(0, 0, s * 0.2, 0, 0, s * 0.6);
-    halo.addColorStop(0, `${def.color}66`);
-    halo.addColorStop(1, `${def.color}00`);
+    halo.addColorStop(0, `${haloColor}66`);
+    halo.addColorStop(1, `${haloColor}00`);
     g.fillStyle = halo;
     g.beginPath();
     g.arc(0, 0, s * (0.5 + pulse * 0.08), 0, Math.PI * 2);
@@ -1370,6 +1389,26 @@ function drawTowerArt(
 
   const rec = anim.recoil * s * 0.08;
   const a = anim.angle;
+
+  // F4.3 · torre FUSIONADA: arte combinado propio + doble anillo arcano giratorio
+  // (sustituye rombos de nivel y corona; una fusión no tiene niveles ni spec).
+  if (fusion) {
+    drawFusionArt(fusion.id, s, t, a, rec, ownerColor, grow);
+    const spin = t * 1.2;
+    for (let ri = 0; ri < 2; ri++) {
+      const rr = baseR + s * (0.1 + ri * 0.08);
+      const phase = spin * (ri === 0 ? 1 : -1) + ri * Math.PI * 0.5;
+      g.strokeStyle = ri === 0 ? `${fusion.color}cc` : 'rgba(206,147,216,0.75)';
+      g.lineWidth = Math.max(1, s * 0.025);
+      for (let k = 0; k < 3; k++) {
+        const a0 = phase + (k * Math.PI * 2) / 3;
+        g.beginPath();
+        g.arc(0, 0, rr, a0, a0 + Math.PI * 0.42);
+        g.stroke();
+      }
+    }
+    return;
+  }
 
   switch (type) {
     case 'archer': {
@@ -1786,6 +1825,218 @@ function drawTowerArt(
         g.arc(gx, cy + s * 0.02, s * 0.025, 0, Math.PI * 2);
         g.fill();
       }
+    }
+  }
+}
+
+// F4.3 · Arte combinado de cada FUSIÓN, centrado en (0,0), celda de tamaño s.
+// Reconocible: mezcla los motivos de sus dos ingredientes.
+function drawFusionArt(
+  id: FusionId,
+  s: number,
+  t: number,
+  a: number, // ángulo de puntería (para las que disparan)
+  rec: number, // retroceso
+  ownerColor: string,
+  grow: number,
+): void {
+  switch (id) {
+    case 'glacialplague': {
+      // caldero con nube gélida-tóxica: vapores verde/celeste orbitando
+      g.fillStyle = '#263238';
+      roundRect(g, -s * 0.2, -s * 0.02, s * 0.4, s * 0.22, s * 0.06);
+      g.fill();
+      g.fillStyle = '#4dd0b1';
+      g.beginPath();
+      g.ellipse(0, -s * 0.02, s * 0.17, s * 0.05, 0, 0, Math.PI * 2);
+      g.fill();
+      for (let i = 0; i < 5; i++) {
+        const ph = (t * 0.5 + i / 5) % 1;
+        const ang = t * 0.9 + (i * Math.PI * 2) / 5;
+        const rr = s * (0.12 + ph * 0.22);
+        g.fillStyle = i % 2 === 0 ? `rgba(156,204,101,${0.55 - ph * 0.5})` : `rgba(129,212,250,${0.55 - ph * 0.5})`;
+        g.beginPath();
+        g.arc(Math.cos(ang) * rr, -s * 0.1 - ph * s * 0.22 + Math.sin(ang) * rr * 0.3, s * (0.09 - ph * 0.04) * grow, 0, Math.PI * 2);
+        g.fill();
+      }
+      break;
+    }
+    case 'railstorm': {
+      // doble riel largo con arcos eléctricos serpenteando entre las guías
+      g.save();
+      g.rotate(a);
+      g.translate(-rec, 0);
+      g.fillStyle = '#37474f';
+      roundRect(g, -s * 0.1, -s * 0.11, s * 0.2, s * 0.22, s * 0.05);
+      g.fill();
+      g.strokeStyle = '#b0bec5';
+      g.lineWidth = Math.max(1.5, s * 0.05);
+      for (const off of [-0.07, 0.07]) {
+        g.beginPath();
+        g.moveTo(0, s * off);
+        g.lineTo(s * 0.46 * grow, s * off);
+        g.stroke();
+      }
+      // arco eléctrico zigzag entre los rieles
+      g.strokeStyle = `rgba(255,238,88,${0.55 + Math.sin(t * 18) * 0.4})`;
+      g.lineWidth = Math.max(1, s * 0.03);
+      g.beginPath();
+      g.moveTo(s * 0.06, 0);
+      for (let i = 1; i <= 4; i++) {
+        g.lineTo(s * (0.06 + i * 0.1), (i % 2 === 0 ? 1 : -1) * s * 0.055);
+      }
+      g.stroke();
+      g.restore();
+      break;
+    }
+    case 'bigbertha': {
+      // obús descomunal: tubo grueso con refuerzos y boca enorme
+      g.save();
+      g.rotate(a);
+      g.fillStyle = '#1c262e';
+      roundRect(g, -s * 0.14 - rec, -s * 0.16, s * 0.58 * grow, s * 0.32, s * 0.1);
+      g.fill();
+      g.strokeStyle = '#546e7a';
+      g.lineWidth = Math.max(1, s * 0.03);
+      g.stroke();
+      // anillos de refuerzo
+      g.strokeStyle = '#78909c';
+      g.lineWidth = Math.max(1.5, s * 0.045);
+      for (const bx of [0.05, 0.2, 0.35]) {
+        g.beginPath();
+        g.moveTo(s * bx - rec, -s * 0.16);
+        g.lineTo(s * bx - rec, s * 0.16);
+        g.stroke();
+      }
+      // boca gigante
+      g.fillStyle = '#0a0e14';
+      g.beginPath();
+      g.arc(s * 0.44 * grow - rec, 0, s * 0.13, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = '#ff8a65';
+      g.lineWidth = Math.max(1, s * 0.03);
+      g.stroke();
+      g.restore();
+      break;
+    }
+    case 'warlord': {
+      // arco de guerra que apunta + estandarte plantado (dispara Y buffea)
+      g.save();
+      g.rotate(a);
+      g.translate(-rec, 0);
+      g.strokeStyle = '#d7ccc8';
+      g.lineWidth = Math.max(1.5, s * 0.05);
+      g.beginPath();
+      g.arc(s * 0.08, 0, s * 0.22 * grow, -Math.PI * 0.42, Math.PI * 0.42);
+      g.stroke();
+      g.strokeStyle = '#8d6e63';
+      g.lineWidth = Math.max(1, s * 0.03);
+      g.beginPath();
+      g.moveTo(-s * 0.06, 0);
+      g.lineTo(s * 0.3, 0);
+      g.stroke();
+      g.fillStyle = '#eceff1';
+      g.beginPath();
+      g.moveTo(s * 0.34, 0);
+      g.lineTo(s * 0.24, -s * 0.05);
+      g.lineTo(s * 0.24, s * 0.05);
+      g.fill();
+      g.restore();
+      // mástil con bandera del dueño (detrás del arco)
+      g.strokeStyle = '#5d4037';
+      g.lineWidth = Math.max(2, s * 0.05);
+      g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(-s * 0.16, s * 0.24);
+      g.lineTo(-s * 0.16, -s * 0.42 * grow);
+      g.stroke();
+      const wav = Math.sin(t * 5) * s * 0.03;
+      g.fillStyle = ownerColor;
+      g.beginPath();
+      g.moveTo(-s * 0.16, -s * 0.42 * grow);
+      g.quadraticCurveTo(s * 0.02, -s * 0.4 * grow + wav, s * 0.12, -s * 0.38 * grow - wav);
+      g.lineTo(s * 0.12, -s * 0.24 * grow - wav);
+      g.quadraticCurveTo(s * 0.0, -s * 0.26 * grow + wav, -s * 0.16, -s * 0.24 * grow);
+      g.closePath();
+      g.fill();
+      break;
+    }
+    case 'philostone': {
+      // matraz alquímico con la PIEDRA dorada dentro y vapores de veneno
+      g.fillStyle = '#37474f';
+      roundRect(g, -s * 0.18, s * 0.04, s * 0.36, s * 0.2, s * 0.05);
+      g.fill();
+      g.fillStyle = 'rgba(156,204,101,0.3)';
+      g.strokeStyle = '#a5d6a7';
+      g.lineWidth = Math.max(1.2, s * 0.03);
+      g.beginPath();
+      g.moveTo(-s * 0.06, -s * 0.28 * grow);
+      g.lineTo(-s * 0.06, -s * 0.06);
+      g.lineTo(-s * 0.22 * grow, s * 0.1);
+      g.lineTo(s * 0.22 * grow, s * 0.1);
+      g.lineTo(s * 0.06, -s * 0.06);
+      g.lineTo(s * 0.06, -s * 0.28 * grow);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      // la piedra: gema dorada palpitante en el corazón del matraz
+      const glow = 0.6 + Math.sin(t * 3.2) * 0.4;
+      g.fillStyle = `rgba(255,213,79,${glow})`;
+      g.beginPath();
+      g.moveTo(0, -s * 0.08);
+      g.lineTo(s * 0.09, 0);
+      g.lineTo(0, s * 0.08);
+      g.lineTo(-s * 0.09, 0);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = `rgba(255,241,118,${glow})`;
+      g.lineWidth = Math.max(1, s * 0.02);
+      g.stroke();
+      // vapores tóxicos con monedas: burbujas verdes que suben y "doran"
+      for (let i = 0; i < 3; i++) {
+        const ph = (t * (0.7 + i * 0.2) + i * 0.37) % 1;
+        g.fillStyle = ph < 0.5 ? `rgba(156,204,101,${0.8 - ph})` : `rgba(255,213,79,${1.2 - ph})`;
+        g.beginPath();
+        g.arc((i - 1) * s * 0.08, -s * 0.12 - ph * s * 0.26, s * 0.035, 0, Math.PI * 2);
+        g.fill();
+      }
+      break;
+    }
+    case 'winterheart': {
+      // corazón de cristal helado + copos orbitando (aura doble)
+      const beat = 1 + Math.sin(t * 2.6) * 0.06;
+      g.save();
+      g.scale(beat, beat);
+      g.fillStyle = 'rgba(129,212,250,0.85)';
+      g.strokeStyle = '#e1f5fe';
+      g.lineWidth = Math.max(1.2, s * 0.03);
+      g.beginPath();
+      g.moveTo(0, s * 0.16 * grow);
+      g.bezierCurveTo(-s * 0.3 * grow, -s * 0.08 * grow, -s * 0.14 * grow, -s * 0.3 * grow, 0, -s * 0.1 * grow);
+      g.bezierCurveTo(s * 0.14 * grow, -s * 0.3 * grow, s * 0.3 * grow, -s * 0.08 * grow, 0, s * 0.16 * grow);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      // grieta de cristal
+      g.strokeStyle = 'rgba(255,255,255,0.7)';
+      g.lineWidth = Math.max(1, s * 0.02);
+      g.beginPath();
+      g.moveTo(-s * 0.03, -s * 0.16);
+      g.lineTo(s * 0.02, -s * 0.04);
+      g.lineTo(-s * 0.02, s * 0.06);
+      g.stroke();
+      g.restore();
+      // copos de nieve orbitando (el aura de hielo) en el color del dueño el asta
+      g.fillStyle = '#e1f5fe';
+      g.font = `${Math.max(7, s * 0.16)}px serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      for (let i = 0; i < 3; i++) {
+        const ang = t * 1.4 + (i * Math.PI * 2) / 3;
+        g.fillText('❄', Math.cos(ang) * s * 0.34, Math.sin(ang) * s * 0.34 * 0.6 - s * 0.05);
+      }
+      void ownerColor;
+      break;
     }
   }
 }

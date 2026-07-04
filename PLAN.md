@@ -16,16 +16,18 @@ y deben ejecutarse con ese modelo (cambiar el modelo antes de lanzarlas).
 - ✅ F2.1 Repeticiones (seed+comandos, motor determinista, seek; identidad probada) — `b39cd09`
 - ✅ F2.2 Modo Horda (bucle + derrota por saturación + cansancio anti-esponja) — `b5ba3b9`
 
-**Fase 4 — Contenido (en curso)**
+**Fase 4 — Contenido ✅ COMPLETA**
 - ✅ F4.1 +5 monstruos, +2 jefes y oleadas Green TD (inmunidad/fuga escalonada/bendecida/telegrafía) — `8ef72da`
 - ✅ F4.2 +2 torres (Trampa sobre el camino, Alquimista) y Rango II de specs con identidades (4 disparos, ejecución 75% vida actual, shred AoE, crecimiento) — `9e9bbe1`
+- ✅ F4.3 🧠 Fusión de torres: 6 recetas curadas + pase de balance 500×receta vs baseline (todas dentro de ±10 en normal) — `267d71b`
+
+**Fase 3 — Sabor**
+- ✅ F3.1 Música procedural adaptativa (calma/oleada/jefe/tensión, crossfade) + fix del audio que no sonaba (AudioContext quedaba suspended) — `33059ac` · *hecha con Opus por decisión del usuario*
 
 **Pendiente:** (🧠 = ejecutar con Fable-5)
-- ⏳ F4.3 · 🧠 Fable-5 · Fusión de torres (6 recetas) — *recomendado siguiente*
-- ⏳ F3.1 · 🧠 Fable-5 · Música procedural adaptativa — *mejor al final (sabor, no bloquea)*
-- ⏳ F5.1 · 🧠 Fable-5 · Balance global + revisión adversarial + release en Cloudflare
+- ⏳ F5.1 · 🧠 Fable-5 · Balance global + revisión adversarial + release en Cloudflare — *cierre, la última*
 
-`BALANCE_VERSION` actual: **5** (subió con élites→2, horda→3, F4.1→4, F4.2→5). Los replays guardan su versión.
+`BALANCE_VERSION` actual: **6** (élites→2, horda→3, F4.1→4, F4.2→5, F4.3→6). Los replays guardan su versión.
 
 **Reglas de ejecución para el orquestador (aplican a TODAS las tareas):**
 
@@ -204,7 +206,7 @@ El modo Green TD: los enemigos no escapan, dan vueltas; pierdes por saturación.
 
 ## Fase 3 — Sonido pro
 
-### ⏳ F3.1 · 🧠 Música procedural adaptativa — **FABLE-5** · riesgo alto (calidad subjetiva)
+### ✅ F3.1 · Música procedural adaptativa — HECHO `33059ac` (con Opus)
 
 Que suene BIEN es la parte difícil; por eso va a Fable-5.
 
@@ -284,7 +286,7 @@ Solo enemigos que crean decisiones nuevas (añadir al FINAL de `ENEMY_ORDER`):
     (coste ~lineal, daño exponencial, cadencia a la baja).
 - Bump de `BALANCE_VERSION`. simtest: bots alcanzan algún rango II y ganan igual.
 
-### F4.3 · 🧠 Fusión de torres — **FABLE-5** · riesgo ALTO (diseño + balance)
+### ✅ F4.3 · 🧠 Fusión de torres — HECHO `267d71b` (ejecutado con Fable-5)
 
 Element TD style, pero con recetas CURADAS (no combinatoria):
 
@@ -331,6 +333,6 @@ Element TD style, pero con recetas CURADAS (no combinatoria):
 | F2.2 Modo Horda | Opus 4.8 | ✅ hecho | `b5ba3b9` |
 | F4.1 Monstruos + oleadas Green TD | Opus 4.8 | ✅ hecho | `8ef72da` |
 | F4.2 Torres + Rango II | Opus 4.8 | ✅ hecho | `9e9bbe1` |
-| F4.3 Fusión de torres | 🧠 **Fable-5** | ⏳ pendiente (recomendado siguiente) | — |
-| F3.1 Música procedural | 🧠 **Fable-5** | ⏳ pendiente (mejor al final) | — |
-| F5.1 Balance global + revisión + release | 🧠 **Fable-5** | ⏳ pendiente (cierre) | — |
+| F4.3 Fusión de torres | 🧠 **Fable-5** | ✅ hecho | `267d71b` |
+| F3.1 Música procedural | Opus 4.8 (decisión usuario) | ✅ hecho | `33059ac` |
+| F5.1 Balance global + revisión + release | 🧠 **Fable-5** | ⏳ pendiente (cierre, la última) | — |

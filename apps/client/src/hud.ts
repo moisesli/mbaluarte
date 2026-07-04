@@ -3,6 +3,8 @@ import {
   CALL_WAVE_GOLD_PER_SEC,
   ENEMIES,
   ENEMY_ORDER,
+  findFusion,
+  fusionByIndex,
   hasRank2,
   HORDE_CAP,
   rank2Cost,
@@ -187,8 +189,16 @@ function wirePanel(): void {
     const sell = target.closest<HTMLButtonElement>('#panel-sell');
     const specBtn = target.closest<HTMLButtonElement>('.spec-btn');
     const mode = target.closest<HTMLElement>('.tmode')?.dataset.mode;
+    const fuseBtn = target.closest<HTMLButtonElement>('.fuse-btn');
     if (upgrade && !upgrade.disabled) {
       net.send({ type: 'cmd', cmd: { kind: 'upgrade', towerId } });
+    } else if (fuseBtn && !fuseBtn.disabled) {
+      // la fusión se queda en la celda de la torre SELECCIONADA (keepId = towerId);
+      // para quedarse en la otra celda, selecciona la otra torre y fusiona desde ahí
+      net.send({
+        type: 'cmd',
+        cmd: { kind: 'fuse', towerId, otherId: Number(fuseBtn.dataset.other), keepId: towerId },
+      });
     } else if (specBtn && !specBtn.disabled) {
       net.send({ type: 'cmd', cmd: { kind: 'specialize', towerId, spec: Number(specBtn.dataset.spec) } });
     } else if (sell) {
@@ -225,10 +235,11 @@ function statBlock(lvl: TowerLevelDef, next: TowerLevelDef | null): string[] {
     const nxt = next?.auraHaste !== undefined && next.auraHaste > 0 ? `${Math.round(next.auraHaste * 100)}%` : null;
     lines.push(stat('Aura de cadencia', `+${Math.round(lvl.auraHaste * 100)}%`, nxt));
   }
-  if ((lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) && lvl.range > 0) {
+  if ((lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) && lvl.range > 0 && !lvl.alsoFires) {
     lines.push(stat('Radio', lvl.range, next?.range));
   } else if (lvl.range > 0) {
-    lines.push(stat('Alcance', lvl.range, next?.range));
+    // la Gran Bertha alcanza TODO el mapa (range 99): mostrarlo con palabras
+    lines.push(stat('Alcance', lvl.range >= 90 ? 'todo el mapa' : lvl.range, next?.range));
   }
   if (lvl.cooldown > 0) lines.push(stat('Cadencia', lvl.cooldown, next?.cooldown, 's'));
   if (lvl.splash) lines.push(stat('Área', lvl.splash, next?.splash));
@@ -240,6 +251,9 @@ function statBlock(lvl: TowerLevelDef, next: TowerLevelDef | null): string[] {
   if (lvl.executeCurrent) lines.push(`Remata por debajo del <b>${Math.round(lvl.executeCurrent * 100)}%</b> de la vida ACTUAL`);
   if (lvl.shredChance) lines.push(`Shred: <b>${Math.round(lvl.shredChance * 100)}%</b> de partir la armadura en área`);
   if (lvl.growth) lines.push(`Crecimiento: <b>+${lvl.growth}</b> de daño por disparo`);
+  // F4.3 · mecánicas de fusión
+  if (lvl.lineWidth) lines.push('Rayo <b>perforante</b>: golpea a TODOS los enemigos en línea (a inmunes −70%)');
+  if (lvl.poisonBountyMult) lines.push(`Botín <b>×${lvl.poisonBountyMult}</b> por bajas de su veneno`);
   if (lvl.auraBounty) lines.push(stat('Aura de oro', `+${Math.round(lvl.auraBounty * 100)}%`, next?.auraBounty ? `+${Math.round(next.auraBounty * 100)}%` : null));
   if (lvl.incomePerWave) lines.push(stat('Ingreso', `🪙${lvl.incomePerWave}${lvl.incomeToAll ? ' a todos' : ''}`, next?.incomePerWave ? `🪙${next.incomePerWave}` : null));
   if (lvl.pierceArmor) lines.push('Perfora armadura');
@@ -247,8 +261,9 @@ function statBlock(lvl: TowerLevelDef, next: TowerLevelDef | null): string[] {
 }
 
 // Botones de modo de objetivo (solo para torres que disparan y tienen alcance).
-function targetModesHtml(def: (typeof TOWERS)[TowerTypeId], lvl: TowerLevelDef, modeIdx: number): string {
-  if (def.projectileKind === 'none' || lvl.range <= 0) return '';
+// `projKind` viene resuelto por el llamador (las fusiones usan el de su receta).
+function targetModesHtml(projKind: string, lvl: TowerLevelDef, modeIdx: number): string {
+  if (projKind === 'none' || lvl.range <= 0) return '';
   return `<div class="tmodes">${TARGET_MODES.map(
     (m, i) => `<button class="tmode ${i === modeIdx ? 'active' : ''}" data-mode="${m}">${TARGET_LABELS[m]}</button>`,
   ).join('')}</div>`;
@@ -271,26 +286,35 @@ export function refreshPanel(): void {
   const [id, typeIdx, , , level, ownerIdx, modeIdx, kills, damage] = data;
   const spec = data[9] ?? -1;
   const charges = data[11] ?? 0;
+  // F4.3: índice de fusión e inversión total (para el valor de venta de fusiones)
+  const fusionIdx = data[13] ?? -1;
+  const invested = data[14] ?? 0;
+  const fusion = fusionByIndex(fusionIdx);
   const type = TOWER_ORDER[typeIdx];
   const def = TOWERS[type];
   const specialized = spec >= 0;
   const isRank2 = level >= 4;
-  const lvl = activeStats(type, level, spec);
-  const next = !specialized && level < 3 ? def.levels[level] : null;
+  const lvl = fusion ? fusion.stats : activeStats(type, level, spec);
+  const projKind = fusion ? fusion.projectileKind : def.projectileKind;
+  const next = !fusion && !specialized && level < 3 ? def.levels[level] : null;
   const owner = gs.init.players[ownerIdx];
   const isMine = owner?.id === store.playerId;
   const gold = myGold(gs);
-  const sellValue = Math.floor(towerTotalCost(type, level, spec) * SELL_REFUND);
-  const canSpecialize = level >= 3 && !specialized && !def.onPathOnly;
+  // la inversión de una fusión (suma de sus dos ingredientes) no se puede
+  // reconstruir desde type/level/spec: usa el `invested` real del snapshot
+  const sellValue = Math.floor((fusion ? invested : towerTotalCost(type, level, spec)) * SELL_REFUND);
+  const canSpecialize = !fusion && level >= 3 && !specialized && !def.onPathOnly;
   // ¿puede subir al Rango II? torre especializada, aún en nivel 3, cuya spec tenga rank2
-  const canRank2 = specialized && level === 3 && hasRank2(type, spec);
+  const canRank2 = !fusion && specialized && level === 3 && hasRank2(type, spec);
   const r2cost = canRank2 ? rank2Cost(type, spec) : null;
 
   const statLines = statBlock(lvl, next);
-  // Estandarte: cuántas torres está reforzando ahora mismo (contado en el cliente)
+  // Estandarte (y fusiones con aura): cuántas torres está reforzando ahora mismo
   if (lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) {
     const n = countBannerTargets(gs.latest, id);
     statLines.push(`Reforzando <b>${n}</b> ${n === 1 ? 'torre' : 'torres'}`);
+    // el Señor de la Guerra además dispara: muestra también su historial de combate
+    if (lvl.alsoFires) statLines.push(`Bajas: <b>${kills}</b> · Daño total: <b>${damage.toLocaleString()}</b>`);
   } else if (def.onPathOnly) {
     // Trampa de púas: cargas restantes (no acumula kills/daño clásicos)
     statLines.push(`Cargas: <b>${charges}</b>`);
@@ -300,20 +324,58 @@ export function refreshPanel(): void {
   }
   statLines.push(`Dueño: <b style="color:${owner?.color}">${escapeHtml(owner?.name ?? '?')}</b>`);
 
-  // cabecera: nombre (+ especialización) y nivel/estrella
-  const title = specialized
-    ? `${TOWER_ICONS[type]} ${def.specs[spec].name}`
-    : `${TOWER_ICONS[type]} ${def.name}`;
-  const levelTag = isRank2
-    ? '★★ Rango II'
+  // cabecera: nombre (fusión > especialización > tipo) y nivel/estrella
+  const title = fusion
+    ? `${fusion.icon} ${fusion.name}`
     : specialized
-      ? '★ Élite'
-      : `Nv. ${level}${level >= 3 ? ' (máx)' : ''}`;
+      ? `${TOWER_ICONS[type]} ${def.specs[spec].name}`
+      : `${TOWER_ICONS[type]} ${def.name}`;
+  const levelTag = fusion
+    ? '⚗ Fusión'
+    : isRank2
+      ? '★★ Rango II'
+      : specialized
+        ? '★ Élite'
+        : `Nv. ${level}${level >= 3 ? ' (máx)' : ''}`;
+
+  // F4.3 · candidatos de fusión: la torre seleccionada está especializada y tiene
+  // vecinas (Chebyshev 1) especializadas del mismo dueño con receta. Un botón por
+  // receta (si hay dos vecinas del mismo tipo se usa la primera del snapshot).
+  // La fusión SE QUEDA en la celda de la torre seleccionada; para elegir la otra
+  // celda, selecciona la otra torre y fusiona desde su panel.
+  let fuseHtml = '';
+  if (isMine && !fusion && specialized) {
+    const seen = new Set<string>();
+    const btns: string[] = [];
+    for (const other of gs.latest.towers) {
+      if (other[0] === id) continue;
+      if ((other[9] ?? -1) < 0 || (other[13] ?? -1) >= 0) continue; // especializada y sin fusionar
+      if (other[5] !== ownerIdx) continue; // mismo dueño
+      if (Math.max(Math.abs(other[2] - data[2]), Math.abs(other[3] - data[3])) !== 1) continue; // adyacente
+      const recipe = findFusion(type, TOWER_ORDER[other[1]]);
+      if (!recipe || seen.has(recipe.id)) continue;
+      seen.add(recipe.id);
+      btns.push(`
+        <button class="spec-btn fuse-btn" data-other="${other[0]}">
+          <span class="spec-name">⚗ Fusionar → ${recipe.icon} ${recipe.name}</span>
+          <span class="spec-desc">${recipe.desc} Consume ambas torres; la fusión se queda AQUÍ.</span>
+        </button>`);
+    }
+    if (btns.length > 0) {
+      fuseHtml = `<div class="spec-title">Fusión</div><div class="spec-choices">${btns.join('')}</div>`;
+    }
+  }
 
   // acciones del dueño
   let actions = '';
   if (isMine) {
-    if (def.onPathOnly) {
+    if (fusion) {
+      // una fusión no se mejora ni se especializa: solo venta (+ modo de objetivo)
+      actions = `
+        <p class="spec-desc" style="padding:0 4px 6px">${fusion.desc}</p>
+        <div class="prow"><button id="panel-sell" class="btn ghost">💸 Vender ${sellValue}</button></div>
+        ${targetModesHtml(projKind, lvl, modeIdx)}`;
+    } else if (def.onPathOnly) {
       // Trampa de púas: no se mejora ni especializa; solo se puede vender.
       actions = `<div class="prow"><button id="panel-sell" class="btn ghost">💸 Vender ${sellValue}</button></div>`;
     } else if (canSpecialize) {
@@ -338,24 +400,26 @@ export function refreshPanel(): void {
       actions = `
         <div class="spec-title">Rango II</div>
         <p class="spec-desc" style="padding:0 4px 6px">${escapeHtml(r2desc)}</p>
+        ${fuseHtml}
         <div class="prow">
           <button id="panel-upgrade" class="btn primary" ${gold < r2cost ? 'disabled' : ''}>
             ★★ Rango II 🪙${r2cost}
           </button>
           <button id="panel-sell" class="btn ghost">💸 ${sellValue}</button>
         </div>
-        ${targetModesHtml(def, lvl, modeIdx)}`;
+        ${targetModesHtml(projKind, lvl, modeIdx)}`;
     } else {
       const nextCost = next?.cost ?? null;
       const maxedLabel = isRank2 ? 'Máximo (Rango II)' : 'Máximo';
       actions = `
+        ${fuseHtml}
         <div class="prow">
           <button id="panel-upgrade" class="btn primary" ${nextCost === null || gold < nextCost ? 'disabled' : ''}>
             ${nextCost === null ? maxedLabel : `⬆ Mejorar 🪙${nextCost}`}
           </button>
           <button id="panel-sell" class="btn ghost">💸 ${sellValue}</button>
         </div>
-        ${targetModesHtml(def, lvl, modeIdx)}`;
+        ${targetModesHtml(projKind, lvl, modeIdx)}`;
     }
   } else {
     actions = `<p class="hint">Torre de ${escapeHtml(owner?.name ?? 'otro jugador')}</p>`;

@@ -38,6 +38,17 @@ export type EnemyTypeId =
   | 'chimera' // jefe volador de media partida
   | 'behemoth'; // jefe terrestre pesado que aturde torres al cruzar esquinas
 
+// F4.3 · Fusión de torres (recetas curadas estilo Element TD). Dos torres
+// ESPECIALIZADAS adyacentes del mismo dueño cuyos tipos formen una receta se
+// fusionan en UNA torre con mecánica propia (defs en balance/fusions.ts).
+export type FusionId =
+  | 'glacialplague' // Hielo + Veneno — nube que ralentiza Y envenena en área
+  | 'railstorm' // Tesla + Francotirador — rayo perforante en línea recta
+  | 'bigbertha' // Cañón + Mortero — obús de mapa completo, cooldown enorme
+  | 'warlord' // Arquero + Estandarte — dispara Y buffea como estandarte
+  | 'philostone' // Veneno + Alquimista — sus bajas por veneno pagan botín doble
+  | 'winterheart'; // Hielo + Estandarte — aura doble: ralentiza enemigos y acelera torres
+
 // Afijos de enemigos élite. Cada uno modifica el estado del enemigo (ver step.ts).
 export type AffixId =
   | 'swift' // veloz
@@ -87,6 +98,10 @@ export interface TowerLevelDef {
   executeCurrent?: number; // *Cañón de Riel II*: remata por debajo de esta fracción de la vida ACTUAL (no inmunes)
   shredChance?: number; // *Obús/Metralla II*: prob. por impacto de reducir a la mitad la armadura en radio 1.5
   growth?: number; // *Arco Largo/Explorador II*: +daño base permanente por disparo
+  // --- F4.3 · mecánicas exclusivas de las FUSIONES (balance/fusions.ts) ---
+  lineWidth?: number; // *Tormenta de Riel*: rayo PERFORANTE — golpea a todos los enemigos a ≤ esta distancia de la línea de tiro (a inmunes −70%, como el Tesla)
+  alsoFires?: boolean; // *Señor de la Guerra*: la torre tiene aura de Estandarte Y ADEMÁS dispara
+  poisonBountyMult?: number; // *Piedra Filosofal*: multiplicador de botín de las bajas causadas por SU veneno (DoT)
 }
 
 // Especialización: se elige una de dos al llegar al nivel máximo. Es un bloque
@@ -217,6 +232,11 @@ export interface TowerState {
   // --- F4.2 ---
   charges: number; // Trampa de púas: golpes restantes; a 0 se auto-vende. Otras torres: 0
   growthBonus: number; // *Arco Largo/Explorador II*: +daño base acumulado por disparo (crecimiento permanente)
+  // --- F4.3 ---
+  // Índice en FUSION_ORDER de la fusión de esta torre; −1 = torre normal. Una torre
+  // fusionada conserva su `type` (el de la celda elegida) SOLO para arte/compat: todo
+  // su comportamiento sale de la def de la fusión (level=3, spec=−1, sin más mejoras).
+  fusion: number;
 }
 
 export interface ProjectileState {
@@ -317,7 +337,10 @@ export type Command =
   | { kind: 'specialize'; towerId: number; spec: number }
   | { kind: 'sell'; towerId: number }
   | { kind: 'target'; towerId: number; mode: TargetMode }
-  | { kind: 'call_wave' };
+  | { kind: 'call_wave' }
+  // F4.3 · fusionar dos torres especializadas adyacentes con receta. `keepId` es la
+  // torre cuya CELDA se conserva (debe ser towerId u otherId); la otra queda libre.
+  | { kind: 'fuse'; towerId: number; otherId: number; keepId: number };
 
 export interface PlayerCommand {
   playerId: string;
@@ -376,6 +399,7 @@ export type GameEvent =
   | { e: 'place'; x: number; y: number; towerType: TowerTypeId }
   | { e: 'upgrade'; x: number; y: number; level: number }
   | { e: 'specialize'; x: number; y: number; towerType: TowerTypeId; spec: number; name: string }
+  | { e: 'fuse'; x: number; y: number; fusion: FusionId; name: string } // F4.3: FX + toast de fusión
   | { e: 'sell'; x: number; y: number; refund: number }
   | { e: 'reject'; playerId: string; reason: string }
   | { e: 'boss'; name: string }

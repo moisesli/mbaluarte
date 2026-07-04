@@ -2,8 +2,10 @@
 // avanza miles de ticks. Verifica oleadas, economía, muertes y determinismo.
 import {
   activeStats,
+  computeAuras,
   createGame,
   ENEMIES,
+  findFusion,
   generateWave,
   getMap,
   hasRank2,
@@ -17,6 +19,8 @@ import {
   stepGame,
   towerLevel,
   BALANCE_VERSION,
+  FUSION_ORDER,
+  FUSIONS,
   HORDE_CAP,
   MAPS,
   START_LIVES,
@@ -25,6 +29,7 @@ import {
   TOWER_ORDER,
   type EnemyState,
   type EnemyTypeId,
+  type FusionId,
   type GameEvent,
   type GameState,
   type PlayerCommand,
@@ -54,9 +59,13 @@ function mkTower(type: TowerTypeId, over: Partial<TowerState> = {}): TowerState 
   return {
     id: 2000, type, cx: 5, cy: 1, level: 3, spec: -1, owner: 'p1',
     cooldownLeft: 0, targetMode: 'first', invested: 100, kills: 0, damage: 0, stunnedUntil: 0,
-    charges: 0, growthBonus: 0,
+    charges: 0, growthBonus: 0, fusion: -1,
     ...over,
   };
+}
+// mkTower con una fusión F4.3 armada directamente (para pruebas dirigidas).
+function mkFused(type: TowerTypeId, fusionId: FusionId, over: Partial<TowerState> = {}): TowerState {
+  return mkTower(type, { fusion: FUSION_ORDER.indexOf(fusionId), level: 3, spec: -1, ...over });
 }
 
 function buildCellCandidates(mapId: string): [number, number][] {
@@ -82,7 +91,11 @@ function buildCellCandidates(mapId: string): [number, number][] {
 
 const BUILD_ORDER: TowerTypeId[] = ['archer', 'cannon', 'frost', 'archer', 'tesla', 'banner', 'poison', 'sniper', 'mortar'];
 
-function botCommands(state: GameState, candidates: [number, number][], counters: Map<string, number>): PlayerCommand[] {
+function botCommands(
+  state: GameState,
+  candidates: [number, number][],
+  counters: Map<string, number>,
+): PlayerCommand[] {
   const cmds: PlayerCommand[] = [];
   if (state.waveState !== 'interlude') return cmds;
 
@@ -90,16 +103,57 @@ function botCommands(state: GameState, candidates: [number, number][], counters:
   const used = new Set(state.towers.map((t) => `${t.cx},${t.cy}`));
   for (const player of state.players) {
     let budget = player.gold; // oro disponible tras las órdenes de este tick
+
+    // F4.3 · FUSIONAR (máx. una por tick): dos torres propias ESPECIALIZADAS,
+    // adyacentes (Chebyshev 1) y con receta → fuse (se queda en la celda de la 1ª).
+    // Las dos torres implicadas se excluyen del resto de órdenes de este tick.
+    const fusedIds = new Set<number>();
+    const fusable = state.towers.filter((t) => t.owner === player.id && t.spec >= 0 && t.fusion < 0);
+    outer: for (let i = 0; i < fusable.length; i++) {
+      for (let j = i + 1; j < fusable.length; j++) {
+        const A = fusable[i];
+        const B = fusable[j];
+        if (Math.max(Math.abs(A.cx - B.cx), Math.abs(A.cy - B.cy)) !== 1) continue;
+        if (!findFusion(A.type, B.type)) continue;
+        cmds.push({ playerId: player.id, cmd: { kind: 'fuse', towerId: A.id, otherId: B.id, keepId: A.id } });
+        fusedIds.add(A.id);
+        fusedIds.add(B.id);
+        break outer;
+      }
+    }
+
+    // ids de torres que forman PAR de receta con una vecina propia (para priorizar
+    // su progreso hacia la especialización y así habilitar la fusión)
+    const pairable = new Set<number>();
+    {
+      const myTowers = state.towers.filter((t) => t.owner === player.id && t.fusion < 0);
+      for (let i = 0; i < myTowers.length; i++) {
+        for (let j = i + 1; j < myTowers.length; j++) {
+          const A = myTowers[i];
+          const B = myTowers[j];
+          if (Math.max(Math.abs(A.cx - B.cx), Math.abs(A.cy - B.cy)) !== 1) continue;
+          if (!findFusion(A.type, B.type)) continue;
+          pairable.add(A.id);
+          pairable.add(B.id);
+        }
+      }
+    }
+
     // copias locales de las torres del jugador: se mutan para simular el efecto
-    // de las órdenes de ESTE tick sin tocar el estado real de la simulación
+    // de las órdenes de ESTE tick sin tocar el estado real de la simulación.
+    // Se excluyen las fusionadas este tick y las ya fusionadas (no se mejoran).
     const mine = state.towers
-      .filter((t) => t.owner === player.id)
+      .filter((t) => t.owner === player.id && !fusedIds.has(t.id) && t.fusion < 0)
       .map((t) => ({ id: t.id, type: t.type, level: t.level, spec: t.spec }));
+    // prioridad: primero los miembros de un par de receta, luego el resto
+    const byPairFirst = <T extends { id: number }>(x: T, y: T) =>
+      Number(pairable.has(y.id)) - Number(pairable.has(x.id));
 
     // hasta 3 acciones por interludio: prioriza progresar torres hacia la especialización
     for (let act = 0; act < 3; act++) {
-      // 1) especializar una torre al máximo aún sin rama (alterna A/B por id)
-      const maxed = mine.find((t) => t.level >= 3 && t.spec < 0);
+      // 1) especializar una torre al máximo aún sin rama (alterna A/B por id);
+      // los miembros de par van primero (habilitan la fusión F4.3)
+      const maxed = mine.filter((t) => t.level >= 3 && t.spec < 0).sort(byPairFirst)[0];
       if (maxed) {
         const specIdx = maxed.id % 2;
         const specCost = TOWERS[maxed.type].specs[specIdx].cost;
@@ -123,8 +177,43 @@ function botCommands(state: GameState, candidates: [number, number][], counters:
         }
       }
 
-      // 2) con una base de torres, subir la más avanzada (<3) hacia el máximo
-      const upgradable = mine.filter((t) => t.level < 3).sort((x, y) => y.level - x.level)[0];
+      // 1c) PROYECTO DE FUSIÓN (F4.3), UNA VEZ por partida y jugador: con una
+      // base de ≥6 torres y oro de sobra, planta el par hielo+veneno en dos
+      // celdas adyacentes reservadas DE GOLPE (así el otro jugador no roba la
+      // vecina entre medias). byPairFirst prioriza especializarlas y el paso 0
+      // las fusiona en la Plaga Glacial. Fuera de este proyecto, el bot juega
+      // exactamente igual que siempre.
+      {
+        const hasFused = state.towers.some((t) => t.owner === player.id && t.fusion >= 0);
+        const bothCost = TOWERS.frost.levels[0].cost + TOWERS.poison.levels[0].cost;
+        if (!hasFused && pairable.size === 0 && mine.length >= 6 && budget >= bothCost + 100) {
+          let placedPair = false;
+          for (const [ax, ay] of candidates) {
+            if (used.has(`${ax},${ay}`)) continue;
+            const b = candidates.find(
+              ([bx, by]) =>
+                !used.has(`${bx},${by}`) && (bx !== ax || by !== ay) && Math.max(Math.abs(bx - ax), Math.abs(by - ay)) === 1,
+            );
+            if (!b) continue;
+            used.add(`${ax},${ay}`);
+            used.add(`${b[0]},${b[1]}`);
+            cmds.push({ playerId: player.id, cmd: { kind: 'place', towerType: 'frost', cx: ax, cy: ay } });
+            cmds.push({ playerId: player.id, cmd: { kind: 'place', towerType: 'poison', cx: b[0], cy: b[1] } });
+            mine.push({ id: -1 - act, type: 'frost', level: 1, spec: -1 });
+            mine.push({ id: -100 - act, type: 'poison', level: 1, spec: -1 });
+            budget -= bothCost;
+            placedPair = true;
+            break;
+          }
+          if (placedPair) continue;
+        }
+      }
+
+      // 2) con una base de torres, subir la más avanzada (<3) hacia el máximo;
+      // a igual criterio, primero los miembros de par de receta
+      const upgradable = mine
+        .filter((t) => t.level < 3)
+        .sort((x, y) => byPairFirst(x, y) || y.level - x.level)[0];
       if (mine.length >= 4 && upgradable) {
         const upCost = towerLevel(upgradable.type, upgradable.level + 1).cost;
         if (budget >= upCost) {
@@ -284,6 +373,9 @@ assert(
   a.state.towers.some((t) => t.level >= 4 && t.spec >= 0),
   `los bots alcanzan algún RANGO II (${a.state.towers.filter((t) => t.level >= 4).length} torres en nivel 4)`,
 );
+// F4.3: los bots FUSIONAN al menos una torre (pares de receta adyacentes) y,
+// junto con el assert de victoria de abajo, GANAN el clásico en normal igual.
+assert((a.eventCounts.get('fuse') ?? 0) > 0, `los bots FUSIONAN torres (${a.eventCounts.get('fuse') ?? 0} fusiones)`);
 assert(
   a.state.players.every((p) => p.stats.goldEarned > 100),
   'todos los jugadores ganaron oro',
@@ -345,7 +437,7 @@ console.log('— Regresión: las crías de spawnOnDeath sobreviven a un golpe de
   const cannon: TowerState = {
     id: 2000, type: 'cannon', cx: 5, cy: 1, level: 3, spec: -1, owner: 'p1',
     cooldownLeft: 0, targetMode: 'first', invested: 440, kills: 0, damage: 0, stunnedUntil: 0,
-    charges: 0, growthBonus: 0,
+    charges: 0, growthBonus: 0, fusion: -1,
   };
   st.towers.push(cannon);
 
@@ -387,14 +479,14 @@ console.log('— Estandarte: refuerza el daño de las torres cercanas (sin apila
     const archer: TowerState = {
       id: 2000, type: 'archer', cx: 5, cy: 1, level: 1, spec: -1, owner: 'p1',
       cooldownLeft: 0, targetMode: 'first', invested: 50, kills: 0, damage: 0, stunnedUntil: 0,
-      charges: 0, growthBonus: 0,
+      charges: 0, growthBonus: 0, fusion: -1,
     };
     st.towers.push(archer);
     for (let i = 0; i < banners; i++) {
       st.towers.push({
         id: 3000 + i, type: 'banner', cx: 6 + i, cy: 1, level: 1, spec: -1, owner: 'p1',
         cooldownLeft: 0, targetMode: 'first', invested: 90, kills: 0, damage: 0, stunnedUntil: 0,
-        charges: 0, growthBonus: 0,
+        charges: 0, growthBonus: 0, fusion: -1,
       });
     }
     // un tick: el arquero está listo y dispara; leemos el proyectil emitido
@@ -1083,6 +1175,259 @@ console.log('— F4.2 · determinismo con torres F4.2 (misma semilla → mismo e
     return JSON.stringify([st.tick, st.rng, st.nextId, st.enemies.length, st.towers.map((t) => [t.id, t.charges, t.growthBonus]), st.players[0].gold]);
   }
   assert(f42Hash() === f42Hash(), 'la sim con Trampa/Alquimista/shred es determinista');
+}
+
+console.log('— F4.3 · Fusión: consume 2 torres y crea 1 con invested sumado —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 800, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  // dos celdas CONSTRUIBLES adyacentes (Chebyshev 1) para el par hielo+veneno
+  const cands = buildCellCandidates('sendero');
+  const cellA = cands.find((a) =>
+    cands.some((b) => (a[0] !== b[0] || a[1] !== b[1]) && Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) === 1),
+  )!;
+  const cellB = cands.find(
+    (b) => (b[0] !== cellA[0] || b[1] !== cellA[1]) && Math.max(Math.abs(cellA[0] - b[0]), Math.abs(cellA[1] - b[1])) === 1,
+  )!;
+  // hielo y veneno ESPECIALIZADOS adyacentes → Plaga Glacial
+  st.towers.push(mkTower('frost', { id: 4100, cx: cellA[0], cy: cellA[1], spec: 0, invested: 655 }));
+  st.towers.push(mkTower('poison', { id: 4101, cx: cellB[0], cy: cellB[1], spec: 1, invested: 755 }));
+  const events = stepGame(st, simCtx, [
+    { playerId: 'p1', cmd: { kind: 'fuse', towerId: 4100, otherId: 4101, keepId: 4100 } },
+  ]);
+  const fuseEv = events.find((e) => e.e === 'fuse');
+  const fused = st.towers.find((t) => t.id === 4100);
+  assert(st.towers.length === 1, `la fusión CONSUME ambas torres y deja UNA (${st.towers.length})`);
+  assert(fused !== undefined && fused.fusion === FUSION_ORDER.indexOf('glacialplague'), `la torre resultante lleva la fusión correcta (fusion=${fused?.fusion} = glacialplague)`);
+  assert(fused!.invested === 655 + 755, `invested = suma de ambos ingredientes (${fused!.invested} == 1410)`);
+  assert(fused!.spec === -1 && fused!.level === 3, `la fusionada queda con level 3 y spec −1 (level=${fused!.level}, spec=${fused!.spec})`);
+  assert(fused!.cx === cellA[0] && fused!.cy === cellA[1], `la fusión se queda en la celda de keepId (${fused!.cx},${fused!.cy})`);
+  assert(fuseEv !== undefined && fuseEv.e === 'fuse' && fuseEv.name === FUSIONS.glacialplague.name, 'se emite el evento fuse con el nombre de la receta');
+
+  // la celda liberada vuelve a ser construible
+  assert(
+    placementError(map, makePlacementContext(map), st.towers, cellB[0], cellB[1], 'archer') === null,
+    'la celda del ingrediente consumido queda LIBRE',
+  );
+
+  // una fusión no se puede mejorar ni especializar ni re-fusionar
+  const ev2 = stepGame(st, simCtx, [
+    { playerId: 'p1', cmd: { kind: 'upgrade', towerId: 4100 } },
+    { playerId: 'p1', cmd: { kind: 'specialize', towerId: 4100, spec: 0 } },
+  ]);
+  const rejects2 = ev2.filter((e) => e.e === 'reject').map((e) => (e.e === 'reject' ? e.reason : ''));
+  assert(rejects2.some((r) => r.includes('no se puede mejorar')), 'una fusión NO se puede mejorar (reject)');
+  assert(rejects2.some((r) => r.includes('no se puede especializar')), 'una fusión NO se puede especializar (reject)');
+}
+
+console.log('— F4.3 · Fusión: rechazos (adyacencia, spec, receta, dueño, keepId) —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  function tryFuse(
+    setup: (st: GameState) => void,
+    cmd: { towerId: number; otherId: number; keepId: number },
+    by = 'p1',
+  ): string[] {
+    const st = createGame('sendero', 'endless', 'normal', 801, [
+      { id: 'p1', name: 'A', color: '#fff' },
+      { id: 'p2', name: 'B', color: '#000' },
+    ]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    setup(st);
+    const events = stepGame(st, simCtx, [{ playerId: by, cmd: { kind: 'fuse', ...cmd } }]);
+    return events.filter((e) => e.e === 'reject').map((e) => (e.e === 'reject' ? e.reason : ''));
+  }
+
+  // no adyacentes (distancia 3)
+  let r = tryFuse((st) => {
+    st.towers.push(mkTower('frost', { id: 4110, cx: 5, cy: 1, spec: 0 }));
+    st.towers.push(mkTower('poison', { id: 4111, cx: 8, cy: 1, spec: 0 }));
+  }, { towerId: 4110, otherId: 4111, keepId: 4110 });
+  assert(r.some((x) => x.includes('adyacentes')), `rechaza torres NO adyacentes (${r[0] ?? 'sin reject'})`);
+
+  // sin especializar
+  r = tryFuse((st) => {
+    st.towers.push(mkTower('frost', { id: 4112, cx: 5, cy: 1, spec: -1 }));
+    st.towers.push(mkTower('poison', { id: 4113, cx: 6, cy: 1, spec: 0 }));
+  }, { towerId: 4112, otherId: 4113, keepId: 4112 });
+  assert(r.some((x) => x.includes('especializadas')), `rechaza torres SIN especializar (${r[0] ?? 'sin reject'})`);
+
+  // tipos sin receta (arquero + cañón)
+  r = tryFuse((st) => {
+    st.towers.push(mkTower('archer', { id: 4114, cx: 5, cy: 1, spec: 0 }));
+    st.towers.push(mkTower('cannon', { id: 4115, cx: 6, cy: 1, spec: 0 }));
+  }, { towerId: 4114, otherId: 4115, keepId: 4114 });
+  assert(r.some((x) => x.includes('receta')), `rechaza tipos SIN receta (${r[0] ?? 'sin reject'})`);
+
+  // dueño distinto
+  r = tryFuse((st) => {
+    st.towers.push(mkTower('frost', { id: 4116, cx: 5, cy: 1, spec: 0, owner: 'p1' }));
+    st.towers.push(mkTower('poison', { id: 4117, cx: 6, cy: 1, spec: 0, owner: 'p2' }));
+  }, { towerId: 4116, otherId: 4117, keepId: 4116 });
+  assert(r.some((x) => x.includes('tuyas')), `rechaza torres de OTRO dueño (${r[0] ?? 'sin reject'})`);
+
+  // keepId que no es ninguna de las dos
+  r = tryFuse((st) => {
+    st.towers.push(mkTower('frost', { id: 4118, cx: 5, cy: 1, spec: 0 }));
+    st.towers.push(mkTower('poison', { id: 4119, cx: 6, cy: 1, spec: 0 }));
+  }, { towerId: 4118, otherId: 4119, keepId: 9999 });
+  assert(r.some((x) => x.includes('destino')), `rechaza keepId inválido (${r[0] ?? 'sin reject'})`);
+}
+
+console.log('— F4.3 · Plaga Glacial: ralentiza+envenena en ÁREA; el inmune queda exento —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 810, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  st.towers.push(mkFused('frost', 'glacialplague', { id: 4200, cx: 5, cy: 1 }));
+  // dos normales + un inmune apiñados (dentro del splash 1.5 del primero)
+  const e1 = mkEnemy('brute', { id: 4201, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5 });
+  const e2 = mkEnemy('brute', { id: 4202, hp: 100000, maxHp: 100000, speedMult: 0, x: 6.0, y: 2.8 });
+  const im = mkEnemy('brute', { id: 4203, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.2, y: 2.9, spellImmune: true });
+  st.enemies.push(e1, e2, im);
+  const imHp0 = im.hp;
+  for (let i = 0; i < TICK_RATE * 2; i++) stepGame(st, simCtx, []);
+  assert(e1.slowFactor < 1 && e1.poisonDps > 0, `la nube RALENTIZA y ENVENENA a la vez (slow ${e1.slowFactor}, dps ${e1.poisonDps})`);
+  assert(e2.slowFactor < 1 && e2.poisonDps > 0, `el efecto es de ÁREA: también al segundo enemigo (slow ${e2.slowFactor}, dps ${e2.poisonDps})`);
+  assert(im.slowFactor === 1 && im.poisonDps === 0, 'el INMUNE no recibe ni slow ni veneno');
+  assert(im.hp < imHp0, `al inmune solo le entra el daño físico de impacto (−${(imHp0 - im.hp).toFixed(0)})`);
+}
+
+console.log('— F4.3 · Tormenta de Riel: un disparo golpea a VARIOS alineados (inmunes −70%) —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 811, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  st.towers.push(mkFused('tesla', 'railstorm', { id: 4300, cx: 5, cy: 1 }));
+  // tres enemigos alineados en vertical con la torre (x=5.5) + un inmune en la línea
+  const a1 = mkEnemy('brute', { id: 4301, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5 });
+  const a2 = mkEnemy('brute', { id: 4302, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 4.0 });
+  const a3 = mkEnemy('brute', { id: 4303, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 6.0 });
+  const im = mkEnemy('brute', { id: 4304, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 3.2, spellImmune: true });
+  st.enemies.push(a1, a2, a3, im);
+  const events = stepGame(st, simCtx, []); // un disparo instantáneo
+  const dmg = FUSIONS.railstorm.stats.damage; // 320, perfora armadura
+  const lost = (e: EnemyState) => 100000 - e.hp;
+  assert(lost(a1) === dmg && lost(a2) === dmg && lost(a3) === dmg, `el rayo PERFORA: los 3 alineados reciben ${dmg} de un solo disparo (${lost(a1)}/${lost(a2)}/${lost(a3)})`);
+  assert(lost(im) === Math.round(dmg * 0.3), `el inmune en la línea recibe −70% (${lost(im)} == ${Math.round(dmg * 0.3)})`);
+  assert(events.some((e) => e.e === 'shot' && e.kind === 'beam'), 'el disparo emite el evento de rayo lineal');
+}
+
+console.log('— F4.3 · Gran Bertha: alcanza un enemigo al OTRO LADO del mapa —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 812, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  st.towers.push(mkFused('cannon', 'bigbertha', { id: 4400, cx: 5, cy: 1 }));
+  // el waypoint MÁS LEJANO de la torre (fuera del alcance de cualquier torre normal)
+  const wps = simCtx.waypoints[0];
+  let farIdx = 1;
+  let farDist = 0;
+  for (let i = 0; i < wps.length; i++) {
+    const d = Math.hypot(wps[i].x - 5.5, wps[i].y - 1.5);
+    if (d > farDist) { farDist = d; farIdx = i; }
+  }
+  const far = mkEnemy('brute', { id: 4401, hp: 100000, maxHp: 100000, speedMult: 0, x: wps[farIdx].x, y: wps[farIdx].y, wpIdx: Math.max(1, farIdx) });
+  st.enemies.push(far);
+  assert(farDist > 8, `el objetivo está lejísimos (${farDist.toFixed(1)} celdas, más allá de cualquier torre normal)`);
+  for (let i = 0; i < TICK_RATE * 5; i++) stepGame(st, simCtx, []);
+  assert(far.hp < 100000, `la Gran Bertha lo alcanza igual (−${(100000 - far.hp).toFixed(0)} de daño)`);
+}
+
+console.log('— F4.3 · Señor de la Guerra: DISPARA y su aura buffea con regla MAX —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 813, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const warlord = mkFused('archer', 'warlord', { id: 4500, cx: 5, cy: 1 });
+  const archer = mkTower('archer', { id: 4501, cx: 6, cy: 1, level: 1 });
+  const banner = mkTower('banner', { id: 4502, cx: 5, cy: 2, level: 1 }); // aura 0.15
+  st.towers.push(warlord, archer, banner);
+  // enemigo a ~2 celdas: en rango de ambos, y lo bastante lejos para que el
+  // proyectil del Señor de la Guerra NO impacte en el mismo tick del disparo
+  st.enemies.push(mkEnemy('brute', { id: 4503, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 3.5 }));
+  // aura: el arquero vecino recibe el MEJOR aura (warlord > estandarte nv1 0.15), sin apilar
+  const warAura = FUSIONS.warlord.stats.auraDamage!;
+  const auras = computeAuras(st);
+  assert(auras.get(4501)?.dmgMult === warAura, `el aura del Señor de la Guerra buffea al vecino con regla MAX: ${warAura}, no ${warAura + 0.15} (${auras.get(4501)?.dmgMult})`);
+  // regla de recepción: las torres que DISPARAN reciben auras — el Señor de la
+  // Guerra (alsoFires) recibe la del estandarte vecino; un estandarte puro, no.
+  assert(auras.get(4500)?.dmgMult === 0.15, `el Señor de la Guerra SÍ recibe auras porque dispara (${auras.get(4500)?.dmgMult} == 0.15 del estandarte nv1)`);
+  assert(!auras.has(4502), 'el estandarte puro NO recibe el aura del Señor de la Guerra');
+  stepGame(st, simCtx, []);
+  const wshot = st.projectiles.find((p) => p.towerId === 4500);
+  const ashot = st.projectiles.find((p) => p.towerId === 4501);
+  assert(wshot !== undefined && wshot.damage === Math.round(FUSIONS.warlord.stats.damage * 1.15), `el Señor de la Guerra DISPARA, buffeado por el estandarte (proyectil de ${wshot?.damage})`);
+  assert(ashot !== undefined && ashot.damage === Math.round(8 * (1 + warAura)), `el arquero vecino dispara buffeado (${ashot?.damage} == ${Math.round(8 * (1 + warAura))})`);
+}
+
+console.log('— F4.3 · Piedra Filosofal: las bajas por SU veneno pagan ×2 (y compone con el Alquimista) —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const goblinBounty = ENEMIES.goblin.bounty;
+  // Mata un goblin con el DoT de la torre dada y devuelve el oro ganado por la baja.
+  function poisonKillGold(towerType: 'philostone' | 'poison', withAlchemist: boolean): number {
+    const st = createGame('sendero', 'endless', 'normal', 814, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    if (towerType === 'philostone') {
+      st.towers.push(mkFused('poison', 'philostone', { id: 4600, cx: 5, cy: 1 }));
+    } else {
+      st.towers.push(mkTower('poison', { id: 4600, cx: 5, cy: 1, level: 3, spec: -1 }));
+    }
+    if (withAlchemist) st.towers.push(mkTower('alchemist', { id: 4601, cx: 5, cy: 3, level: 1, spec: -1 }));
+    // hp suficiente para SOBREVIVIR al impacto y morir por el DoT (baja por veneno)
+    const gob = mkEnemy('goblin', { id: 4602, hp: 40, maxHp: 60, speedMult: 0, x: 5.5, y: 2.5 });
+    st.enemies.push(gob);
+    const g0 = st.players[0].gold;
+    let died = false;
+    for (let i = 0; i < TICK_RATE * 6 && !died; i++) {
+      const events = stepGame(st, simCtx, []);
+      died = events.some((e) => e.e === 'death');
+    }
+    return st.players[0].gold - g0;
+  }
+  const doubled = poisonKillGold('philostone', false);
+  const composed = poisonKillGold('philostone', true);
+  const normal = poisonKillGold('poison', false);
+  assert(normal === Math.round(goblinBounty), `una baja por veneno NORMAL paga el bounty base (${normal} == ${Math.round(goblinBounty)})`);
+  assert(doubled === Math.round(goblinBounty * 2), `una baja por veneno de la Piedra Filosofal paga ×2 (${doubled} == ${Math.round(goblinBounty * 2)})`);
+  // orden documentado: base × oleada × Alquimista × Piedra, UN redondeo al final
+  assert(composed === Math.round(goblinBounty * 1.3 * 2), `compone con el aura del Alquimista: base×1.3×2 (${composed} == ${Math.round(goblinBounty * 1.3 * 2)})`);
+}
+
+console.log('— F4.3 · Corazón de Invierno: aura DOBLE (congela enemigos + acelera torres) —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 815, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const heart = mkFused('frost', 'winterheart', { id: 4700, cx: 5, cy: 1 });
+  const archer = mkTower('archer', { id: 4701, cx: 6, cy: 1, level: 1 });
+  st.towers.push(heart, archer);
+  const enemy = mkEnemy('brute', { id: 4702, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 3.0 });
+  const im = mkEnemy('brute', { id: 4703, hp: 100000, maxHp: 100000, speedMult: 0, x: 6.0, y: 3.0, spellImmune: true });
+  st.enemies.push(enemy, im);
+  const heartHaste = FUSIONS.winterheart.stats.auraHaste!;
+  const heartSlow = FUSIONS.winterheart.stats.slowAura!.factor;
+  const auras = computeAuras(st);
+  assert(auras.get(4701)?.hasteMult === heartHaste, `el aura de cadencia llega a la torre vecina (+${heartHaste * 100}%: ${auras.get(4701)?.hasteMult})`);
+  stepGame(st, simCtx, []);
+  assert(enemy.slowFactor === heartSlow, `el aura de hielo RALENTIZA al enemigo en radio (slowFactor ${enemy.slowFactor})`);
+  assert(im.slowFactor === 1, 'el INMUNE queda exento del aura de hielo');
+  // el arquero disparó con cadencia acelerada: cooldown < base
+  const baseCd = Math.round(0.7 * TICK_RATE);
+  const fastCd = Math.round((0.7 * TICK_RATE) / (1 + heartHaste));
+  assert(archer.cooldownLeft === fastCd && fastCd < baseCd, `la torre vecina dispara MÁS RÁPIDO (cooldown ${archer.cooldownLeft} == ${fastCd} < ${baseCd})`);
+  // el propio Corazón no dispara (es torre de aura)
+  assert(st.projectiles.every((p) => p.towerId !== 4700), 'el Corazón de Invierno no dispara');
 }
 
 console.log('— Determinismo: misma semilla + mismos comandos → mismo estado —');

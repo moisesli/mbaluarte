@@ -11,7 +11,8 @@ import type {
 } from '../types.js';
 import type { AffixId } from '../types.js';
 import { ENEMIES } from '../balance/enemies.js';
-import { TOWERS, activeStats, towerTargetsAir } from '../balance/towers.js';
+import { TOWERS, towerTargetsAir } from '../balance/towers.js';
+import { fusionOf, statsOf } from '../balance/fusions.js';
 import { generateWave, waveBountyMult, waveHpMult } from '../balance/waves.js';
 import {
   BLESSED_BOUNTY_MULT,
@@ -161,7 +162,7 @@ function makeBlessed(enemy: EnemyState, affix: AffixId): void {
 function bountyMultAt(state: GameState, x: number, y: number): number {
   let best = 1;
   for (const t of state.towers) {
-    const lvl = activeStats(t.type, t.level, t.spec);
+    const lvl = statsOf(t);
     const bonus = lvl.auraBounty;
     if (bonus === undefined || bonus <= 0) continue;
     if (dist(t.cx + 0.5, t.cy + 0.5, x, y) > lvl.range) continue;
@@ -171,19 +172,27 @@ function bountyMultAt(state: GameState, x: number, y: number): number {
   return best;
 }
 
+// `viaPoison`: la baja la causó un tick de DoT (veneno) — lo pasa stepEnemies.
+// Permite atribuir la mecánica de la Piedra Filosofal (botín ×2 por bajas de SU
+// veneno) sin ambigüedad: el dueño del veneno ya viaja en enemy.poisonSrc.
 function killEnemy(
   state: GameState,
   ctx: SimContext,
   enemy: EnemyState,
   killerTowerId: number,
   events: GameEvent[],
+  viaPoison = false,
 ): void {
   const def = ENEMIES[enemy.type];
+  const tower = state.towers.find((t) => t.id === killerTowerId);
   // Aura del Alquimista: si la posición donde muere el enemigo está cubierta por
   // un Alquimista, su bounty gana +30% (o más en spec). No apila.
   const alchemistMult = bountyMultAt(state, enemy.x, enemy.y);
-  const bounty = Math.round(def.bounty * enemy.bountyMult * alchemistMult);
-  const tower = state.towers.find((t) => t.id === killerTowerId);
+  // Piedra Filosofal (F4.3): las bajas por SU veneno pagan botín multiplicado.
+  // Orden de multiplicadores (un solo redondeo al final):
+  //   base × bountyMult (oleada/élite/bendición) × aura Alquimista × Piedra Filosofal.
+  const poisonMult = viaPoison && tower ? (statsOf(tower).poisonBountyMult ?? 1) : 1;
+  const bounty = Math.round(def.bounty * enemy.bountyMult * alchemistMult * poisonMult);
   let killerName = '';
   if (tower) {
     tower.kills += 1;
@@ -344,11 +353,15 @@ function isBanner(lvl: { auraDamage?: number; auraHaste?: number }): boolean {
 // Calcula, por cada torre buffeada, el MEJOR aura de daño y de cadencia de todos
 // los Estandartes que la cubren (de CUALQUIER dueño, co-op). No se apila: se toma
 // el máximo de cada tipo, no la suma. Solo lee `state`; es determinista (orden
-// estable de `state.towers`, sin RNG).
+// estable de `state.towers`, sin RNG). Las fusiones con aura (Señor de la Guerra:
+// auraDamage; Corazón de Invierno: auraHaste) entran aquí como un Estandarte más.
+// Regla de RECEPCIÓN: las torres que DISPARAN reciben auras — por eso el Señor de
+// la Guerra (alsoFires) sí las recibe (regla MAX, sin apilar), mientras que un
+// estandarte puro nunca recibe la de otro.
 export function computeAuras(state: GameState): Map<number, AuraBuff> {
   const buffs = new Map<number, AuraBuff>();
   for (const banner of state.towers) {
-    const blvl = activeStats(banner.type, banner.level, banner.spec);
+    const blvl = statsOf(banner);
     if (!isBanner(blvl)) continue;
     const dmg = blvl.auraDamage ?? 0;
     const haste = blvl.auraHaste ?? 0;
@@ -357,8 +370,8 @@ export function computeAuras(state: GameState): Map<number, AuraBuff> {
     const by = banner.cy + 0.5;
     for (const target of state.towers) {
       if (target.id === banner.id) continue;
-      const tlvl = activeStats(target.type, target.level, target.spec);
-      if (isBanner(tlvl)) continue; // un estandarte no buffea a otro estandarte
+      const tlvl = statsOf(target);
+      if (isBanner(tlvl) && !tlvl.alsoFires) continue; // un estandarte puro no recibe auras; el Señor de la Guerra (dispara) sí
       if (tlvl.incomePerWave) continue; // ni a la mina
       if (tlvl.auraBounty !== undefined) continue; // ni al Alquimista (no dispara)
       if (TOWERS[target.type].onPathOnly) continue; // ni a la Trampa de púas
@@ -383,13 +396,19 @@ function fireTower(
   auras: Map<number, AuraBuff>,
 ): void {
   const towerDef = TOWERS[tower.type];
-  const lvl = activeStats(tower.type, tower.level, tower.spec);
+  const fusion = fusionOf(tower);
+  const lvl = statsOf(tower);
   // no disparan: la mina, la Escarcha Eterna, el Estandarte, el Alquimista (aura de
-  // bounty) ni la Trampa de púas (daña por contacto, ver stepTraps).
-  if (lvl.incomePerWave || lvl.slowAura || isBanner(lvl) || lvl.auraBounty !== undefined || towerDef.onPathOnly) return;
+  // bounty), la Trampa de púas (daña por contacto, ver stepTraps) ni el Corazón de
+  // Invierno (slowAura). EXCEPCIÓN: el Señor de la Guerra (`alsoFires`) tiene aura
+  // de Estandarte Y ADEMÁS dispara.
+  if (!lvl.alsoFires && (lvl.incomePerWave || lvl.slowAura || isBanner(lvl) || lvl.auraBounty !== undefined || towerDef.onPathOnly)) return;
 
-  const canAir = towerTargetsAir(tower.type, tower.spec);
-  const canGround = towerDef.targetsGround;
+  // una torre fusionada dispara con el "cuerpo" de su fusión, no el de su tipo base
+  const projectileKind = fusion ? fusion.projectileKind : towerDef.projectileKind;
+  const color = fusion ? fusion.color : towerDef.color;
+  const canAir = fusion ? fusion.targetsAir : towerTargetsAir(tower.type, tower.spec);
+  const canGround = fusion ? fusion.targetsGround : towerDef.targetsGround;
   const execute = lvl.execute ?? 0;
   const executeCurrent = lvl.executeCurrent ?? 0;
   const shredChance = lvl.shredChance ?? 0;
@@ -414,7 +433,38 @@ function fireTower(
   const ty = tower.cy + 0.5;
   tower.cooldownLeft = Math.round((lvl.cooldown * TICK_RATE) / (1 + hasteMult));
 
-  if (towerDef.projectileKind === 'beam') {
+  // Tormenta de Riel (F4.3): rayo PERFORANTE en línea recta e instantáneo — traza
+  // la línea desde la torre a través del objetivo y golpea a TODOS los enemigos
+  // cercanos a ella (longitud fija: las crías nacidas de una muerte no lo reciben).
+  // El rayo es mágico: a los inmunes les entra −70%, como el Tesla.
+  if (lvl.lineWidth) {
+    const ddx = target.x - tx;
+    const ddy = target.y - ty;
+    const len = Math.max(0.001, Math.sqrt(ddx * ddx + ddy * ddy));
+    const ux = ddx / len;
+    const uy = ddy / len;
+    const dmgBase = dmgFor(lvl.damage);
+    const lineN = state.enemies.length;
+    for (let i = 0; i < lineN; i++) {
+      const e = state.enemies[i];
+      if (e.hp <= 0) continue;
+      const edef = ENEMIES[e.type];
+      if (edef.flying && !canAir) continue;
+      if (!edef.flying && !canGround) continue;
+      const px = e.x - tx;
+      const py = e.y - ty;
+      const along = px * ux + py * uy; // proyección sobre el rayo
+      if (along < -0.2 || along > lvl.range) continue;
+      const perp = Math.abs(px * uy - py * ux); // distancia perpendicular a la línea
+      if (perp > lvl.lineWidth + edef.radius * e.radiusMult) continue;
+      const dmg = e.spellImmune ? Math.max(1, Math.round(dmgBase * SPELL_IMMUNE_TESLA_MULT)) : dmgBase;
+      damageEnemy(state, ctx, e, dmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
+    }
+    events.push({ e: 'shot', x: tx, y: ty, tx: tx + ux * lvl.range, ty: ty + uy * lvl.range, kind: 'beam', color });
+    return;
+  }
+
+  if (projectileKind === 'beam') {
     // Tesla: cadena instantánea (el multidisparo no aplica; se cubre con más saltos)
     const chain = lvl.chain ?? { targets: 1, falloff: 1 };
     const chainN = state.enemies.length; // no encadenar a crías nacidas en esta cadena
@@ -445,7 +495,7 @@ function fireTower(
       }
       current = next;
     }
-    events.push({ e: 'chain', pts, color: towerDef.color });
+    events.push({ e: 'chain', pts, color });
     return;
   }
 
@@ -461,10 +511,10 @@ function fireTower(
     }
   }
 
-  if (towerDef.projectileKind === 'snipe') {
+  if (projectileKind === 'snipe') {
     // Francotirador: impacto instantáneo, ignora esquiva
     for (const t of targets) {
-      events.push({ e: 'shot', x: tx, y: ty, tx: t.x, ty: t.y, kind: 'snipe', color: towerDef.color });
+      events.push({ e: 'shot', x: tx, y: ty, tx: t.x, ty: t.y, kind: 'snipe', color });
       damageEnemy(state, ctx, t, dmgFor(lvl.damage), lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
     }
     return;
@@ -474,10 +524,10 @@ function fireTower(
   for (const t of targets) {
     const proj: ProjectileState = {
       id: state.nextId++,
-      kind: towerDef.projectileKind === 'bomb' ? 'bomb' : towerDef.projectileKind === 'shell' ? 'shell' : 'bullet',
+      kind: projectileKind === 'bomb' ? 'bomb' : projectileKind === 'shell' ? 'shell' : 'bullet',
       x: tx,
       y: ty,
-      targetId: towerDef.projectileKind === 'bomb' ? 0 : t.id,
+      targetId: projectileKind === 'bomb' ? 0 : t.id,
       tx: t.x,
       ty: t.y,
       speed: (lvl.projectileSpeed ?? 12) / TICK_RATE,
@@ -493,7 +543,7 @@ function fireTower(
         : undefined,
       pierceArmor: lvl.pierceArmor ?? false,
       execute,
-      color: towerDef.color,
+      color,
       groundOnly: !canAir,
       executeCurrent,
       shredChance,
@@ -649,7 +699,8 @@ function stepEnemies(state: GameState, ctx: SimContext, events: GameEvent[]): vo
         if (owner) owner.stats.damage += enemy.poisonDps / TICK_RATE;
       }
       if (enemy.hp <= 0) {
-        killEnemy(state, ctx, enemy, enemy.poisonSrc, events);
+        // baja por DoT: viaPoison=true (la Piedra Filosofal paga botín ×2 por estas)
+        killEnemy(state, ctx, enemy, enemy.poisonSrc, events, true);
         continue;
       }
     }
@@ -863,7 +914,7 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
     }
     // ingresos de las minas (la Casa de Moneda reparte a todo el equipo)
     for (const tower of state.towers) {
-      const lvl = activeStats(tower.type, tower.level, tower.spec);
+      const lvl = statsOf(tower);
       if (!lvl.incomePerWave) continue;
       const amount = lvl.incomePerWave;
       const recipients = lvl.incomeToAll ? state.players : state.players.filter((p) => p.id === tower.owner);
@@ -914,7 +965,7 @@ function stepTraps(state: GameState, ctx: SimContext, events: GameEvent[]): void
     const def = TOWERS[trap.type];
     if (!def.onPathOnly) continue; // solo las trampas
     if (trap.charges <= 0) continue;
-    const lvl = activeStats(trap.type, trap.level, trap.spec);
+    const lvl = statsOf(trap);
     // enemigos cuya celda coincide con la de la trampa (longitud fija: las crías que
     // nazcan por una muerte no reciben este mismo golpe)
     const n = state.enemies.length;
@@ -941,13 +992,16 @@ function stepTraps(state: GameState, ctx: SimContext, events: GameEvent[]): void
   if (removedAny) state.towers = state.towers.filter((t) => !(TOWERS[t.type].onPathOnly && t.charges <= 0));
 }
 
-// Auras pasivas (Escarcha Eterna): ralentizan sin disparar a todo lo que rodean.
+// Auras pasivas (Escarcha Eterna, Corazón de Invierno): ralentizan sin disparar
+// a todo lo que rodean. Misma regla que el hielo: mejor factor, no apila; los
+// inmunes a magia quedan exentos.
 function stepTowerAuras(state: GameState): void {
   for (const tower of state.towers) {
-    const lvl = activeStats(tower.type, tower.level, tower.spec);
+    const lvl = statsOf(tower);
     const aura = lvl.slowAura;
     if (!aura) continue;
-    const canAir = towerTargetsAir(tower.type, tower.spec);
+    const fusion = fusionOf(tower);
+    const canAir = fusion ? fusion.targetsAir : towerTargetsAir(tower.type, tower.spec);
     const tx = tower.cx + 0.5;
     const ty = tower.cy + 0.5;
     for (const e of state.enemies) {

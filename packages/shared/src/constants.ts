@@ -99,5 +99,5 @@ export const PLAYER_COLORS = [
   '#e57373', // rojo
 ];
 
-export const BALANCE_VERSION = 5;
+export const BALANCE_VERSION = 6; // F4.3: fusión de torres (6 recetas)
 export const PROTOCOL_VERSION = 1;

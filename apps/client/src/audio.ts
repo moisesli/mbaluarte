@@ -103,9 +103,95 @@ function ensureCtx(): AudioContext | null {
 const BASE_SFX = 0.35;
 const BASE_MUSIC = 0.5;
 
-// desbloquear el audio con la primera interacción (requisito de los navegadores)
+// ---------- desbloqueo robusto del audio ----------
+// Los navegadores nacen con el AudioContext en `suspended` por su política de
+// autoplay: SOLO un `resume()` ejecutado DENTRO de un gesto real del usuario lo
+// pasa a `running`. Si el contexto sigue suspendido, los osciladores que
+// programamos se pierden en silencio (esta era la causa del "no se oye NADA":
+// el ctx quedaba suspended y los `resume()` de los eventos de juego —sin gesto—
+// no lo reanimaban nunca).
+//
+// Solución: escuchar VARIOS gestos (pointerdown/touchstart/mousedown/keydown/
+// click) en fase de CAPTURA (para que ningún stopPropagation del canvas los
+// evite) y SIN `{once}`, reintentando `resume()` en cada gesto hasta que el
+// estado sea 'running'. Recién ahí soltamos los listeners y avisamos a quien
+// espere el desbloqueo (p. ej. la música procedural de F3.1).
+const unlockCbs = new Set<() => void>();
+let unlockInstalled = false;
+let unlocked = false;
+const UNLOCK_EVENTS = ['pointerdown', 'touchstart', 'mousedown', 'keydown', 'click'] as const;
+
+// Registra un callback que se dispara UNA vez, cuando el audio queda desbloqueado
+// (ctx en 'running'). Si ya está desbloqueado, se llama en el acto.
+export function onAudioUnlock(cb: () => void): void {
+  if (unlocked) {
+    cb();
+    return;
+  }
+  unlockCbs.add(cb);
+}
+
+function fireUnlockCbs(): void {
+  unlocked = true;
+  const cbs = [...unlockCbs];
+  unlockCbs.clear();
+  for (const cb of cbs) {
+    try {
+      cb();
+    } catch {
+      /* un callback roto no debe tumbar el desbloqueo */
+    }
+  }
+}
+
+function removeUnlockListeners(): void {
+  for (const evt of UNLOCK_EVENTS) window.removeEventListener(evt, tryUnlock, true);
+  unlockInstalled = false;
+}
+
+// Intenta desbloquear: crea el contexto (si no existe) y lo reanuda. Como corre
+// dentro del handler de un gesto real, el `resume()` sí surte efecto. Cuando el
+// contexto llega a 'running', suelta los listeners y dispara los callbacks.
+function tryUnlock(): void {
+  const ac = ensureCtx();
+  if (!ac) return;
+  audioDebug.resumeAttempts++;
+  audioDebug.ctxState = ac.state;
+  (window as unknown as { __audioDebug?: AudioDebug }).__audioDebug = audioDebug;
+  if (ac.state === 'running') {
+    if (unlockInstalled) removeUnlockListeners();
+    if (!unlocked) fireUnlockCbs();
+    return;
+  }
+  // aún suspendido: pide reanudar y, al resolverse dentro del gesto, confirma.
+  ac.resume().then(
+    () => {
+      if (ac.state === 'running') {
+        if (unlockInstalled) removeUnlockListeners();
+        if (!unlocked) fireUnlockCbs();
+      }
+    },
+    () => {
+      /* rechazado (sin activación): reintentaremos en el próximo gesto */
+    },
+  );
+}
+
+// Instala los listeners de desbloqueo. Idempotente: llamar varias veces no los
+// duplica. Se llama al arrancar la app (input.ts) para no depender de un único
+// `{once}` que podría consumirse antes de que exista el contexto.
+export function installAudioUnlock(): void {
+  if (unlockInstalled || unlocked) return;
+  unlockInstalled = true;
+  for (const evt of UNLOCK_EVENTS) window.addEventListener(evt, tryUnlock, true);
+}
+
+// desbloquear el audio con la primera interacción (requisito de los navegadores).
+// Se mantiene por compatibilidad y para desbloquear de inmediato desde clics
+// concretos (p. ej. abrir ajustes). Instala también el desbloqueo robusto.
 export function unlockAudio(): void {
-  ensureCtx();
+  installAudioUnlock();
+  tryUnlock();
 }
 
 // ---------- volúmenes (persisten en store/localStorage vía main) ----------
@@ -130,6 +216,24 @@ export function getMusicBus(): { ctx: AudioContext; bus: GainNode } | null {
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+// ---------- depuración (verificable por preview_eval sin OÍR) ----------
+// Contador de "voces" (osc/ruido) disparadas y estado del contexto. Permite
+// comprobar por código que el audio llega a 'running' y que los eventos generan
+// nodos, ya que el silencio no se puede auditar automáticamente.
+interface AudioDebug {
+  ctxState: string | null;
+  voices: number; // osc + ruidos disparados
+  unlocked: boolean;
+  resumeAttempts: number;
+}
+const audioDebug: AudioDebug = { ctxState: null, voices: 0, unlocked: false, resumeAttempts: 0 };
+function noteVoice(): void {
+  audioDebug.voices++;
+  audioDebug.ctxState = ctx ? ctx.state : null;
+  audioDebug.unlocked = unlocked;
+  (window as unknown as { __audioDebug?: AudioDebug }).__audioDebug = audioDebug;
 }
 
 function canPlay(key: string, minGapMs: number): boolean {
@@ -218,6 +322,7 @@ function tone(o: ToneOpts): void {
   osc.connect(gain).connect(pan).connect(sfxGain);
   osc.start(t0);
   osc.stop(t0 + total + 0.02);
+  noteVoice();
 }
 
 interface NoiseOpts {
@@ -259,6 +364,7 @@ function noise(o: NoiseOpts): void {
   node.connect(gain).connect(panNode(ac, o.pan ?? 0)).connect(sfxGain);
   src.start(t0);
   src.stop(t0 + dur + 0.02);
+  noteVoice();
 }
 
 // ---------- mapa color -> torre ----------

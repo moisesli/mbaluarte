@@ -750,17 +750,32 @@ html, body {
     right: 8px;
     left: 8px;
     width: auto;
-    bottom: 104px;
+    bottom: 132px;
   }
   /* chat compacto: solo el botón 💬; el log aparece al abrirlo */
-  #hud-chat { bottom: 104px; width: min(260px, 64vw); }
+  #hud-chat { bottom: 132px; width: min(260px, 64vw); }
   #hud-chat .chat-log.compact { display: none; }
   #hud-chat.open .chat-log.compact { display: flex; }
-  #hud-preview { top: auto; bottom: 150px; right: 8px; max-width: 46vw; font-size: 0.75rem; }
-  #hud-placing { bottom: 100px; font-size: 0.75rem; padding: 6px 10px; }
-  .tcard { width: 64px; }
-  .tcard .ticon { font-size: 1.3rem; line-height: 1.45rem; }
+  #hud-preview { top: auto; bottom: 172px; right: 8px; max-width: 46vw; font-size: 0.75rem; }
+  #hud-placing { bottom: 128px; font-size: 0.75rem; padding: 6px 10px; }
+  /* barra de torres: en móvil ENVOLVER en filas centradas para que NINGUNA torre
+     quede recortada (antes era scroll horizontal y las últimas —Trampa, Alquimista,
+     fusiones— se cortaban fuera de vista). */
+  #hud-towers {
+    flex-wrap: wrap;
+    justify-content: center;
+    overflow-x: visible;
+    gap: 6px;
+    padding: 8px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+  #hud-towers .tcard:first-child { margin-left: 0; }
+  #hud-towers .tcard:last-child { margin-right: 0; }
+  .tcard { width: 54px; padding: 5px 3px 4px; }
+  .tcard .ticon { font-size: 1.3rem; line-height: 1.5rem; }
+  .tcard .tname { display: none; }
   .tcard .thk { display: none; }
+  .tcard .tcost { font-size: 0.72rem; }
   .stat { font-size: 0.8rem; padding: 5px 9px; }
   .btn.small { padding: 6px 9px; font-size: 0.82rem; }
   #hud-players { top: 52px; }

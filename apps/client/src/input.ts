@@ -3,7 +3,7 @@ import { net } from './net.js';
 import { store } from './store.js';
 import { centerOn, getPlacementCtx, getView, minimapHit, panBy, resetCamera, zoomAt } from './renderer.js';
 import { hidePanel, showPanel, syncTowerBar, toast } from './hud.js';
-import { unlockAudio } from './audio.js';
+import { installAudioUnlock } from './audio.js';
 
 // ¿el dispositivo tiene puntero con hover (ratón)? controla el fantasma bajo el
 // cursor; el flujo de colocación se decide por gesto con e.pointerType, para que
@@ -147,7 +147,11 @@ function tapSelect(canvas: HTMLCanvasElement, clientX: number, clientY: number, 
 }
 
 export function initInput(canvas: HTMLCanvasElement): void {
-  document.addEventListener('pointerdown', unlockAudio, { once: true });
+  // Desbloqueo robusto del audio: escucha varios gestos en fase de captura y
+  // reintenta resume() hasta que el contexto esté 'running' (ver audio.ts). No
+  // usamos `{once}` sobre un único evento porque podía consumirse antes de que
+  // el contexto existiera, dejándolo suspended para siempre (silencio total).
+  installAudioUnlock();
 
   // ---------- gestos: tap / arrastre (paneo) / pellizco (zoom) ----------
 

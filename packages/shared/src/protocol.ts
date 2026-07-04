@@ -45,11 +45,15 @@ export function sanitizeSettings(s: Partial<RoomSettings> | undefined): RoomSett
 // enemigo: [id, typeIdx, x, y, hpFrac, flags, affixMask]
 //   flags: 1=slow 2=poison 4=boss 8=elite 16=inmune 32=shred   affixMask: bits de balance/affixes
 export type SnapEnemy = [number, number, number, number, number, number, number];
-// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec, stunned, charges, growth]
+// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec, stunned, charges, growth, fusion, invested]
 //   spec: -1 sin especializar, 0/1 rama; stunned: 0/1; charges: Trampa (0 = N/A);
-//   growth: bono de crecimiento permanente (Arco Largo/Explorador II; 0 = N/A)
-//   (los campos F4.2 charges/growth van al FINAL para no romper índices previos)
-export type SnapTower = [number, number, number, number, number, number, number, number, number, number, number, number, number];
+//   growth: bono de crecimiento permanente (Arco Largo/Explorador II; 0 = N/A);
+//   fusion: índice en FUSION_ORDER (−1 = sin fusión); invested: oro invertido total
+//   (el panel lo usa para el valor de venta de las fusiones, cuya inversión real
+//   no puede reconstruirse desde type/level/spec)
+//   (los campos F4.2 charges/growth y F4.3 fusion/invested van al FINAL para no
+//   romper índices previos)
+export type SnapTower = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
 // proyectil: [id, kindIdx(0 bullet,1 shell,2 bomb), x, y, colorIdx(=typeIdx de torre)]
 export type SnapProj = [number, number, number, number, number];
 
@@ -145,6 +149,8 @@ export function buildSnap(state: GameState): Snap {
           t.stunnedUntil > state.tick ? 1 : 0,
           t.charges,
           Math.round(t.growthBonus),
+          t.fusion,
+          Math.round(t.invested),
         ] as SnapTower,
     ),
     projs: state.projectiles.map((p) => {

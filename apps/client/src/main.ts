@@ -1,5 +1,5 @@
 import './style.css';
-import { ENEMIES, ENEMY_ORDER, GAME_SPEEDS, TOWERS, type GameEvent } from '@td/shared';
+import { ENEMIES, ENEMY_ORDER, FUSIONS, GAME_SPEEDS, START_LIVES, TOWERS, type GameEvent, type Snap } from '@td/shared';
 import { net, wsPathJoin } from './net.js';
 import { pushFrame, saveName, startGameStore, store } from './store.js';
 import { addPing, addShake, initRenderer, isMinimapOn, resetRenderer, toggleMinimap, towerFired } from './renderer.js';
@@ -8,6 +8,7 @@ import { applySpectatorUI, buildTowerBar, hidePanel, onTick, toast, addChat, ref
 import { hideEnd, homeError, initHome, initLobby, renderLobby, showEnd, switchScreen } from './screens.js';
 import { beam, burst, clearParticles, floatText, line, ring } from './particles.js';
 import { sfx, setSfxVolume, setMusicVolume, unlockAudio } from './audio.js';
+import { startMusic, setMusicState, pauseMusic, resumeMusic, stopMusic, type MusicState } from './music.js';
 import { initReplayHome, saveReplay, setReplayEventSink, startReplay } from './replay.js';
 import type { ReplayData } from '@td/shared';
 
@@ -120,6 +121,19 @@ function processEvents(events: GameEvent[]): void {
         floatText(ev.x, ev.y - 0.6, `★ ${ev.name}`, '#ffd54f', 15);
         sfx.specialize(panOf(ev.x));
         break;
+      case 'fuse': {
+        // F4.3 · fusión: doble anillo (color de la receta + arcano) + estallido
+        const fdef = FUSIONS[ev.fusion];
+        const fcolor = fdef?.color ?? '#ce93d8';
+        ring(ev.x, ev.y, 1.5, fcolor);
+        ring(ev.x, ev.y, 1.0, '#ce93d8');
+        burst(ev.x, ev.y, fcolor, 24, 3.2);
+        addShake(4);
+        floatText(ev.x, ev.y - 0.6, `⚗ ${ev.name}`, fcolor, 16);
+        toast(`⚗ ¡Fusión: ${ev.name}!`, 'info');
+        sfx.specialize(panOf(ev.x));
+        break;
+      }
       case 'sell':
         floatText(ev.x, ev.y, `+🪙${ev.refund}`, '#ffd54f', 13);
         sfx.sell(panOf(ev.x));
@@ -145,6 +159,25 @@ function processEvents(events: GameEvent[]): void {
     }
   }
   void myColor;
+}
+
+// ---------- música adaptativa (F3.1) ----------
+// Traduce el estado del juego (snapshot + modo) a la capa musical:
+//   · interludio (no oleada) → calma;
+//   · oleada en curso → combate; si hay un JEFE en pantalla → capa de jefe;
+//   · vidas ≤ 25% de START_LIVES → overlay de tensión disonante;
+//   · modo horda → energía sostenida (bandera `horde`).
+// El flag de jefe del enemigo va en SnapEnemy[5] (bit 4). Ver protocol.ts.
+function updateMusicFromSnap(snap: Snap): void {
+  const bossOnField = snap.enemies.some((e) => (e[5] & 4) !== 0);
+  let state: MusicState = 'calm';
+  if (snap.active) state = bossOnField ? 'boss' : 'wave';
+  else if (bossOnField) state = 'boss'; // por si el jefe sigue vivo entre oleadas
+  const horde = store.game?.init.mode === 'horde';
+  // en horda las "vidas" son el aforo (maxLives distinto), pero START_LIVES sigue
+  // siendo la referencia de tensión razonable para el tinte urgente.
+  const tension = snap.lives > 0 && snap.lives <= START_LIVES * 0.25;
+  setMusicState(state, tension, horde);
 }
 
 // ---------- mensajes del servidor ----------
@@ -196,6 +229,7 @@ function wireNet(): void {
       $('overlay-reconnect').hidden = true;
       $('btn-pause').hidden = !store.isHost;
       $('btn-speed').hidden = !store.isHost;
+      startMusic(); // no-op si ya sonaba; arranca si entramos a mitad de partida
       return;
     }
 
@@ -211,6 +245,10 @@ function wireNet(): void {
     $('overlay-pause').hidden = true;
     $('overlay-reconnect').hidden = true;
     switchScreen('game');
+    // arranca la música procedural adaptativa (se difiere al primer gesto si el
+    // audio aún no está desbloqueado; empieza en calma/interludio).
+    startMusic();
+    setMusicState('calm', false, msg.init.mode === 'horde');
     $('btn-pause').hidden = !store.isHost;
     $('btn-speed').hidden = !store.isHost;
     syncSpeedButton();
@@ -225,10 +263,12 @@ function wireNet(): void {
     pushFrame(gs, msg.t, msg.snap);
     onTick(msg.snap);
     processEvents(msg.events);
+    updateMusicFromSnap(msg.snap);
   });
 
   net.on('game_over', (msg) => {
     if (store.game) store.game.over = msg.stats;
+    stopMusic(); // fin de partida: detener la música (el sting de victoria/derrota es SFX)
     // guardar la repetición (localStorage, máx 10) y recordarla para el botón
     // "🎬 Ver repetición" de la pantalla de fin.
     let replay: ReplayData | null = msg.replay ?? null;
@@ -253,12 +293,14 @@ function wireNet(): void {
     $('btn-resume').hidden = !store.isHost;
     $('overlay-pause').hidden = false;
     $('btn-pause').textContent = '▶';
+    pauseMusic(); // la música se atenúa/detiene en pausa
   });
 
   net.on('resumed', () => {
     if (store.game) store.game.paused = false;
     $('overlay-pause').hidden = true;
     $('btn-pause').textContent = '⏸';
+    resumeMusic();
   });
 
   net.on('speed', (msg) => {
@@ -283,6 +325,7 @@ function wireNet(): void {
     if (onHome || msg.msg.startsWith('No existe la sala') || wasReconnecting) {
       store.roomCode = '';
       store.game = null;
+      stopMusic(); // la sala murió / volvemos a home: cortar la música
       net.disconnect();
       if (!onHome) {
         history.replaceState(null, '', location.pathname);
@@ -399,6 +442,7 @@ function wireHudButtons(): void {
   $('btn-back-lobby').addEventListener('click', () => {
     hideEnd();
     store.game = null;
+    stopMusic(); // volver al lobby sin dejar música colgada
     switchScreen('lobby');
     renderLobby();
   });

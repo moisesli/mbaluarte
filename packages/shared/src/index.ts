@@ -3,6 +3,7 @@ export * from './constants.js';
 export * from './rng.js';
 export * from './protocol.js';
 export * from './balance/towers.js';
+export * from './balance/fusions.js';
 export * from './balance/enemies.js';
 export * from './balance/affixes.js';
 export * from './balance/waves.js';

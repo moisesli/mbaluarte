@@ -295,6 +295,8 @@ html, body {
   padding: 6px 12px;
   font-weight: 700;
   font-size: 0.95rem;
+  white-space: nowrap;
+  flex-shrink: 0;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
@@ -806,12 +808,26 @@ html, body {
   .logo { font-size: 2.1rem; }
   .map-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
 
+  /* panel de torre: hoja inferior COMPACTA (antes ocupaba media pantalla). Texto y
+     espaciados reducidos + tope de altura con scroll para que no tape el tablero. */
   #hud-panel {
     right: 8px;
     left: 8px;
     width: auto;
-    bottom: 132px;
+    bottom: 130px;
+    padding: 10px 12px;
+    max-height: 42vh;
+    overflow-y: auto;
   }
+  #hud-panel h3 { font-size: 0.98rem; }
+  #hud-panel .pstats { font-size: 0.76rem; margin: 6px 0; line-height: 1.4; }
+  #hud-panel .prow { margin-top: 6px; }
+  #hud-panel .prow .btn { font-size: 0.82rem; padding: 8px 6px; }
+  #hud-panel .spec-title { margin-top: 6px; }
+  #hud-panel .spec-desc { font-size: 0.74rem; }
+  #hud-panel .spec-btn { padding: 6px 9px; }
+  #hud-panel .tmodes { margin-top: 6px; }
+  #hud-panel .tmode { font-size: 0.66rem; padding: 5px 2px; }
   /* chat compacto: solo el botón 💬; el log aparece al abrirlo */
   #hud-chat { bottom: 132px; width: min(260px, 64vw); }
   #hud-chat .chat-log.compact { display: none; }
@@ -836,10 +852,17 @@ html, body {
   .tcard .tname { display: none; }
   .tcard .thk { display: none; }
   .tcard .tcost { font-size: 0.72rem; }
-  .stat { font-size: 0.8rem; padding: 5px 9px; }
+  /* barra superior: compacta y SIN solapes. Los stats (❤/oleada/🪙) van en UNA sola
+     línea (nowrap); si los botones no caben, envuelven a la DERECHA sin chocar con los
+     chips de jugador (que están a la izquierda). Antes los stats envolvían a una 2ª
+     fila y los chips de jugador (top:52px) los tapaban. */
+  #hud-top { padding: 6px 8px; align-items: flex-start; gap: 6px; }
+  .hud-group { gap: 5px; }
+  .hud-group:first-child { flex-wrap: nowrap; }
+  .stat { font-size: 0.78rem; padding: 4px 8px; }
   .btn.small { padding: 6px 9px; font-size: 0.82rem; }
-  #hud-players { top: 52px; }
-  .pchip { font-size: 0.7rem; padding: 2px 7px; }
+  #hud-players { top: 46px; gap: 3px; }
+  .pchip { font-size: 0.68rem; padding: 2px 7px; }
 }
 
 /* pantallas muy bajas (móvil apaisado): compactar todo lo posible */

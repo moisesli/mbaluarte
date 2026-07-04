@@ -18,14 +18,14 @@ y deben ejecutarse con ese modelo (cambiar el modelo antes de lanzarlas).
 
 **Fase 4 — Contenido (en curso)**
 - ✅ F4.1 +5 monstruos, +2 jefes y oleadas Green TD (inmunidad/fuga escalonada/bendecida/telegrafía) — `8ef72da`
+- ✅ F4.2 +2 torres (Trampa sobre el camino, Alquimista) y Rango II de specs con identidades (4 disparos, ejecución 75% vida actual, shred AoE, crecimiento) — `9e9bbe1`
 
 **Pendiente:** (🧠 = ejecutar con Fable-5)
-- ⏳ F4.2 · Opus · Torres nuevas + Rango II de specs (procs con identidad) — *recomendado siguiente*
-- ⏳ F4.3 · 🧠 Fable-5 · Fusión de torres (6 recetas)
+- ⏳ F4.3 · 🧠 Fable-5 · Fusión de torres (6 recetas) — *recomendado siguiente*
 - ⏳ F3.1 · 🧠 Fable-5 · Música procedural adaptativa — *mejor al final (sabor, no bloquea)*
 - ⏳ F5.1 · 🧠 Fable-5 · Balance global + revisión adversarial + release en Cloudflare
 
-`BALANCE_VERSION` actual: **4** (subió con élites→2, horda→3, F4.1→4). Los replays guardan su versión.
+`BALANCE_VERSION` actual: **5** (subió con élites→2, horda→3, F4.1→4, F4.2→5). Los replays guardan su versión.
 
 **Reglas de ejecución para el orquestador (aplican a TODAS las tareas):**
 
@@ -258,7 +258,7 @@ Solo enemigos que crean decisiones nuevas (añadir al FINAL de `ENEMY_ORDER`):
   inmunes/bendecidas en 20 oleadas, bots siguen ganando el clásico en normal, y las
   torres mágicas hacen ~0 daño de efecto a inmunes (assert dirigido).
 
-### F4.2 · +2 torres y rango II de especializaciones — Opus 4.8 · riesgo medio
+### ✅ F4.2 · +2 torres y rango II de especializaciones — HECHO `9e9bbe1`
 
 - **Trampa de púas 🪤** — la ÚNICA construible sobre el camino (relajar
   `placementError` por tipo): daña a quien pasa encima, 20 cargas y se vende sola.
@@ -330,7 +330,7 @@ Element TD style, pero con recetas CURADAS (no combinatoria):
 | F2.1 Repeticiones | 🧠 Fable-5 | ✅ hecho | `b39cd09` |
 | F2.2 Modo Horda | Opus 4.8 | ✅ hecho | `b5ba3b9` |
 | F4.1 Monstruos + oleadas Green TD | Opus 4.8 | ✅ hecho | `8ef72da` |
-| F4.2 Torres + Rango II | Opus 4.8 | ⏳ pendiente (recomendado siguiente) | — |
-| F4.3 Fusión de torres | 🧠 **Fable-5** | ⏳ pendiente | — |
+| F4.2 Torres + Rango II | Opus 4.8 | ✅ hecho | `9e9bbe1` |
+| F4.3 Fusión de torres | 🧠 **Fable-5** | ⏳ pendiente (recomendado siguiente) | — |
 | F3.1 Música procedural | 🧠 **Fable-5** | ⏳ pendiente (mejor al final) | — |
 | F5.1 Balance global + revisión + release | 🧠 **Fable-5** | ⏳ pendiente (cierre) | — |

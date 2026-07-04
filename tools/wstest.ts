@@ -7,6 +7,7 @@ import {
   getMap,
   makePlacementContext,
   placementError,
+  replayTo,
   type ClientMsg,
   type ServerMsg,
 } from '@td/shared';
@@ -150,12 +151,39 @@ async function main(): Promise<void> {
   assert(events.some((e) => e.e === 'wave_start'), 'llegó el evento de inicio de oleada');
   assert(events.some((e) => e.e === 'death' || e.e === 'hit'), 'la torre dispara (hay hits o bajas)');
 
-  // 8. Con la partida en curso, un jugador NUEVO no puede entrar (ni con el código)
+  // 8. Con la partida en curso, un token NUEVO entra como ESPECTADOR (F1.4):
+  //    ve la partida en vivo y puede guiar (chat con prefijo 👁, sugerir torres).
   const carla = new TestClient('Carla', wsUrl({ code: joined.code }));
   await carla.open();
   carla.send({ type: 'join_room', name: 'Carla', token: 'token-carla-test', code: joined.code });
-  const rejected = await carla.waitFor('error');
-  assert(rejected.msg.includes('ya comenzó'), 'un jugador nuevo no puede entrar con la partida empezada');
+  const carlaJoined = await carla.waitFor('room_joined');
+  assert(carlaJoined.spectator === true, 'un token nuevo entra como espectador con la partida en curso');
+  assert(!carlaJoined.isHost, 'el espectador no es anfitrión');
+  // recibe el estado de la partida para renderizar + ticks en vivo
+  const carlaInit = await carla.waitFor('game_started');
+  assert(carlaInit.init.players.length === 2, 'el espectador recibe el init de la partida en curso');
+  await sleep(1200);
+  assert(carla.ticks.length > 10, `el espectador ve la partida (${carla.ticks.length} ticks)`);
+
+  // su chat llega a los jugadores con el prefijo 👁
+  carla.send({ type: 'chat', text: 'pongan un cañón ahí!' });
+  const specChat = await ana.waitFor('chat');
+  assert(specChat.from.startsWith('👁'), `el chat del espectador lleva prefijo 👁 (from="${specChat.from}")`);
+  assert(specChat.text === 'pongan un cañón ahí!', 'el chat del espectador llega con su texto');
+
+  // su sugerencia de torre (map_ping + towerType) se reenvía a los jugadores
+  carla.send({ type: 'map_ping', x: 3, y: 3, towerType: 'cannon' });
+  const suggestion = await ana.waitFor('map_ping');
+  assert(suggestion.towerType === 'cannon', 'la sugerencia de torre del espectador llega con towerType');
+  assert(suggestion.by.startsWith('👁'), 'la sugerencia se atribuye al espectador (prefijo 👁)');
+
+  // un comando de juego del espectador se IGNORA (no puede colocar torres)
+  const towersBefore = ana.ticks[ana.ticks.length - 1].snap.towers.length;
+  carla.send({ type: 'cmd', cmd: { kind: 'place', towerType: 'archer', cx: 0, cy: 0 } });
+  await sleep(600);
+  const towersAfter = ana.ticks[ana.ticks.length - 1].snap.towers.length;
+  assert(towersAfter === towersBefore, 'el cmd de un espectador se ignora (no coloca torres)');
+
   carla.ws.close();
 
   // 9. Reconexión: Beto se cae y vuelve con el mismo token
@@ -173,12 +201,131 @@ async function main(): Promise<void> {
   ana.ws.close();
   beto2.ws.close();
 
+  // 10. Repetición (replay): partida corta que TERMINA (sin defensa) e incluye la
+  //     reconexión de Beto. Al recibir game_over con `replay`, reconstruimos con el
+  //     motor puro y comparamos el estado final con el de la partida real (leído de
+  //     los últimos snapshots). DEBEN SER IDÉNTICOS.
+  await replayIdentityScenario();
+
   if (failures.length > 0) {
     console.error(`\n💥 ${failures.length} fallos`);
     process.exit(1);
   }
   console.log('\n🎉 Test end-to-end OK');
   process.exit(0);
+}
+
+// Escenario dedicado: una partida clásica en difícil donde NADIE defiende, así los
+// enemigos se fugan y las vidas llegan a 0 en pocas oleadas (partida corta). Incluye
+// la desconexión + reconexión de Beto para ejercitar los eventos `conn` del replay.
+async function replayIdentityScenario(): Promise<void> {
+  console.log('\n— Repetición (replay): identidad del estado final —');
+  const host = new TestClient('Host', wsUrl({ create: true }));
+  await host.open();
+  host.send({
+    type: 'create_room',
+    name: 'Host',
+    token: 'token-replay-host',
+    settings: { mapId: 'sendero', mode: 'classic', difficulty: 'hard' },
+  });
+  const rj = await host.waitFor('room_joined');
+  await host.waitFor('lobby_state');
+
+  const bob = new TestClient('Bob', wsUrl({ code: rj.code }));
+  await bob.open();
+  bob.send({ type: 'join_room', name: 'Bob', token: 'token-replay-bob', code: rj.code });
+  await bob.waitFor('room_joined');
+  await host.waitFor('lobby_state');
+
+  host.send({ type: 'start_game' });
+  await host.waitFor('game_started');
+  await bob.waitFor('game_started');
+  // x3 para que la partida (y el drenaje de vidas sin defensa) transcurra rápido en
+  // tiempo de pared. La velocidad no altera el determinismo: solo mete varios
+  // stepGame por tick de red (los comandos van en el primer paso).
+  host.send({ type: 'set_speed', speed: 3 });
+
+  // no se construye nada: los enemigos se fugan. Llamamos la oleada en cada
+  // interludio para acelerar. A media partida, Bob se cae y vuelve (evento conn).
+  let bobDropped = false;
+  let bob2: TestClient | null = null;
+  const start = Date.now();
+  let over: Extract<ServerMsg, { type: 'game_over' }> | null = null;
+
+  while (Date.now() - start < 90000) {
+    // ¿ya terminó? el game_over llega por el canal normal de mensajes
+    const found = host.msgs.find((m) => m.type === 'game_over');
+    if (found) {
+      over = found as Extract<ServerMsg, { type: 'game_over' }>;
+      break;
+    }
+    // llamar la oleada cuando estemos en interludio con margen
+    const last = host.ticks[host.ticks.length - 1];
+    if (last && !last.snap.active && last.snap.interludeSec >= 2 && last.snap.over === 0) {
+      host.send({ type: 'cmd', cmd: { kind: 'call_wave' } });
+    }
+    // a mitad (cuando queden pocas vidas) tirar a Bob y reconectarlo una vez
+    if (!bobDropped && last && last.snap.lives <= 12) {
+      bobDropped = true;
+      bob.ws.close();
+      await sleep(400);
+      bob2 = new TestClient('Bob2', wsUrl({ code: rj.code }));
+      await bob2.open();
+      bob2.send({ type: 'join_room', name: 'Bob', token: 'token-replay-bob', code: rj.code });
+      await bob2.waitFor('room_joined');
+      await bob2.waitFor('game_started');
+    }
+    await sleep(120);
+  }
+
+  assert(over !== null, 'la partida sin defensa termina (llega game_over)');
+  if (!over) {
+    host.ws.close();
+    bob2?.ws.close();
+    return;
+  }
+  assert(over.replay !== undefined, 'game_over trae la repetición (replay)');
+  const replay = over.replay!;
+  assert(
+    replay.log.some((e) => e.kind === 'conn' && e.connected === false) &&
+      replay.log.some((e) => e.kind === 'conn' && e.connected === true),
+    'el replay grabó la desconexión Y la reconexión de Bob (eventos conn)',
+  );
+
+  // estado real leído del ÚLTIMO snapshot recibido antes del game_over
+  const realTicks = host.ticks;
+  const lastSnap = realTicks[realTicks.length - 1].snap;
+  const lastT = realTicks[realTicks.length - 1].t;
+
+  // reconstrucción con el motor puro hasta el tick final del replay
+  const rebuilt = replayTo(replay, replay.finalTick);
+  const rebuiltGold: Record<string, number> = {};
+  for (const p of rebuilt.players) rebuiltGold[p.id] = Math.floor(p.gold);
+  const realGold: Record<string, number> = {};
+  for (const p of lastSnap.players) realGold[p.id] = p.gold;
+
+  // finalTick es el tick en que se fijó `over`; los snapshots de la ventana de
+  // gracia (post game-over) siguen llegando con tick creciente, así que lastT puede
+  // ser algo mayor (son incrementos vacíos, sin cambio de estado).
+  assert(replay.finalTick <= lastT, `finalTick es el tick del fin de partida (final ${replay.finalTick} <= último visto ${lastT})`);
+  assert(rebuilt.tick === replay.finalTick, `la reconstrucción alcanza el tick final (${rebuilt.tick})`);
+  assert(rebuilt.over !== null, 'la reconstrucción termina en game-over (over != null)');
+  assert(rebuilt.wave === replay.wave && replay.wave === over.stats.wave, `oleada idéntica (replay ${replay.wave} == stats ${over.stats.wave})`);
+  assert(rebuilt.lives === lastSnap.lives, `vidas idénticas (real ${lastSnap.lives} == replay ${rebuilt.lives})`);
+  assert(rebuilt.over !== null && rebuilt.over.victory === replay.victory, `resultado idéntico (victoria=${replay.victory})`);
+  assert(
+    JSON.stringify(realGold) === JSON.stringify(rebuiltGold),
+    `oro de cada jugador idéntico (real ${JSON.stringify(realGold)} == replay ${JSON.stringify(rebuiltGold)})`,
+  );
+
+  // determinismo del propio motor: dos reconstrucciones dan el MISMO rng
+  const rebuilt2 = replayTo(replay, replay.finalTick);
+  assert(rebuilt.rng === rebuilt2.rng, `el motor de replay es determinista (rng ${rebuilt.rng})`);
+
+  console.log(`   replay: ${replay.log.length} entradas, ${JSON.stringify(replay).length} bytes, ${replay.finalTick} ticks, oleada ${replay.wave}`);
+
+  host.ws.close();
+  bob2?.ws.close();
 }
 
 main().catch((err) => {

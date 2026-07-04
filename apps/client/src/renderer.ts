@@ -13,6 +13,7 @@ import {
   type EnemyTypeId,
   type MapDef,
   type PlacementContext,
+  type Snap,
   type SnapEnemy,
   type TowerTypeId,
 } from '@td/shared';
@@ -30,6 +31,10 @@ export const TOWER_ICONS: Record<TowerTypeId, string> = {
   sniper: '🎯',
   mortar: '🧨',
   bank: '💰',
+  banner: '🚩',
+  // F4.2
+  trap: '🪤',
+  alchemist: '⚗️',
 };
 
 export const ENEMY_ICONS: Record<EnemyTypeId, string> = {
@@ -45,6 +50,14 @@ export const ENEMY_ICONS: Record<EnemyTypeId, string> = {
   slimelet: '💧',
   ghost: '👻',
   golem: '🗿',
+  // F4.1
+  sapper: '🔨',
+  thief: '💰',
+  berserker: '🐗',
+  skywhale: '🐋',
+  wraith: '👤',
+  chimera: '🦁',
+  behemoth: '🦏',
 };
 
 // ---------- paletas por tema ----------
@@ -127,6 +140,21 @@ const MAX_ZOOM = 3.2;
 let mapLayer: HTMLCanvasElement | null = null;
 let mapLayerKey = '';
 let mapLayerScale = 40; // px por celda dentro de la capa estática
+
+// ---------- minimapa ----------
+// recuadro en coordenadas de PANTALLA calculado en cada frame (o null si oculto)
+let miniRect: { x: number; y: number; w: number; h: number; s: number } | null = null;
+let miniOn = localStorage.getItem('td_minimap') !== '0'; // visible por defecto
+
+export function isMinimapOn(): boolean {
+  return miniOn;
+}
+
+export function toggleMinimap(): boolean {
+  miniOn = !miniOn;
+  localStorage.setItem('td_minimap', miniOn ? '1' : '0');
+  return miniOn;
+}
 let placeCtx: PlacementContext | null = null;
 let placeCtxMap = '';
 let lastTime = performance.now();
@@ -142,9 +170,11 @@ const projPrev = new Map<number, { x: number; y: number }>();
 interface Ambient { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number; kind: Theme['ambient'] }
 const ambient: Ambient[] = [];
 
-// pings cooperativos: marcadores efímeros en el mapa con el color del jugador
-interface Ping { x: number; y: number; color: string; name: string; life: number }
+// pings cooperativos: marcadores efímeros en el mapa con el color del jugador.
+// Si trae towerType, es una SUGERENCIA de torre (fantasma de esa torre).
+interface Ping { x: number; y: number; color: string; name: string; life: number; towerType?: TowerTypeId }
 const PING_LIFE = 2.6;
+const SUGGEST_LIFE = 4.5; // las sugerencias de torre duran un poco más
 const pings: Ping[] = [];
 
 const toX = (x: number) => view.ox + x * view.scale;
@@ -190,6 +220,19 @@ export function resetCamera(): void {
   panY = 0;
 }
 
+// Centra la cámara sobre un punto del mundo (celdas). Ajusta panX/panY; el
+// siguiente computeView() los recorta a los límites del mapa. Usado por el
+// minimapa. No cambia el zoom.
+export function centerOn(worldX: number, worldY: number): void {
+  const gs = store.game;
+  if (!gs) return;
+  const s = baseScale * zoom;
+  const mapW = gs.map.gridW * s;
+  const mapH = gs.map.gridH * s;
+  panX = mapW / 2 - worldX * s;
+  panY = mapH / 2 - worldY * s;
+}
+
 // limpieza total al empezar una partida nueva: cámara, sacudida, partículas
 // ambientales del tema anterior y animaciones de torres/proyectiles viejos
 export function resetRenderer(): void {
@@ -206,9 +249,10 @@ export function addShake(mag: number): void {
   shake = Math.min(14, shake + mag);
 }
 
-// marca un ping cooperativo en (x, y) celdas
-export function addPing(x: number, y: number, color: string, name: string): void {
-  pings.push({ x, y, color, name, life: PING_LIFE });
+// marca un ping cooperativo en (x, y) celdas. Con towerType es una sugerencia de
+// torre: se dibuja el fantasma de esa torre en la celda (ver drawPings).
+export function addPing(x: number, y: number, color: string, name: string, towerType?: TowerTypeId): void {
+  pings.push({ x, y, color, name, life: towerType ? SUGGEST_LIFE : PING_LIFE, towerType });
   if (pings.length > 12) pings.shift();
 }
 
@@ -870,11 +914,16 @@ function drawAmbient(now: number): void {
 
 function drawPings(dt: number): void {
   const s = view.scale;
+  const now = performance.now();
   for (let i = pings.length - 1; i >= 0; i--) {
     const p = pings[i];
     p.life -= dt;
     if (p.life <= 0) {
       pings.splice(i, 1);
+      continue;
+    }
+    if (p.towerType) {
+      drawSuggestionPing(p, s, now);
       continue;
     }
     const age = 1 - p.life / PING_LIFE;
@@ -923,6 +972,48 @@ function drawPings(dt: number): void {
     g.fillText(p.name, x, my - s * 0.28);
     g.globalAlpha = 1;
   }
+}
+
+// Sugerencia de torre: fantasma semitransparente de la torre en la celda + una
+// etiqueta "nombre sugiere: NombreTorre". La celda es floor(x),floor(y).
+function drawSuggestionPing(p: Ping, s: number, now: number): void {
+  const type = p.towerType!;
+  const cx = Math.floor(p.x);
+  const cy = Math.floor(p.y);
+  const alpha = Math.min(1, p.life / 0.6); // fade out al final
+  const pulse = 0.5 + Math.sin(now / 260) * 0.12;
+
+  // anillo de sugerencia (celeste) bajo el fantasma
+  g.globalAlpha = alpha;
+  g.strokeStyle = p.color;
+  g.lineWidth = Math.max(1.5, s * 0.05);
+  g.setLineDash([s * 0.16, s * 0.1]);
+  g.beginPath();
+  g.arc(toX(cx + 0.5), toY(cy + 0.5), s * (0.42 + pulse * 0.06), 0, Math.PI * 2);
+  g.stroke();
+  g.setLineDash([]);
+
+  // fantasma de la torre (arte real, semitransparente) centrado en la celda
+  g.save();
+  g.globalAlpha = alpha * 0.72;
+  g.translate(toX(cx) + s / 2, toY(cy) + s / 2);
+  drawTowerArt(type, s, 1, now / 1000, { angle: -Math.PI / 2, recoil: 0, flash: 0 }, p.color, false);
+  g.restore();
+
+  // etiqueta "nombre sugiere: NombreTorre"
+  g.globalAlpha = alpha;
+  const label = `${p.name} sugiere: ${TOWERS[type].name}`;
+  const ty = toY(cy) - s * 0.28;
+  const tx = toX(cx + 0.5);
+  g.font = `bold ${Math.max(9, s * 0.2)}px system-ui, sans-serif`;
+  g.textAlign = 'center';
+  g.textBaseline = 'bottom';
+  g.strokeStyle = 'rgba(0,0,0,0.65)';
+  g.lineWidth = 3;
+  g.strokeText(label, tx, ty);
+  g.fillStyle = '#fff';
+  g.fillText(label, tx, ty);
+  g.globalAlpha = 1;
 }
 
 // ---------- interpolación ----------
@@ -1008,9 +1099,73 @@ function nearestEnemyAngle(interp: InterpResult | null, cx: number, cy: number, 
   return best;
 }
 
+// Refuerzo de un Estandarte sobre una torre, calculado en el CLIENTE a partir del
+// snapshot (posiciones + activeStats) — NO cambia el protocolo. Espeja la lógica
+// de `computeAuras` de la sim: mejor de cada tipo, sin apilar; cubre a torres de
+// cualquier dueño; no buffea a estandartes ni a la mina.
+export interface ClientAura {
+  dmg: number;
+  haste: number;
+}
+
+export function computeBannerAuras(snap: Snap): Map<number, ClientAura> {
+  const out = new Map<number, ClientAura>();
+  for (const banner of snap.towers) {
+    const blvl = activeStats(TOWER_ORDER[banner[1]], banner[4], banner[9] ?? -1);
+    const dmg = blvl.auraDamage ?? 0;
+    const haste = blvl.auraHaste ?? 0;
+    if (dmg <= 0 && haste <= 0) continue; // no es estandarte (o aura nula)
+    const bx = banner[2] + 0.5;
+    const by = banner[3] + 0.5;
+    for (const tw of snap.towers) {
+      if (tw[0] === banner[0]) continue;
+      const twType = TOWER_ORDER[tw[1]];
+      const tlvl = activeStats(twType, tw[4], tw[9] ?? -1);
+      if (tlvl.auraDamage !== undefined || tlvl.auraHaste !== undefined) continue; // otro estandarte
+      if (tlvl.incomePerWave) continue; // la mina
+      if (tlvl.auraBounty !== undefined) continue; // el Alquimista (no dispara)
+      if (TOWERS[twType].onPathOnly) continue; // la Trampa de púas
+      if (Math.hypot(bx - (tw[2] + 0.5), by - (tw[3] + 0.5)) > blvl.range) continue;
+      let a = out.get(tw[0]);
+      if (!a) {
+        a = { dmg: 0, haste: 0 };
+        out.set(tw[0], a);
+      }
+      if (dmg > a.dmg) a.dmg = dmg;
+      if (haste > a.haste) a.haste = haste;
+    }
+  }
+  return out;
+}
+
+// Cuenta cuántas torres (no estandartes, no minas) hay dentro del aura de un
+// Estandarte concreto. Usado por el panel del HUD ("Reforzando N torres").
+export function countBannerTargets(snap: Snap, bannerId: number): number {
+  const banner = snap.towers.find((t) => t[0] === bannerId);
+  if (!banner) return 0;
+  const blvl = activeStats(TOWER_ORDER[banner[1]], banner[4], banner[9] ?? -1);
+  if (blvl.auraDamage === undefined && blvl.auraHaste === undefined) return 0;
+  const bx = banner[2] + 0.5;
+  const by = banner[3] + 0.5;
+  let n = 0;
+  for (const tw of snap.towers) {
+    if (tw[0] === bannerId) continue;
+    const twType = TOWER_ORDER[tw[1]];
+    const tlvl = activeStats(twType, tw[4], tw[9] ?? -1);
+    if (tlvl.auraDamage !== undefined || tlvl.auraHaste !== undefined) continue;
+    if (tlvl.incomePerWave) continue;
+    if (tlvl.auraBounty !== undefined) continue;
+    if (TOWERS[twType].onPathOnly) continue;
+    if (Math.hypot(bx - (tw[2] + 0.5), by - (tw[3] + 0.5)) > blvl.range) continue;
+    n++;
+  }
+  return n;
+}
+
 function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt: number): void {
   const snap = gs.latest;
   if (!snap) return;
+  const auras = computeBannerAuras(snap);
   const s = view.scale;
   const t = now / 1000;
   const selected = gs.selection?.kind === 'tower' ? gs.selection.id : -1;
@@ -1049,6 +1204,56 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
       g.stroke();
     }
 
+    // aura del Alquimista: anillo verde en el suelo (como el dorado del Estandarte).
+    if (lvl.auraBounty !== undefined && lvl.auraBounty > 0) {
+      const pulse = 0.5 + Math.sin(t * 2.4) * 0.12;
+      g.fillStyle = `rgba(76,175,80,${0.05 + pulse * 0.05})`;
+      g.strokeStyle = `rgba(129,199,132,${0.4 + pulse * 0.2})`;
+      g.lineWidth = 1.5;
+      g.setLineDash([s * 0.18, s * 0.12]);
+      g.beginPath();
+      g.arc(toX(cx + 0.5), toY(cy + 0.5), lvl.range * s, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.setLineDash([]);
+    }
+
+    // aura del Estandarte: anillo cálido en el suelo, siempre visible. El tono
+    // vira a celeste si el aura es de celeridad (hastebanner).
+    if (lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) {
+      const pulse = 0.5 + Math.sin(t * 2.4) * 0.12;
+      const haste = (lvl.auraHaste ?? 0) > 0;
+      const fill = haste ? `rgba(79,195,247,${0.05 + pulse * 0.05})` : `rgba(255,202,40,${0.05 + pulse * 0.05})`;
+      const stroke = haste ? `rgba(129,212,250,${0.35 + pulse * 0.2})` : `rgba(255,213,79,${0.4 + pulse * 0.2})`;
+      g.fillStyle = fill;
+      g.strokeStyle = stroke;
+      g.lineWidth = 1.5;
+      g.setLineDash([s * 0.18, s * 0.12]);
+      g.beginPath();
+      g.arc(toX(cx + 0.5), toY(cy + 0.5), lvl.range * s, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.setLineDash([]);
+    }
+
+    // brillito en las torres reforzadas por algún Estandarte (barato: un anillo)
+    const buff = auras.get(id);
+    if (buff && (buff.dmg > 0 || buff.haste > 0)) {
+      const pulse = 0.55 + Math.sin(t * 3.5 + id) * 0.45;
+      const both = buff.dmg > 0 && buff.haste > 0;
+      // dorado = daño, celeste = celeridad; si ambos, se dibujan los dos anillos
+      const rings: string[] = [];
+      if (buff.dmg > 0) rings.push(`rgba(255,213,79,${0.35 * pulse})`);
+      if (buff.haste > 0) rings.push(`rgba(129,212,250,${0.35 * pulse})`);
+      for (let ri = 0; ri < rings.length; ri++) {
+        g.strokeStyle = rings[ri];
+        g.lineWidth = Math.max(1.5, s * 0.05);
+        g.beginPath();
+        g.arc(toX(cx + 0.5), toY(cy + 0.5), s * (0.4 + (both ? ri * 0.06 : 0)), 0, Math.PI * 2);
+        g.stroke();
+      }
+    }
+
     // rango de la torre seleccionada
     if (id === selected) {
       const pulse = 0.5 + Math.sin(t * 4) * 0.08;
@@ -1070,6 +1275,45 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
     g.save();
     g.translate(x + s / 2, y + s / 2);
     drawTowerArt(type, s, level, t, anim, owner?.color ?? '#888', id === selected, spec);
+    // Trampa de púas: contador de cargas restantes + barra de desgaste bajo la placa.
+    const charges = tw[11] ?? 0;
+    if (type === 'trap' && charges > 0) {
+      const frac = Math.max(0, Math.min(1, charges / 20));
+      // barra de desgaste
+      const bw = s * 0.56;
+      const by = s * 0.28;
+      g.fillStyle = 'rgba(6,8,14,0.7)';
+      roundRect(g, -bw / 2 - 1, by - 1, bw + 2, s * 0.09 + 2, s * 0.045);
+      g.fill();
+      g.fillStyle = frac > 0.5 ? '#cfd8dc' : frac > 0.25 ? '#ffb300' : '#ef5350';
+      roundRect(g, -bw / 2, by, Math.max(2, bw * frac), s * 0.09, s * 0.045);
+      g.fill();
+      // contador numérico
+      g.fillStyle = '#eceff1';
+      g.font = `bold ${Math.max(8, s * 0.24)}px system-ui, sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.strokeStyle = 'rgba(0,0,0,0.7)';
+      g.lineWidth = 3;
+      g.strokeText(String(charges), 0, -s * 0.3);
+      g.fillText(String(charges), 0, -s * 0.3);
+    }
+    // ATURDIDA (Zapador / Behemot): estrellitas girando sobre la torre + tinte gris
+    const stunned = (tw[10] ?? 0) === 1;
+    if (stunned) {
+      g.fillStyle = 'rgba(120,130,150,0.35)';
+      g.beginPath();
+      g.arc(0, 0, s * 0.4, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#ffe082';
+      g.font = `${Math.max(8, s * 0.28)}px serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      for (let si = 0; si < 3; si++) {
+        const a = t * 4 + (si * Math.PI * 2) / 3 + id;
+        g.fillText('✦', Math.cos(a) * s * 0.34, -s * 0.42 + Math.sin(a) * s * 0.1);
+      }
+    }
     g.restore();
   }
 
@@ -1370,6 +1614,113 @@ function drawTowerArt(
       }
       break;
     }
+    case 'banner': {
+      // mástil de madera clavado en la base
+      g.strokeStyle = '#5d4037';
+      g.lineWidth = Math.max(2, s * 0.06 * grow);
+      g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(0, s * 0.26);
+      g.lineTo(0, -s * 0.4 * grow);
+      g.stroke();
+      // remate dorado en la punta
+      g.fillStyle = '#ffd54f';
+      g.beginPath();
+      g.arc(0, -s * 0.42 * grow, s * 0.045 * grow, 0, Math.PI * 2);
+      g.fill();
+      // bandera ondeante en el color del dueño (adaptado de la del castillo)
+      const top = -s * 0.4 * grow;
+      const wav = Math.sin(t * 5) * s * 0.035;
+      const flagW = s * 0.34 * grow;
+      const flagH = s * 0.22 * grow;
+      g.fillStyle = ownerColor;
+      g.beginPath();
+      g.moveTo(0, top);
+      g.quadraticCurveTo(flagW * 0.5, top + s * 0.02 + wav, flagW, top + s * 0.03 - wav);
+      g.lineTo(flagW, top + flagH - wav);
+      g.quadraticCurveTo(flagW * 0.5, top + flagH - s * 0.02 + wav, 0, top + flagH);
+      g.closePath();
+      g.fill();
+      // pliegue sombreado para dar volumen a la tela
+      g.strokeStyle = 'rgba(0,0,0,0.18)';
+      g.lineWidth = Math.max(1, s * 0.02);
+      g.beginPath();
+      g.moveTo(flagW * 0.5, top + s * 0.04 + wav * 0.5);
+      g.quadraticCurveTo(flagW * 0.5, top + flagH * 0.5, flagW * 0.5, top + flagH - s * 0.02 + wav * 0.5);
+      g.stroke();
+      break;
+    }
+    case 'trap': {
+      // placa metálica hundida en el suelo del camino + hilera de púas triangulares.
+      // El desgaste (cargas restantes) lo pinta drawTowers con un contador aparte.
+      g.fillStyle = '#4e342e';
+      roundRect(g, -s * 0.3, -s * 0.18, s * 0.6, s * 0.36, s * 0.05);
+      g.fill();
+      g.fillStyle = '#3a2a24';
+      roundRect(g, -s * 0.26, -s * 0.14, s * 0.52, s * 0.28, s * 0.04);
+      g.fill();
+      // púas metálicas
+      const spikeShine = 0.6 + Math.sin(t * 6) * 0.2;
+      g.fillStyle = `rgba(207,216,220,${spikeShine})`;
+      g.strokeStyle = '#78909c';
+      g.lineWidth = Math.max(1, s * 0.015);
+      for (let row = -1; row <= 1; row++) {
+        for (let col = -2; col <= 2; col++) {
+          const sx = col * s * 0.11;
+          const sy = row * s * 0.11;
+          g.beginPath();
+          g.moveTo(sx - s * 0.035, sy + s * 0.03);
+          g.lineTo(sx, sy - s * 0.06);
+          g.lineTo(sx + s * 0.035, sy + s * 0.03);
+          g.closePath();
+          g.fill();
+          g.stroke();
+        }
+      }
+      break;
+    }
+    case 'alchemist': {
+      // pedestal + matraz burbujeante verde; el anillo de aura lo pinta drawTowers.
+      g.fillStyle = '#37474f';
+      roundRect(g, -s * 0.18, s * 0.02, s * 0.36, s * 0.22, s * 0.05);
+      g.fill();
+      // matraz (cuerpo triangular con cuello)
+      g.fillStyle = 'rgba(200,230,201,0.35)';
+      g.strokeStyle = '#a5d6a7';
+      g.lineWidth = Math.max(1.2, s * 0.03);
+      g.beginPath();
+      g.moveTo(-s * 0.05, -s * 0.24 * grow);
+      g.lineTo(-s * 0.05, -s * 0.08 * grow);
+      g.lineTo(-s * 0.2 * grow, s * 0.08 * grow);
+      g.lineTo(s * 0.2 * grow, s * 0.08 * grow);
+      g.lineTo(s * 0.05, -s * 0.08 * grow);
+      g.lineTo(s * 0.05, -s * 0.24 * grow);
+      g.closePath();
+      g.stroke();
+      // líquido verde
+      g.fillStyle = '#66bb6a';
+      g.beginPath();
+      g.moveTo(-s * 0.16 * grow, s * 0.02 * grow);
+      g.lineTo(s * 0.16 * grow, s * 0.02 * grow);
+      g.lineTo(s * 0.2 * grow, s * 0.08 * grow);
+      g.lineTo(-s * 0.2 * grow, s * 0.08 * grow);
+      g.closePath();
+      g.fill();
+      // burbujas ascendentes
+      for (let i = 0; i < 3; i++) {
+        const ph = (t * (0.8 + i * 0.25) + i * 0.4) % 1;
+        g.fillStyle = `rgba(197,225,165,${0.9 - ph * 0.9})`;
+        g.beginPath();
+        g.arc((i - 1) * s * 0.07, s * 0.05 - ph * s * 0.24, s * (0.03 + 0.015 * (1 - ph)), 0, Math.PI * 2);
+        g.fill();
+      }
+      // destello dorado (oro) sobre el matraz
+      g.fillStyle = `rgba(255,213,79,${0.5 + Math.sin(t * 4) * 0.4})`;
+      g.beginPath();
+      g.arc(s * 0.14, -s * 0.2, s * 0.035, 0, Math.PI * 2);
+      g.fill();
+      break;
+    }
   }
   void def;
 
@@ -1397,6 +1748,7 @@ function drawTowerArt(
   }
   // corona de especialización
   if (specialized) {
+    const rank2 = level >= 4;
     g.fillStyle = '#ffd54f';
     g.strokeStyle = 'rgba(0,0,0,0.4)';
     g.lineWidth = Math.max(1, s * 0.015);
@@ -1413,6 +1765,28 @@ function drawTowerArt(
     g.closePath();
     g.fill();
     g.stroke();
+    // Rango II (nivel 4): gema roja incrustada en la corona + halo palpitante extra
+    if (rank2) {
+      const gemPulse = 0.6 + Math.sin(t * 4) * 0.4;
+      g.fillStyle = `rgba(239,83,80,${0.85})`;
+      g.beginPath();
+      g.moveTo(0, cy - s * 0.02);
+      g.lineTo(s * 0.05, cy + s * 0.03);
+      g.lineTo(0, cy + s * 0.08);
+      g.lineTo(-s * 0.05, cy + s * 0.03);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = `rgba(255,205,210,${gemPulse})`;
+      g.lineWidth = Math.max(1, s * 0.02);
+      g.stroke();
+      // pequeñas gemas laterales para marcar el segundo rango
+      g.fillStyle = `rgba(255,215,120,${gemPulse})`;
+      for (const gx of [-cw / 2 + s * 0.03, cw / 2 - s * 0.03]) {
+        g.beginPath();
+        g.arc(gx, cy + s * 0.02, s * 0.025, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
   }
 }
 
@@ -1526,6 +1900,40 @@ function drawSpecFlourish(type: TowerTypeId, spec: number, s: number, t: number,
       }
       break;
     }
+    case 'warbanner': {
+      // gallardete rojo extra ondeando bajo la bandera + destellos marciales
+      const top = -s * 0.4 * grow;
+      const wav = Math.sin(t * 5 + 1) * s * 0.04;
+      g.fillStyle = '#e53935';
+      g.beginPath();
+      g.moveTo(0, top + s * 0.24 * grow);
+      g.quadraticCurveTo(s * 0.18 * grow, top + s * 0.26 * grow + wav, s * 0.34 * grow, top + s * 0.24 * grow - wav);
+      g.lineTo(s * 0.24 * grow, top + s * 0.34 * grow - wav);
+      g.quadraticCurveTo(s * 0.14 * grow, top + s * 0.3 * grow + wav, 0, top + s * 0.34 * grow);
+      g.closePath();
+      g.fill();
+      g.fillStyle = `rgba(255,138,101,${0.5 + Math.sin(t * 12) * 0.4})`;
+      for (let i = 0; i < 4; i++) {
+        const a = t * 2 + (i * Math.PI) / 2;
+        g.beginPath();
+        g.arc(Math.cos(a) * s * 0.28, Math.sin(a) * s * 0.28 - s * 0.05, s * 0.035, 0, Math.PI * 2);
+        g.fill();
+      }
+      break;
+    }
+    case 'hastebanner': {
+      // estelas celestes de velocidad girando alrededor
+      g.strokeStyle = `rgba(129,212,250,${0.55 + Math.sin(t * 10) * 0.35})`;
+      g.lineWidth = Math.max(1.5, s * 0.03);
+      g.lineCap = 'round';
+      for (let i = 0; i < 4; i++) {
+        const a = t * 3.2 + (i * Math.PI) / 2;
+        g.beginPath();
+        g.arc(0, -s * 0.02, s * 0.3 * grow, a, a + Math.PI * 0.4);
+        g.stroke();
+      }
+      break;
+    }
   }
 }
 
@@ -1552,6 +1960,7 @@ function drawEnemies(interp: InterpResult, now: number): void {
     const def = ENEMIES[type];
     const isBoss = (e.flags & 4) !== 0;
     const isElite = (e.flags & 8) !== 0;
+    const isImmune = (e.flags & 16) !== 0;
     const affixes = isElite ? affixesFromMask(e.affix) : [];
     const x = toX(e.x);
     let y = toY(e.y);
@@ -1582,6 +1991,32 @@ function drawEnemies(interp: InterpResult, now: number): void {
     g.save();
     g.translate(x, y);
     drawEnemyArt(type, def.color, r, t, e.id, bob, s);
+
+    // INMUNE a magia: tinte azulado + escudo runado giratorio. Marca visual clara
+    // de que hielo/veneno/execute/tesla no le hacen mella (solo daño físico).
+    if (isImmune) {
+      g.fillStyle = 'rgba(96,165,250,0.32)';
+      g.beginPath();
+      g.arc(0, 0, r * 1.02, 0, Math.PI * 2);
+      g.fill();
+      // escudo runado: anillo de trazos claros que rota lentamente
+      const rot = t * 0.8 + e.id;
+      g.strokeStyle = 'rgba(191,219,254,0.95)';
+      g.lineWidth = Math.max(1.5, r * 0.14);
+      g.setLineDash([r * 0.32, r * 0.28]);
+      g.beginPath();
+      g.arc(0, 0, r * 1.32, rot, rot + Math.PI * 2);
+      g.stroke();
+      g.setLineDash([]);
+      // pequeñas runas (puntos) en el anillo
+      g.fillStyle = 'rgba(147,197,253,0.9)';
+      for (let ri = 0; ri < 4; ri++) {
+        const a = rot + (ri * Math.PI) / 2;
+        g.beginPath();
+        g.arc(Math.cos(a) * r * 1.32, Math.sin(a) * r * 1.32, Math.max(1, r * 0.1), 0, Math.PI * 2);
+        g.fill();
+      }
+    }
 
     // anillo de élite
     if (isElite) {
@@ -1616,6 +2051,20 @@ function drawEnemies(interp: InterpResult, now: number): void {
       g.beginPath();
       g.arc(r * 0.3, -r - ph * r * 0.9, Math.max(1.5, r * 0.16 * (1 - ph * 0.5)), 0, Math.PI * 2);
       g.fill();
+    }
+    // SHRED de armadura (Obús/Metralla II): grietas naranjas girando alrededor —
+    // marca que su armadura efectiva está a la mitad.
+    if (e.flags & 32) {
+      const rot = t * 1.6 + e.id;
+      g.strokeStyle = `rgba(255,152,0,${0.6 + Math.sin(t * 8 + e.id) * 0.3})`;
+      g.lineWidth = Math.max(1.2, r * 0.14);
+      for (let i = 0; i < 4; i++) {
+        const a = rot + (i * Math.PI) / 2;
+        g.beginPath();
+        g.moveTo(Math.cos(a) * r * 0.9, Math.sin(a) * r * 0.9);
+        g.lineTo(Math.cos(a + 0.35) * r * 1.25, Math.sin(a + 0.35) * r * 1.25);
+        g.stroke();
+      }
     }
     g.restore();
 
@@ -2014,6 +2463,264 @@ function drawEnemyArt(type: EnemyTypeId, color: string, r: number, t: number, id
       g.fill();
       break;
     }
+    case 'sapper': {
+      // gnomo con un gran martillo que golpea (bob impulsa el swing)
+      bodyCircle(r * 0.9);
+      eyes(r * 0.3, -r * 0.1, Math.max(1, r * 0.13), true);
+      // casco
+      g.fillStyle = shade(color, 0.7);
+      g.beginPath();
+      g.arc(0, -r * 0.25, r * 0.95, Math.PI, 0);
+      g.fill();
+      // martillo al hombro, oscilando
+      g.save();
+      g.rotate(-0.5 + Math.sin(t * 4 + id) * 0.35);
+      g.strokeStyle = '#6d4c41';
+      g.lineWidth = Math.max(2, r * 0.18);
+      g.beginPath();
+      g.moveTo(r * 0.5, r * 0.2);
+      g.lineTo(r * 1.3, -r * 0.9);
+      g.stroke();
+      g.fillStyle = '#9e9e9e';
+      roundRect(g, r * 1.05, -r * 1.35, r * 0.7, r * 0.55, r * 0.1);
+      g.fill();
+      g.restore();
+      break;
+    }
+    case 'thief': {
+      // silueta encapuchada con una bolsa de oro; leve inclinación al correr
+      g.save();
+      g.rotate(bob * 0.05);
+      const grad = g.createRadialGradient(-r * 0.2, -r * 0.3, r * 0.2, 0, 0, r);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, color);
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(1.2, r * 0.12);
+      // capucha puntiaguda
+      g.beginPath();
+      g.moveTo(0, -r * 1.25);
+      g.lineTo(r * 0.9, r * 0.4);
+      g.quadraticCurveTo(0, r * 0.85, -r * 0.9, r * 0.4);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      // ojos brillantes en la sombra de la capucha
+      g.fillStyle = '#ffe082';
+      g.beginPath();
+      g.arc(-r * 0.22, -r * 0.1, r * 0.1, 0, Math.PI * 2);
+      g.arc(r * 0.22, -r * 0.1, r * 0.1, 0, Math.PI * 2);
+      g.fill();
+      // bolsa de oro
+      g.fillStyle = '#ffca28';
+      g.strokeStyle = '#8d6e63';
+      g.lineWidth = Math.max(1, r * 0.08);
+      g.beginPath();
+      g.arc(r * 0.75, r * 0.35, r * 0.32, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = '#7a5c00';
+      g.font = `bold ${Math.max(6, r * 0.5)}px serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('$', r * 0.75, r * 0.37);
+      g.restore();
+      break;
+    }
+    case 'berserker': {
+      // jabalí furioso; enrojece y "vibra" cuando está herido (lo lee el render por bob)
+      const rage = 0.5 + Math.abs(Math.sin(t * 12 + id)) * 0.5;
+      const grad = g.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.2, 0, 0, r * 1.15);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, color);
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(1.5, r * 0.12);
+      g.beginPath();
+      g.ellipse(0, 0, r * 1.1, r * 0.9, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      // colmillos
+      g.fillStyle = '#efebe9';
+      for (const side of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(side * r * 0.55, r * 0.25);
+        g.quadraticCurveTo(side * r * 0.95, r * 0.05, side * r * 0.7, -r * 0.3);
+        g.lineTo(side * r * 0.45, r * 0.05);
+        g.closePath();
+        g.fill();
+      }
+      // ojos rojos furiosos
+      g.fillStyle = `rgba(255,60,30,${0.6 + rage * 0.4})`;
+      g.beginPath();
+      g.arc(-r * 0.32, -r * 0.2, r * 0.13, 0, Math.PI * 2);
+      g.arc(r * 0.32, -r * 0.2, r * 0.13, 0, Math.PI * 2);
+      g.fill();
+      // vaho de las fosas nasales
+      g.fillStyle = 'rgba(255,255,255,0.35)';
+      g.beginPath();
+      g.arc(-r * 0.15, r * 0.35, r * 0.1, 0, Math.PI * 2);
+      g.arc(r * 0.15, r * 0.35, r * 0.1, 0, Math.PI * 2);
+      g.fill();
+      break;
+    }
+    case 'skywhale': {
+      // ballena voladora rechoncha con alas que baten lento
+      const flap = Math.sin(t * 4 + id);
+      g.fillStyle = shade(color, 0.85);
+      for (const side of [-1, 1]) {
+        g.save();
+        g.rotate(side * flap * 0.2);
+        g.beginPath();
+        g.moveTo(side * r * 0.7, -r * 0.1);
+        g.quadraticCurveTo(side * r * 2.0, -r * 0.7, side * r * 1.7, r * 0.5);
+        g.quadraticCurveTo(side * r * 1.1, r * 0.3, side * r * 0.7, r * 0.3);
+        g.closePath();
+        g.fill();
+        g.restore();
+      }
+      const grad = g.createRadialGradient(-r * 0.3, -r * 0.4, r * 0.2, 0, 0, r * 1.2);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, color);
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(1.5, r * 0.1);
+      g.beginPath();
+      g.ellipse(0, 0, r * 1.2, r * 0.9, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      // vientre claro
+      g.fillStyle = 'rgba(255,255,255,0.35)';
+      g.beginPath();
+      g.ellipse(0, r * 0.35, r * 0.8, r * 0.4, 0, 0, Math.PI * 2);
+      g.fill();
+      eyes(r * 0.45, -r * 0.15, Math.max(1, r * 0.12));
+      break;
+    }
+    case 'wraith': {
+      // espectro mayor: como el fantasma pero más grande, oscuro y semitransparente
+      g.globalAlpha = 0.5 + Math.sin(t * 2 + id) * 0.12;
+      const grad = g.createRadialGradient(-r * 0.3, -r * 0.4, r * 0.2, 0, 0, r * 1.3);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, shade(color, 0.6));
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(0, -r * 0.15, r * 1.05, Math.PI, 0);
+      const n = 5;
+      for (let i = 0; i <= n; i++) {
+        const fx = r * 1.05 - (i * 2 * r * 1.05) / n;
+        const fy = r * 0.6 + Math.sin(t * 5 + i * 2 + id) * r * 0.2;
+        g.quadraticCurveTo(fx + (r * 1.05) / n, fy + r * 0.25, fx, fy);
+      }
+      g.closePath();
+      g.fill();
+      // guadaña espectral
+      g.globalAlpha = 0.75;
+      g.strokeStyle = 'rgba(220,220,255,0.9)';
+      g.lineWidth = Math.max(1.5, r * 0.1);
+      g.beginPath();
+      g.moveTo(r * 0.7, -r * 1.0);
+      g.lineTo(r * 0.9, r * 0.6);
+      g.stroke();
+      g.beginPath();
+      g.arc(r * 0.7, -r * 1.0, r * 0.5, Math.PI * 1.1, Math.PI * 1.8);
+      g.stroke();
+      // ojos vacíos brillantes
+      g.fillStyle = 'rgba(200,220,255,0.95)';
+      g.beginPath();
+      g.ellipse(-r * 0.28, -r * 0.25, r * 0.13, r * 0.19, 0, 0, Math.PI * 2);
+      g.ellipse(r * 0.28, -r * 0.25, r * 0.13, r * 0.19, 0, 0, Math.PI * 2);
+      g.fill();
+      g.globalAlpha = 1;
+      break;
+    }
+    case 'chimera': {
+      // jefe volador: cabeza leonina + alas grandes que baten
+      const flap = Math.sin(t * 5 + id);
+      g.fillStyle = shade(color, 0.8);
+      for (const side of [-1, 1]) {
+        g.save();
+        g.rotate(side * (0.3 + flap * 0.3));
+        g.beginPath();
+        g.moveTo(side * r * 0.6, -r * 0.2);
+        g.lineTo(side * r * 2.1, -r * 1.1);
+        g.lineTo(side * r * 1.9, r * 0.1);
+        g.lineTo(side * r * 2.0, r * 0.9);
+        g.lineTo(side * r * 0.7, r * 0.3);
+        g.closePath();
+        g.fill();
+        g.restore();
+      }
+      // cuerpo
+      const grad = g.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.2, 0, 0, r * 1.2);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, color);
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(2, r * 0.1);
+      g.beginPath();
+      g.arc(0, 0, r * 1.05, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      // melena
+      g.fillStyle = shade(color, 0.7);
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2;
+        g.beginPath();
+        g.moveTo(Math.cos(a) * r * 0.9, Math.sin(a) * r * 0.9);
+        g.lineTo(Math.cos(a) * r * 1.5, Math.sin(a) * r * 1.5);
+        g.lineTo(Math.cos(a + 0.3) * r * 0.9, Math.sin(a + 0.3) * r * 0.9);
+        g.closePath();
+        g.fill();
+      }
+      bodyCircle(r * 0.9);
+      eyes(r * 0.32, -r * 0.1, Math.max(1.5, r * 0.15), true);
+      // fauces
+      g.fillStyle = '#3a0d18';
+      g.beginPath();
+      g.arc(0, r * 0.3, r * 0.35, 0, Math.PI);
+      g.fill();
+      break;
+    }
+    case 'behemoth': {
+      // jefe terrestre colosal: mole rocosa acorazada con placas
+      const grad = g.createRadialGradient(-r * 0.4, -r * 0.4, r * 0.3, 0, 0, r * 1.4);
+      grad.addColorStop(0, lite);
+      grad.addColorStop(1, shade(color, 0.7));
+      g.fillStyle = grad;
+      g.strokeStyle = dark;
+      g.lineWidth = Math.max(2, r * 0.1);
+      roundRect(g, -r * 1.1, -r * 0.95, r * 2.2, r * 1.9, r * 0.35);
+      g.fill();
+      g.stroke();
+      // placas de armadura
+      g.strokeStyle = shade(color, 0.5);
+      g.lineWidth = Math.max(1.5, r * 0.08);
+      for (let i = -1; i <= 1; i++) {
+        g.beginPath();
+        g.moveTo(i * r * 0.5, -r * 0.9);
+        g.lineTo(i * r * 0.5, r * 0.9);
+        g.stroke();
+      }
+      // cuernos gruesos
+      g.fillStyle = '#efebe9';
+      for (const side of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(side * r * 0.6, -r * 0.8);
+        g.quadraticCurveTo(side * r * 1.4, -r * 1.5, side * r * 1.0, -r * 1.7);
+        g.lineTo(side * r * 0.5, -r * 1.0);
+        g.closePath();
+        g.fill();
+      }
+      // ojos brillantes de furia
+      const glow = 0.6 + Math.sin(t * 3 + id) * 0.4;
+      g.fillStyle = `rgba(255,120,60,${0.7 + glow * 0.3})`;
+      g.beginPath();
+      g.arc(-r * 0.35, -r * 0.25, r * 0.16, 0, Math.PI * 2);
+      g.arc(r * 0.35, -r * 0.25, r * 0.16, 0, Math.PI * 2);
+      g.fill();
+      break;
+    }
   }
   void s;
 }
@@ -2156,11 +2863,20 @@ function drawPlacement(gs: GameStore, now: number): void {
     g.lineTo(toX(map.gridW), toY(cy));
     g.stroke();
   }
-  g.fillStyle = 'rgba(129,255,150,0.07)';
+  const type = gs.selection.towerType;
+  // la Trampa se coloca SOBRE el camino; el resto, fuera. Resalta las celdas
+  // construibles según el tipo elegido.
+  const onPathOnly = TOWERS[type].onPathOnly === true;
+  g.fillStyle = onPathOnly ? 'rgba(255,120,120,0.09)' : 'rgba(129,255,150,0.07)';
   for (let cy = 0; cy < map.gridH; cy++) {
     for (let cx = 0; cx < map.gridW; cx++) {
       const key = `${cx},${cy}`;
-      if (ctx.paths.has(key) || ctx.blocked.has(key) || towerSet.has(key)) continue;
+      if (towerSet.has(key)) continue;
+      if (onPathOnly) {
+        if (!ctx.paths.has(key)) continue; // la Trampa solo resalta el camino
+      } else if (ctx.paths.has(key) || ctx.blocked.has(key)) {
+        continue;
+      }
       g.fillRect(toX(cx) + 1, toY(cy) + 1, s - 2, s - 2);
     }
   }
@@ -2169,12 +2885,12 @@ function drawPlacement(gs: GameStore, now: number): void {
   const cell = gs.pendingPlace ?? gs.hoverCell;
   if (!cell) return;
   const { cx, cy } = cell;
-  const type = gs.selection.towerType;
   const lvl = TOWERS[type].levels[0];
   const key = `${cx},${cy}`;
-  const ok =
-    cx >= 0 && cy >= 0 && cx < map.gridW && cy < map.gridH &&
-    !ctx.paths.has(key) && !ctx.blocked.has(key) && !towerSet.has(key);
+  const inGrid = cx >= 0 && cy >= 0 && cx < map.gridW && cy < map.gridH;
+  const ok = inGrid && !towerSet.has(key) && (
+    onPathOnly ? ctx.paths.has(key) : !ctx.paths.has(key) && !ctx.blocked.has(key)
+  );
 
   // rango
   g.fillStyle = ok ? 'rgba(120,220,120,0.08)' : 'rgba(240,80,80,0.08)';
@@ -2219,6 +2935,104 @@ function syncPlaceBubble(gs: GameStore): void {
     bubbleEl.style.left = `${x}px`;
     bubbleEl.style.top = `${y}px`;
   }
+}
+
+// ---------- minimapa in-game ----------
+
+// ¿debe mostrarse el minimapa ahora? oculto en pantallas muy bajas.
+function minimapVisible(map: MapDef): boolean {
+  if (!miniOn) return false;
+  if (canvas.clientHeight < 500) return false;
+  return zoom > 1.15 || map.gridW > 24 || map.gridH > 16;
+}
+
+// Dibuja el minimapa como overlay en la esquina superior derecha, en
+// coordenadas de pantalla (NO afectado por cámara/zoom). Barato: un drawImage
+// del mapLayer ya cacheado + puntos + rectángulo del viewport. Actualiza
+// miniRect para el hit-test de input.ts.
+function drawMiniMap(gs: GameStore, now: number): void {
+  miniRect = null;
+  const map = gs.map;
+  if (!minimapVisible(map)) return;
+
+  const w = canvas.clientWidth;
+  const compact = w < 560;
+  const boxMax = compact ? 100 : 140;
+  const s = boxMax / Math.max(map.gridW, map.gridH); // px por celda en el mini
+  const mw = map.gridW * s;
+  const mh = map.gridH * s;
+  const margin = 10;
+  const bx = w - mw - margin;
+  const by = PAD_TOP + 6;
+  miniRect = { x: bx, y: by, w: mw, h: mh, s };
+
+  g.save();
+  // marco + fondo sutil
+  g.globalAlpha = 0.92;
+  g.fillStyle = 'rgba(10,12,20,0.9)';
+  roundRect(g, bx - 4, by - 4, mw + 8, mh + 8, 6);
+  g.fill();
+
+  // terreno cacheado escalado al recuadro
+  if (mapLayer) {
+    g.save();
+    roundRect(g, bx, by, mw, mh, 3);
+    g.clip();
+    g.drawImage(mapLayer, bx, by, mw, mh);
+    g.restore();
+  }
+
+  const snap = gs.latest;
+  if (snap) {
+    // torres: punto del color del dueño
+    for (const t of snap.towers) {
+      const owner = gs.init.players[t[5]];
+      g.fillStyle = owner?.color ?? '#ccc';
+      g.beginPath();
+      g.arc(bx + (t[2] + 0.5) * s, by + (t[3] + 0.5) * s, Math.max(1.2, s * 0.35), 0, Math.PI * 2);
+      g.fill();
+    }
+    // enemigos: rojo normal, morado si élite (flag 8)
+    for (const e of snap.enemies) {
+      const elite = (e[5] & 8) !== 0;
+      g.fillStyle = elite ? '#c77dff' : '#ff5252';
+      g.beginPath();
+      g.arc(bx + e[2] * s, by + e[3] * s, Math.max(1.2, s * (elite ? 0.42 : 0.32)), 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+
+  // rectángulo del viewport: qué parte del mapa se ve en pantalla ahora.
+  // world visible = [(0-ox)/scale .. (W-ox)/scale] × [(0-oy)/scale .. (H-oy)/scale]
+  const vx0 = (0 - view.ox) / view.scale;
+  const vy0 = (0 - view.oy) / view.scale;
+  const vx1 = (w - view.ox) / view.scale;
+  const vy1 = (canvas.clientHeight - view.oy) / view.scale;
+  const rx0 = bx + Math.max(0, vx0) * s;
+  const ry0 = by + Math.max(0, vy0) * s;
+  const rx1 = bx + Math.min(map.gridW, vx1) * s;
+  const ry1 = by + Math.min(map.gridH, vy1) * s;
+  g.globalAlpha = 1;
+  g.strokeStyle = 'rgba(255,255,255,0.95)';
+  g.lineWidth = 1.5;
+  g.strokeRect(rx0 + 0.5, ry0 + 0.5, Math.max(2, rx1 - rx0), Math.max(2, ry1 - ry0));
+
+  // marco exterior
+  g.strokeStyle = 'rgba(255,255,255,0.28)';
+  g.lineWidth = 1;
+  roundRect(g, bx - 4, by - 4, mw + 8, mh + 8, 6);
+  g.stroke();
+  g.restore();
+  void now;
+}
+
+// Hit-test para input.ts: si (px,py) en coords de pantalla cae dentro del
+// minimapa, devuelve la coordenada de MUNDO (celdas) correspondiente; si no, null.
+export function minimapHit(px: number, py: number): { x: number; y: number } | null {
+  const r = miniRect;
+  if (!r) return null;
+  if (px < r.x || py < r.y || px > r.x + r.w || py > r.y + r.h) return null;
+  return { x: (px - r.x) / r.s, y: (py - r.y) / r.s };
 }
 
 // ---------- viñeta ----------
@@ -2295,5 +3109,6 @@ function loop(): void {
   g.restore();
 
   drawVignette();
+  drawMiniMap(gs, now);
   syncPlaceBubble(gs);
 }

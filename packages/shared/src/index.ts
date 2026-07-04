@@ -11,3 +11,4 @@ export * from './sim/grid.js';
 export * from './sim/state.js';
 export * from './sim/step.js';
 export * from './sim/commands.js';
+export * from './sim/replay.js';

@@ -1,7 +1,7 @@
 import { placementError, TOWER_ORDER, TOWERS, type PlacementError, type TowerTypeId } from '@td/shared';
 import { net } from './net.js';
 import { store } from './store.js';
-import { getPlacementCtx, getView, panBy, resetCamera, zoomAt } from './renderer.js';
+import { centerOn, getPlacementCtx, getView, minimapHit, panBy, resetCamera, zoomAt } from './renderer.js';
 import { hidePanel, showPanel, syncTowerBar, toast } from './hud.js';
 import { unlockAudio } from './audio.js';
 
@@ -15,6 +15,7 @@ const PLACE_ERRORS: Record<Exclude<PlacementError, null>, string> = {
   camino: 'No se puede construir sobre el camino',
   bloqueado: 'Esa celda está bloqueada',
   ocupado: 'Ya hay una torre en esa celda',
+  fuera_camino: 'La Trampa solo se coloca SOBRE el camino',
 };
 
 function cellFromPoint(canvas: HTMLCanvasElement, clientX: number, clientY: number): { cx: number; cy: number } | null {
@@ -38,13 +39,14 @@ function worldFromPoint(canvas: HTMLCanvasElement, clientX: number, clientY: num
   };
 }
 
-// envía un ping cooperativo en el punto de pantalla dado; devuelve true si se envió
-function sendPing(canvas: HTMLCanvasElement, clientX: number, clientY: number): boolean {
+// envía un ping cooperativo en el punto de pantalla dado; devuelve true si se envió.
+// Si `towerType` viene dado, es una sugerencia de torre (map_ping con towerType).
+function sendPing(canvas: HTMLCanvasElement, clientX: number, clientY: number, towerType?: TowerTypeId): boolean {
   const gs = store.game;
-  if (!gs) return false;
+  if (!gs || store.replay) return false; // sin pings durante una repetición
   const w = worldFromPoint(canvas, clientX, clientY);
   if (w.x < -0.5 || w.y < -0.5 || w.x > gs.map.gridW + 0.5 || w.y > gs.map.gridH + 0.5) return false;
-  net.send({ type: 'map_ping', x: w.x, y: w.y });
+  net.send({ type: 'map_ping', x: w.x, y: w.y, ...(towerType ? { towerType } : {}) });
   if (navigator.vibrate) navigator.vibrate(15);
   return true;
 }
@@ -73,7 +75,7 @@ function sendPlace(cx: number, cy: number, keepPlacing: boolean): void {
   const gs = store.game;
   if (!gs || gs.selection?.kind !== 'placing' || !gs.latest) return;
   const towers = gs.latest.towers.map((t) => ({ cx: t[2], cy: t[3] }));
-  const err = placementError(gs.map, getPlacementCtx(gs.map), towers, cx, cy);
+  const err = placementError(gs.map, getPlacementCtx(gs.map), towers, cx, cy, gs.selection.towerType);
   if (err) {
     toast(PLACE_ERRORS[err]);
     return;
@@ -89,6 +91,16 @@ function sendPlace(cx: number, cy: number, keepPlacing: boolean): void {
 function tapSelect(canvas: HTMLCanvasElement, clientX: number, clientY: number, shiftKey: boolean, mouseLike: boolean): void {
   const gs = store.game;
   if (!gs || !gs.latest || gs.over) return;
+  // en modo repetición no hay input de juego (ni colocar/pinear/sugerir): solo mirar
+  if (store.replay) return;
+
+  // modo sugerencia (torre armada desde la barra): el toque manda una sugerencia
+  // de torre (map_ping + towerType) en vez de colocar. Tiene prioridad sobre el
+  // ping normal. La sugerencia queda armada para poder sugerir varias.
+  if (store.suggestType) {
+    sendPing(canvas, clientX, clientY, store.suggestType);
+    return;
+  }
 
   // modo ping armado por el botón 📍: el siguiente toque es un ping.
   // solo se desarma si el toque cayó dentro del mapa y se envió de verdad.
@@ -99,6 +111,9 @@ function tapSelect(canvas: HTMLCanvasElement, clientX: number, clientY: number, 
     }
     return;
   }
+
+  // el espectador no coloca torres ni abre el panel: cualquier otro toque no hace nada
+  if (store.spectator) return;
 
   const cell = cellFromPoint(canvas, clientX, clientY);
   if (!cell) {
@@ -138,7 +153,19 @@ export function initInput(canvas: HTMLCanvasElement): void {
 
   interface Ptr { x: number; y: number; startX: number; startY: number; moved: boolean }
   const pointers = new Map<number, Ptr>();
+  // id del puntero que está manipulando el minimapa (arrastre = recentrar).
+  // Ese gesto se consume: ni coloca torres, ni pinea, ni panea el mapa grande.
+  let miniPtr = -1;
   let pinchDist = 0;
+
+  // recentra la cámara a partir de un punto de pantalla dentro del minimapa
+  const recenterFromMini = (clientX: number, clientY: number): boolean => {
+    const rect = canvas.getBoundingClientRect();
+    const hit = minimapHit(clientX - rect.left, clientY - rect.top);
+    if (!hit) return false;
+    centerOn(hit.x, hit.y);
+    return true;
+  };
   let lastTapTime = 0;
   let lastTapX = 0;
   let lastTapY = 0;
@@ -168,6 +195,14 @@ export function initInput(canvas: HTMLCanvasElement): void {
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {}
+    // el minimapa manda: si el toque cae dentro, recentra y consume el gesto
+    // (antes de cualquier lógica de tap/ping/paneo/colocación).
+    if (pointers.size === 0 && recenterFromMini(e.clientX, e.clientY)) {
+      miniPtr = e.pointerId;
+      cancelLongPress();
+      if (navigator.vibrate) navigator.vibrate(8);
+      return;
+    }
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: false });
     if (pointers.size >= 2) {
       recalcPinch();
@@ -200,6 +235,13 @@ export function initInput(canvas: HTMLCanvasElement): void {
 
   canvas.addEventListener('pointermove', (e) => {
     const gs = store.game;
+
+    // arrastre dentro del minimapa: seguir recentrando la cámara
+    if (e.pointerId === miniPtr) {
+      recenterFromMini(e.clientX, e.clientY);
+      return;
+    }
+
     const p = pointers.get(e.pointerId);
 
     if (!p) {
@@ -239,6 +281,11 @@ export function initInput(canvas: HTMLCanvasElement): void {
   });
 
   const endPointer = (e: PointerEvent) => {
+    // fin de un gesto sobre el minimapa: ya se consumió, no generar tap/ping
+    if (e.pointerId === miniPtr) {
+      miniPtr = -1;
+      return;
+    }
     const p = pointers.get(e.pointerId);
     pointers.delete(e.pointerId);
     cancelLongPress();
@@ -269,6 +316,7 @@ export function initInput(canvas: HTMLCanvasElement): void {
   };
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', (e) => {
+    if (e.pointerId === miniPtr) miniPtr = -1;
     pointers.delete(e.pointerId);
     cancelLongPress();
     recalcPinch();
@@ -305,15 +353,31 @@ export function initInput(canvas: HTMLCanvasElement): void {
 
   window.addEventListener('keydown', (e) => {
     if (store.screen !== 'game' || !store.game) return;
+    if (store.replay) return; // en repetición, el teclado de juego está desactivado
     const active = document.activeElement;
     if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return;
 
     if (e.key === 'Escape') {
+      if (store.spectator) {
+        store.suggestType = null;
+        syncTowerBar();
+        return;
+      }
       clearSelection();
       return;
     }
     const type = TOWER_ORDER.find((t) => TOWERS[t].hotkey === e.key);
     if (type) {
+      // espectador: la hotkey arma/desarma el "modo sugerencia" de esa torre
+      if (store.spectator) {
+        store.suggestType = store.suggestType === type ? null : type;
+        if (store.suggestType) {
+          store.pingArmed = false;
+          document.getElementById('btn-ping')?.classList.remove('armed');
+        }
+        syncTowerBar();
+        return;
+      }
       const current = store.game.selection;
       setPlacing(current?.kind === 'placing' && current.towerType === type ? null : type);
     }

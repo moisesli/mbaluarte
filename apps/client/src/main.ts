@@ -2,14 +2,19 @@ import './style.css';
 import { ENEMIES, ENEMY_ORDER, GAME_SPEEDS, TOWERS, type GameEvent } from '@td/shared';
 import { net, wsPathJoin } from './net.js';
 import { pushFrame, saveName, startGameStore, store } from './store.js';
-import { addPing, addShake, initRenderer, resetRenderer, towerFired } from './renderer.js';
+import { addPing, addShake, initRenderer, isMinimapOn, resetRenderer, toggleMinimap, towerFired } from './renderer.js';
 import { initInput } from './input.js';
-import { buildTowerBar, hidePanel, onTick, toast, addChat, refreshPanel, syncSpeedButton } from './hud.js';
+import { applySpectatorUI, buildTowerBar, hidePanel, onTick, toast, addChat, refreshPanel, syncSpeedButton, syncTowerBar } from './hud.js';
 import { hideEnd, homeError, initHome, initLobby, renderLobby, showEnd, switchScreen } from './screens.js';
 import { beam, burst, clearParticles, floatText, line, ring } from './particles.js';
-import { sfx } from './audio.js';
+import { sfx, setSfxVolume, setMusicVolume, unlockAudio } from './audio.js';
+import { initReplayHome, saveReplay, setReplayEventSink, startReplay } from './replay.js';
+import type { ReplayData } from '@td/shared';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+// la repetición de la partida que acaba de terminar (para "🎬 Ver repetición")
+let lastReplay: ReplayData | null = null;
 
 // ---------- procesado de eventos de la simulación ----------
 
@@ -17,37 +22,41 @@ function processEvents(events: GameEvent[]): void {
   const gs = store.game;
   if (!gs) return;
   const myColor = gs.init.players.find((p) => p.id === store.playerId)?.color ?? '#fff';
+  // pan estéreo por posición: la x de la celda -> [-1 izq, +1 der] según el ancho.
+  const gw = gs.map.gridW;
+  const panOf = (x: number): number => Math.max(-1, Math.min(1, (x / gw) * 2 - 1));
 
   for (const ev of events) {
     switch (ev.e) {
       case 'shot':
         line(ev.x, ev.y, ev.tx, ev.ty, ev.color);
         towerFired(ev.x, ev.y);
-        sfx.snipe();
+        sfx.snipe(panOf(ev.x), ev.color);
         break;
       case 'chain':
         beam(ev.pts, ev.color);
         towerFired(ev.pts[0][0], ev.pts[0][1]);
-        sfx.zap();
+        sfx.zap(panOf(ev.pts[0][0]));
         break;
       case 'hit':
         if (ev.kind === 'splash') {
           ring(ev.x, ev.y, ev.r, '#ffab40');
           burst(ev.x, ev.y, '#ff7043', 10, 2.6);
           if (ev.r >= 1.2) addShake(2.5);
-          sfx.boom();
+          sfx.boom(panOf(ev.x));
         } else if (ev.kind === 'poison') {
           burst(ev.x, ev.y, '#9ccc65', 4, 1.2);
         } else if (ev.kind === 'frost') {
           burst(ev.x, ev.y, '#81d4fa', 4, 1.2);
         } else {
           burst(ev.x, ev.y, '#ffe082', 3, 1.4);
-          sfx.shot();
+          sfx.shot(panOf(ev.x));
         }
         break;
       case 'death': {
         const def = ENEMIES[ev.type];
         const big = def.boss || ev.elite;
+        const pan = panOf(ev.x);
         burst(ev.x, ev.y, def.color, def.boss ? 30 : ev.elite ? 18 : 9, big ? 3.5 : 2.2);
         ring(ev.x, ev.y, def.boss ? 1.6 : ev.elite ? 1.1 : def.radius * 2.2, def.color);
         if (def.boss) addShake(10);
@@ -57,16 +66,29 @@ function processEvents(events: GameEvent[]): void {
             gs.init.players.find((p) => p.id === ev.killer)?.color ?? '#ffd54f';
           floatText(ev.x, ev.y - 0.3, `+${ev.bounty}`, killerColor, ev.elite ? 15 : 13);
         }
-        sfx.death();
-        if (big) sfx.boom();
+        // firma de muerte según jerarquía: jefe (percusión) > élite (sting) > resto.
+        if (def.boss) sfx.bossDeath(pan);
+        else if (ev.elite) sfx.eliteDeath(pan);
+        else sfx.death(pan);
         break;
       }
+      case 'shred':
+        // proc de shred de armadura (Obús/Metralla II): anillo naranja + chispas
+        ring(ev.x, ev.y, ev.r, '#ff9800');
+        burst(ev.x, ev.y, '#ffcc80', 6, 1.6);
+        break;
       case 'miss':
         floatText(ev.x, ev.y - 0.2, '¡esquivó!', '#e0e0e0', 11);
         break;
       case 'leak':
         toast(`💔 ¡Se escapó un ${ENEMIES[ev.type].name}! Quedan ${ev.lives} vidas`);
         addShake(4);
+        sfx.leak();
+        break;
+      case 'steal':
+        toast(`🪙 ¡El Ladrón te robó ${ev.gold} de oro!`);
+        floatText(ev.x, ev.y - 0.3, `-🪙${ev.gold}`, '#ef5350', 14);
+        addShake(3);
         sfx.leak();
         break;
       case 'wave_start':
@@ -79,15 +101,16 @@ function processEvents(events: GameEvent[]): void {
         break;
       case 'income':
         floatText(ev.x, ev.y - 0.4, `+🪙${ev.amount}`, '#ffd54f', 13);
+        // el ingreso de la mina es de oleada (sin foco espacial): pan neutro.
         sfx.coin();
         break;
       case 'place':
         burst(ev.x, ev.y, TOWERS[ev.towerType].color, 8, 1.8);
-        sfx.place();
+        sfx.place(panOf(ev.x));
         break;
       case 'upgrade':
         ring(ev.x, ev.y, 0.7, '#ffd54f');
-        sfx.upgrade();
+        sfx.upgrade(panOf(ev.x));
         break;
       case 'specialize':
         ring(ev.x, ev.y, 1.3, '#ffd54f');
@@ -95,11 +118,11 @@ function processEvents(events: GameEvent[]): void {
         burst(ev.x, ev.y, '#ffd54f', 18, 2.8);
         addShake(3);
         floatText(ev.x, ev.y - 0.6, `★ ${ev.name}`, '#ffd54f', 15);
-        sfx.specialize();
+        sfx.specialize(panOf(ev.x));
         break;
       case 'sell':
         floatText(ev.x, ev.y, `+🪙${ev.refund}`, '#ffd54f', 13);
-        sfx.sell();
+        sfx.sell(panOf(ev.x));
         break;
       case 'reject':
         if (ev.playerId === store.playerId) {
@@ -131,6 +154,7 @@ function wireNet(): void {
     store.playerId = msg.playerId;
     store.roomCode = msg.code;
     store.isHost = msg.isHost;
+    store.spectator = msg.spectator ?? false;
     history.replaceState(null, '', `#${msg.code}`);
     $('overlay-reconnect').hidden = true;
     // a partir de ahora, cualquier reconexión se une a esta sala por su código
@@ -146,7 +170,13 @@ function wireNet(): void {
   net.on('lobby_state', (msg) => {
     store.lobby = { players: msg.players, settings: msg.settings, inGame: msg.inGame };
     const me = msg.players.find((p) => p.id === store.playerId);
-    if (me) store.isHost = me.isHost;
+    if (me) {
+      store.isHost = me.isHost;
+      // si aparezco en la lista de jugadores es que fui convertido a jugador al
+      // terminar la partida: ya no soy espectador
+      store.spectator = false;
+      $('spectator-banner').hidden = true;
+    }
     renderLobby();
     $('btn-pause').hidden = !store.isHost;
     $('btn-speed').hidden = !store.isHost;
@@ -171,6 +201,7 @@ function wireNet(): void {
 
     startGameStore(msg.init);
     store.pingArmed = false;
+    store.suggestType = null;
     $('btn-ping').classList.remove('armed');
     clearParticles();
     resetRenderer();
@@ -183,6 +214,9 @@ function wireNet(): void {
     $('btn-pause').hidden = !store.isHost;
     $('btn-speed').hidden = !store.isHost;
     syncSpeedButton();
+    // modo espectador de la UI (banner + ocultar controles de jugador). Para un
+    // jugador normal esto lo desactiva (deja la UI completa).
+    applySpectatorUI();
   });
 
   net.on('tick', (msg) => {
@@ -195,7 +229,20 @@ function wireNet(): void {
 
   net.on('game_over', (msg) => {
     if (store.game) store.game.over = msg.stats;
+    // guardar la repetición (localStorage, máx 10) y recordarla para el botón
+    // "🎬 Ver repetición" de la pantalla de fin.
+    let replay: ReplayData | null = msg.replay ?? null;
+    if (replay) {
+      try {
+        saveReplay(replay);
+      } catch {
+        // guardar es best-effort; aun sin guardar, se puede ver la recién terminada
+      }
+    }
+    lastReplay = replay;
     showEnd(msg.stats);
+    const btn = document.getElementById('btn-watch-replay') as HTMLButtonElement;
+    btn.hidden = !replay;
   });
 
   net.on('chat', (msg) => addChat(msg.from, msg.color, msg.text));
@@ -221,8 +268,9 @@ function wireNet(): void {
   });
 
   net.on('map_ping', (msg) => {
-    addPing(msg.x, msg.y, msg.color, msg.by);
-    sfx.ping();
+    addPing(msg.x, msg.y, msg.color, msg.by, msg.towerType);
+    const gw = store.game?.map.gridW;
+    sfx.ping(gw ? Math.max(-1, Math.min(1, (msg.x / gw) * 2 - 1)) : 0);
   });
 
   net.on('error', (msg) => {
@@ -278,6 +326,20 @@ function wireHudButtons(): void {
   $('btn-ping').addEventListener('click', () => {
     store.pingArmed = !store.pingArmed;
     $('btn-ping').classList.toggle('armed', store.pingArmed);
+    // pinear y sugerir son excluyentes: al armar el ping, desarma la sugerencia
+    if (store.pingArmed && store.suggestType) {
+      store.suggestType = null;
+      syncTowerBar();
+    }
+  });
+
+  // minimapa: mostrar/ocultar (persistido en localStorage vía el renderer)
+  const miniBtn = $('btn-minimap');
+  const syncMini = () => miniBtn.classList.toggle('off', !isMinimapOn());
+  syncMini();
+  miniBtn.addEventListener('click', () => {
+    toggleMinimap();
+    syncMini();
   });
 
   const muteBtn = $('btn-mute');
@@ -289,11 +351,63 @@ function wireHudButtons(): void {
     syncMute();
   });
 
+  // ---------- panel de ajustes ⚙ (sliders SFX + Música) ----------
+  const settingsBtn = $('btn-settings');
+  const panel = $('settings-panel');
+  const sfxRange = $<HTMLInputElement>('set-sfx');
+  const musicRange = $<HTMLInputElement>('set-music');
+  const sfxVal = $('set-sfx-val');
+  const musicVal = $('set-music-val');
+
+  const syncSliders = () => {
+    sfxRange.value = String(Math.round(store.sfxVol * 100));
+    musicRange.value = String(Math.round(store.musicVol * 100));
+    sfxVal.textContent = `${sfxRange.value}%`;
+    musicVal.textContent = `${musicRange.value}%`;
+  };
+  syncSliders();
+
+  const closePanel = () => {
+    panel.hidden = true;
+    settingsBtn.setAttribute('aria-expanded', 'false');
+  };
+  settingsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    unlockAudio(); // abrir ajustes cuenta como interacción: desbloquea el audio
+    const open = panel.hidden;
+    panel.hidden = !open;
+    settingsBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) syncSliders();
+  });
+  // clic fuera cierra el panel; clic dentro no.
+  panel.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => {
+    if (!panel.hidden) closePanel();
+  });
+
+  sfxRange.addEventListener('input', () => {
+    setSfxVolume(Number(sfxRange.value) / 100);
+    sfxVal.textContent = `${sfxRange.value}%`;
+  });
+  // al soltar, un chasquido de prueba para oír el volumen elegido.
+  sfxRange.addEventListener('change', () => sfx.place());
+  musicRange.addEventListener('input', () => {
+    setMusicVolume(Number(musicRange.value) / 100);
+    musicVal.textContent = `${musicRange.value}%`;
+  });
+
   $('btn-back-lobby').addEventListener('click', () => {
     hideEnd();
     store.game = null;
     switchScreen('lobby');
     renderLobby();
+  });
+
+  // 🎬 Ver repetición: reproduce la partida que acaba de terminar (sin red)
+  $('btn-watch-replay').addEventListener('click', () => {
+    if (!lastReplay) return;
+    hideEnd();
+    startReplay(lastReplay);
   });
 
   // chat dentro del juego; en móvil la clase .open muestra también el log
@@ -348,6 +462,9 @@ initHome();
 initLobby();
 wireHudButtons();
 wireNet();
+// el reproductor de repeticiones reusa el MISMO pipeline de eventos que la red
+setReplayEventSink(processEvents);
+initReplayHome();
 switchScreen('home');
 
 // enlace directo ?n=Nombre#SALA: entra a la sala sin pasar por el formulario

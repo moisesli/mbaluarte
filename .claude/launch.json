@@ -7,6 +7,13 @@
       "runtimeArgs": ["apps/server/dist/server.js"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "client-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@td/client", "dev"],
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }

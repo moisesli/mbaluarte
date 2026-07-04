@@ -3,6 +3,9 @@ import {
   CALL_WAVE_GOLD_PER_SEC,
   ENEMIES,
   ENEMY_ORDER,
+  hasRank2,
+  HORDE_CAP,
+  rank2Cost,
   SELL_REFUND,
   TARGET_MODES,
   TOWERS,
@@ -15,7 +18,7 @@ import {
 } from '@td/shared';
 import { net } from './net.js';
 import { myGold, store } from './store.js';
-import { ENEMY_ICONS, TOWER_ICONS } from './renderer.js';
+import { countBannerTargets, ENEMY_ICONS, TOWER_ICONS } from './renderer.js';
 import { setPlacing } from './input.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -51,6 +54,18 @@ export function buildTowerBar(): void {
       <span class="tcost">🪙${def.levels[0].cost}</span>
     `;
     card.addEventListener('click', () => {
+      // espectador: la barra funciona en "modo sugerencia" — no coloca; arma el
+      // siguiente toque en el mapa como sugerencia de torre (map_ping + towerType)
+      if (store.spectator) {
+        store.suggestType = store.suggestType === type ? null : type;
+        // sugerir y pinear son excluyentes; desarmar el ping si estaba armado
+        if (store.suggestType) {
+          store.pingArmed = false;
+          $('btn-ping').classList.remove('armed');
+        }
+        syncTowerBar();
+        return;
+      }
       const sel = store.game?.selection;
       setPlacing(sel?.kind === 'placing' && sel.towerType === type ? null : type);
     });
@@ -66,6 +81,9 @@ function specialStats(lvl: TowerLevelDef): string[] {
   if (lvl.poison) out.push(`Veneno ${lvl.poison.dps}/s`);
   if (lvl.chain) out.push(`Salta a ${lvl.chain.targets}`);
   if (lvl.incomePerWave) out.push(`+🪙${lvl.incomePerWave}/oleada`);
+  if (lvl.auraBounty) out.push(`+${Math.round(lvl.auraBounty * 100)}% oro por baja`);
+  if (lvl.charges) out.push(`${lvl.charges} cargas`);
+  if (lvl.shots && lvl.shots > 1) out.push(`${lvl.shots} disparos`);
   if (lvl.pierceArmor) out.push('Antiarmadura');
   if (lvl.minRange) out.push(`Mín. ${lvl.minRange}`);
   return out;
@@ -82,8 +100,13 @@ function syncPlacingInfo(): void {
   const def = TOWERS[type];
   const lvl = def.levels[0];
   const parts: string[] = [`${TOWER_ICONS[type]} <b>${def.name}</b> 🪙${lvl.cost}`];
-  if (lvl.damage > 0) parts.push(`Daño <b>${lvl.damage}</b>`);
-  if (lvl.range > 0) parts.push(`Alcance <b>${lvl.range}</b>`);
+  const isAura = lvl.auraDamage !== undefined || lvl.auraHaste !== undefined || lvl.auraBounty !== undefined;
+  if (lvl.damage > 0 && !def.onPathOnly) parts.push(`Daño <b>${lvl.damage}</b>`);
+  if (def.onPathOnly) parts.push(`Daño por golpe <b>${lvl.damage}</b>`);
+  if (lvl.auraDamage !== undefined && lvl.auraDamage > 0) parts.push(`Aura de daño <b>+${Math.round(lvl.auraDamage * 100)}%</b>`);
+  if (lvl.auraHaste !== undefined && lvl.auraHaste > 0) parts.push(`Aura de cadencia <b>+${Math.round(lvl.auraHaste * 100)}%</b>`);
+  if (lvl.auraBounty !== undefined && lvl.auraBounty > 0) parts.push(`Aura de oro <b>+${Math.round(lvl.auraBounty * 100)}%</b>`);
+  if (lvl.range > 0) parts.push(`${isAura ? 'Radio' : 'Alcance'} <b>${lvl.range}</b>`);
   if (lvl.cooldown > 0) parts.push(`Cadencia <b>${lvl.cooldown}s</b>`);
   parts.push(...specialStats(lvl));
   const hint = window.matchMedia('(hover: hover)').matches
@@ -100,10 +123,39 @@ export function syncTowerBar(): void {
   const placing = gs.selection?.kind === 'placing' ? gs.selection.towerType : null;
   for (const card of document.querySelectorAll<HTMLElement>('.tcard')) {
     const type = card.dataset.type as TowerTypeId;
-    card.classList.toggle('selected', placing === type);
-    card.classList.toggle('poor', gold < TOWERS[type].levels[0].cost);
+    if (store.spectator) {
+      // el espectador no coloca ni gasta: solo "modo sugerencia" (celeste), sin
+      // marca de "sin oro"
+      card.classList.remove('selected', 'poor');
+      card.classList.toggle('suggesting', store.suggestType === type);
+    } else {
+      card.classList.toggle('selected', placing === type);
+      card.classList.toggle('poor', gold < TOWERS[type].levels[0].cost);
+    }
   }
-  syncPlacingInfo();
+  if (!store.spectator) syncPlacingInfo();
+}
+
+// ---------- modo espectador ----------
+
+// Aplica (o revierte) el modo espectador de la UI del juego: banner persistente,
+// oculta el oro propio, los botones de acción de jugador (llamar oleada, pausa,
+// velocidad) y el panel de mejora/venta. La barra de torres se mantiene (en modo
+// sugerencia). Se llama al entrar a la partida (jugador o espectador).
+export function applySpectatorUI(): void {
+  const spec = store.spectator;
+  $('spectator-banner').hidden = !spec;
+  $('hud-gold').hidden = spec;
+  if (spec) {
+    // un espectador nunca ve estos controles (ya se ocultan por !isHost, pero por
+    // si acaso: un espectador jamás es anfitrión)
+    $('btn-callwave').hidden = true;
+    $('btn-pause').hidden = true;
+    $('btn-speed').hidden = true;
+    $('btn-resume').hidden = true;
+    hidePanel();
+    if (store.game) store.game.selection = null;
+  }
 }
 
 // ---------- panel de torre seleccionada ----------
@@ -165,17 +217,41 @@ function statBlock(lvl: TowerLevelDef, next: TowerLevelDef | null): string[] {
     }
   }
   if (lvl.shots && lvl.shots > 1) lines.push(`Dispara a <b>${lvl.shots}</b> a la vez`);
-  if (lvl.range > 0) lines.push(stat('Alcance', lvl.range, next?.range));
+  if (lvl.auraDamage !== undefined && lvl.auraDamage > 0) {
+    const nxt = next?.auraDamage !== undefined && next.auraDamage > 0 ? `${Math.round(next.auraDamage * 100)}%` : null;
+    lines.push(stat('Aura de daño', `+${Math.round(lvl.auraDamage * 100)}%`, nxt));
+  }
+  if (lvl.auraHaste !== undefined && lvl.auraHaste > 0) {
+    const nxt = next?.auraHaste !== undefined && next.auraHaste > 0 ? `${Math.round(next.auraHaste * 100)}%` : null;
+    lines.push(stat('Aura de cadencia', `+${Math.round(lvl.auraHaste * 100)}%`, nxt));
+  }
+  if ((lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) && lvl.range > 0) {
+    lines.push(stat('Radio', lvl.range, next?.range));
+  } else if (lvl.range > 0) {
+    lines.push(stat('Alcance', lvl.range, next?.range));
+  }
   if (lvl.cooldown > 0) lines.push(stat('Cadencia', lvl.cooldown, next?.cooldown, 's'));
   if (lvl.splash) lines.push(stat('Área', lvl.splash, next?.splash));
   if (lvl.slow) lines.push(stat('Congela al', `${Math.round(lvl.slow.factor * 100)}%`, next?.slow ? `${Math.round(next.slow.factor * 100)}%` : null));
   if (lvl.slowAura) lines.push(`Aura de hielo <b>${lvl.slowAura.radius}</b> (${Math.round(lvl.slowAura.factor * 100)}%)`);
   if (lvl.poison) lines.push(stat('Veneno', `${lvl.poison.dps}/s`, next?.poison ? `${next.poison.dps}/s` : null));
   if (lvl.chain) lines.push(stat('Salta a', lvl.chain.targets, next?.chain?.targets));
-  if (lvl.execute) lines.push(`Remata por debajo del <b>${Math.round(lvl.execute * 100)}%</b>`);
+  if (lvl.execute) lines.push(`Remata por debajo del <b>${Math.round(lvl.execute * 100)}%</b> de la vida máx`);
+  if (lvl.executeCurrent) lines.push(`Remata por debajo del <b>${Math.round(lvl.executeCurrent * 100)}%</b> de la vida ACTUAL`);
+  if (lvl.shredChance) lines.push(`Shred: <b>${Math.round(lvl.shredChance * 100)}%</b> de partir la armadura en área`);
+  if (lvl.growth) lines.push(`Crecimiento: <b>+${lvl.growth}</b> de daño por disparo`);
+  if (lvl.auraBounty) lines.push(stat('Aura de oro', `+${Math.round(lvl.auraBounty * 100)}%`, next?.auraBounty ? `+${Math.round(next.auraBounty * 100)}%` : null));
   if (lvl.incomePerWave) lines.push(stat('Ingreso', `🪙${lvl.incomePerWave}${lvl.incomeToAll ? ' a todos' : ''}`, next?.incomePerWave ? `🪙${next.incomePerWave}` : null));
   if (lvl.pierceArmor) lines.push('Perfora armadura');
   return lines;
+}
+
+// Botones de modo de objetivo (solo para torres que disparan y tienen alcance).
+function targetModesHtml(def: (typeof TOWERS)[TowerTypeId], lvl: TowerLevelDef, modeIdx: number): string {
+  if (def.projectileKind === 'none' || lvl.range <= 0) return '';
+  return `<div class="tmodes">${TARGET_MODES.map(
+    (m, i) => `<button class="tmode ${i === modeIdx ? 'active' : ''}" data-mode="${m}">${TARGET_LABELS[m]}</button>`,
+  ).join('')}</div>`;
 }
 
 export function refreshPanel(): void {
@@ -194,31 +270,53 @@ export function refreshPanel(): void {
   }
   const [id, typeIdx, , , level, ownerIdx, modeIdx, kills, damage] = data;
   const spec = data[9] ?? -1;
+  const charges = data[11] ?? 0;
   const type = TOWER_ORDER[typeIdx];
   const def = TOWERS[type];
   const specialized = spec >= 0;
+  const isRank2 = level >= 4;
   const lvl = activeStats(type, level, spec);
   const next = !specialized && level < 3 ? def.levels[level] : null;
   const owner = gs.init.players[ownerIdx];
   const isMine = owner?.id === store.playerId;
   const gold = myGold(gs);
   const sellValue = Math.floor(towerTotalCost(type, level, spec) * SELL_REFUND);
-  const canSpecialize = level >= 3 && !specialized;
+  const canSpecialize = level >= 3 && !specialized && !def.onPathOnly;
+  // ¿puede subir al Rango II? torre especializada, aún en nivel 3, cuya spec tenga rank2
+  const canRank2 = specialized && level === 3 && hasRank2(type, spec);
+  const r2cost = canRank2 ? rank2Cost(type, spec) : null;
 
   const statLines = statBlock(lvl, next);
-  statLines.push(`Bajas: <b>${kills}</b> · Daño total: <b>${damage.toLocaleString()}</b>`);
+  // Estandarte: cuántas torres está reforzando ahora mismo (contado en el cliente)
+  if (lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) {
+    const n = countBannerTargets(gs.latest, id);
+    statLines.push(`Reforzando <b>${n}</b> ${n === 1 ? 'torre' : 'torres'}`);
+  } else if (def.onPathOnly) {
+    // Trampa de púas: cargas restantes (no acumula kills/daño clásicos)
+    statLines.push(`Cargas: <b>${charges}</b>`);
+    statLines.push(`Bajas: <b>${kills}</b> · Daño total: <b>${damage.toLocaleString()}</b>`);
+  } else {
+    statLines.push(`Bajas: <b>${kills}</b> · Daño total: <b>${damage.toLocaleString()}</b>`);
+  }
   statLines.push(`Dueño: <b style="color:${owner?.color}">${escapeHtml(owner?.name ?? '?')}</b>`);
 
   // cabecera: nombre (+ especialización) y nivel/estrella
   const title = specialized
     ? `${TOWER_ICONS[type]} ${def.specs[spec].name}`
     : `${TOWER_ICONS[type]} ${def.name}`;
-  const levelTag = specialized ? '★ Élite' : `Nv. ${level}${level >= 3 ? ' (máx)' : ''}`;
+  const levelTag = isRank2
+    ? '★★ Rango II'
+    : specialized
+      ? '★ Élite'
+      : `Nv. ${level}${level >= 3 ? ' (máx)' : ''}`;
 
   // acciones del dueño
   let actions = '';
   if (isMine) {
-    if (canSpecialize) {
+    if (def.onPathOnly) {
+      // Trampa de púas: no se mejora ni especializa; solo se puede vender.
+      actions = `<div class="prow"><button id="panel-sell" class="btn ghost">💸 Vender ${sellValue}</button></div>`;
+    } else if (canSpecialize) {
       actions = `
         <div class="spec-title">Elige especialización</div>
         <div class="spec-choices">
@@ -234,23 +332,30 @@ export function refreshPanel(): void {
             .join('')}
         </div>
         <div class="prow"><button id="panel-sell" class="btn ghost">💸 Vender ${sellValue}</button></div>`;
-    } else {
-      const nextCost = next?.cost ?? null;
+    } else if (canRank2 && r2cost !== null) {
+      // Rango II: mejora identidad de la especialización (reutiliza el comando upgrade)
+      const r2desc = def.specs[spec].rank2?.desc ?? 'Mejora de Rango II';
       actions = `
+        <div class="spec-title">Rango II</div>
+        <p class="spec-desc" style="padding:0 4px 6px">${escapeHtml(r2desc)}</p>
         <div class="prow">
-          <button id="panel-upgrade" class="btn primary" ${nextCost === null || gold < nextCost ? 'disabled' : ''}>
-            ${nextCost === null ? 'Máximo' : `⬆ Mejorar 🪙${nextCost}`}
+          <button id="panel-upgrade" class="btn primary" ${gold < r2cost ? 'disabled' : ''}>
+            ★★ Rango II 🪙${r2cost}
           </button>
           <button id="panel-sell" class="btn ghost">💸 ${sellValue}</button>
         </div>
-        ${
-          def.projectileKind !== 'none' && lvl.range > 0
-            ? `<div class="tmodes">${TARGET_MODES.map(
-                (m, i) =>
-                  `<button class="tmode ${i === modeIdx ? 'active' : ''}" data-mode="${m}">${TARGET_LABELS[m]}</button>`,
-              ).join('')}</div>`
-            : ''
-        }`;
+        ${targetModesHtml(def, lvl, modeIdx)}`;
+    } else {
+      const nextCost = next?.cost ?? null;
+      const maxedLabel = isRank2 ? 'Máximo (Rango II)' : 'Máximo';
+      actions = `
+        <div class="prow">
+          <button id="panel-upgrade" class="btn primary" ${nextCost === null || gold < nextCost ? 'disabled' : ''}>
+            ${nextCost === null ? maxedLabel : `⬆ Mejorar 🪙${nextCost}`}
+          </button>
+          <button id="panel-sell" class="btn ghost">💸 ${sellValue}</button>
+        </div>
+        ${targetModesHtml(def, lvl, modeIdx)}`;
     }
   } else {
     actions = `<p class="hint">Torre de ${escapeHtml(owner?.name ?? 'otro jugador')}</p>`;
@@ -280,26 +385,43 @@ export function onTick(snap: Snap): void {
   const gs = store.game;
   if (!gs) return;
 
+  const horde = gs.init.mode === 'horde';
   const lives = $('hud-lives');
-  lives.textContent = `❤️ ${snap.lives}`;
-  lives.classList.toggle('danger', snap.lives <= 5);
+  const aliveChip = $('hud-alive');
+
+  if (horde) {
+    // En horda no hay vidas: se pierde por SATURACIÓN. El chip 👾 pasa a ser la
+    // "vida" — enemigos vivos / cap. Amarillo desde 70%, rojo desde 90% (pulso).
+    lives.hidden = true;
+    const cap = HORDE_CAP[gs.init.difficulty] ?? HORDE_CAP.normal;
+    const alive = snap.enemies.length;
+    aliveChip.hidden = false;
+    aliveChip.textContent = `👾 ${alive}/${cap}`;
+    const frac = alive / cap;
+    aliveChip.classList.toggle('warn', frac >= 0.7 && frac < 0.9);
+    aliveChip.classList.toggle('danger', frac >= 0.9);
+  } else {
+    lives.hidden = false;
+    lives.textContent = `❤️ ${snap.lives}`;
+    lives.classList.toggle('danger', snap.lives <= 5);
+    aliveChip.classList.remove('warn', 'danger');
+    // enemigos vivos durante la oleada
+    if (snap.active && snap.enemies.length > 0) {
+      aliveChip.hidden = false;
+      aliveChip.textContent = `👾 ${snap.enemies.length}`;
+    } else {
+      aliveChip.hidden = true;
+    }
+  }
 
   $('hud-wave').textContent =
     snap.totalWaves > 0 ? `Oleada ${snap.wave}/${snap.totalWaves}` : `Oleada ${snap.wave} ∞`;
   $('hud-gold').textContent = `🪙 ${myGold(gs)}`;
 
-  // enemigos vivos durante la oleada
-  const aliveChip = $('hud-alive');
-  if (snap.active && snap.enemies.length > 0) {
-    aliveChip.hidden = false;
-    aliveChip.textContent = `👾 ${snap.enemies.length}`;
-  } else {
-    aliveChip.hidden = true;
-  }
-
   // botón de llamar oleada, con el bonus de oro que ganarías ahora mismo
+  // (los espectadores no llaman oleadas: nunca lo ven)
   const btn = $('btn-callwave');
-  if (!snap.active && snap.over === 0) {
+  if (!store.spectator && !snap.active && snap.over === 0) {
     btn.hidden = false;
     const bonus = snap.interludeSec * CALL_WAVE_GOLD_PER_SEC;
     $('callwave-timer').textContent = `${snap.interludeSec}s +🪙${bonus}`;
@@ -323,6 +445,18 @@ export function onTick(snap: Snap): void {
   const preview = $('hud-preview');
   if (!snap.active && snap.nextWave.length > 0) {
     preview.hidden = false;
+    // etiquetas de tipo (telegrafía Green TD): 🛡 inmune · ⭐ bendecida · 🦅 aérea · ☠ jefe
+    const tags: string[] = [];
+    if (snap.nextImmune) tags.push('<span class="wave-tag immune" title="Inmune a la magia: solo daño físico">🛡 inmune</span>');
+    if (snap.nextBlessed) tags.push('<span class="wave-tag blessed" title="¡Oleada bendecida: doble botín!">⭐ bendecida</span>');
+    if (snap.nextBossType >= 0) {
+      const bossType = ENEMY_ORDER[snap.nextBossType];
+      const bossFlying = ENEMIES[bossType]?.flying;
+      tags.push(`<span class="wave-tag boss" title="${ENEMIES[bossType]?.name ?? 'Jefe'}">${bossFlying ? '🦅' : '☠'} ${ENEMIES[bossType]?.name ?? 'jefe'}</span>`);
+    } else if (snap.nextFlying) {
+      tags.push('<span class="wave-tag flying" title="Domina lo aéreo: necesitas anti-aire">🦅 aérea</span>');
+    }
+    $('hud-preview-tags').innerHTML = tags.join('');
     $('hud-preview-list').innerHTML = snap.nextWave
       .map(([typeIdx, count]) => {
         const type = ENEMY_ORDER[typeIdx];

@@ -1,5 +1,5 @@
 import type { GameEvent, GameState, MapDef, PlayerCommand } from '../types.js';
-import { TOWERS, towerLevel } from '../balance/towers.js';
+import { TOWERS, towerLevel, hasRank2, rank2Cost } from '../balance/towers.js';
 import { CALL_WAVE_GOLD_PER_SEC, SELL_REFUND, TICK_RATE } from '../constants.js';
 import { placementError, type PlacementContext } from './grid.js';
 
@@ -27,13 +27,14 @@ export function applyCommands(
           reject(events, playerId, 'No te alcanza el oro');
           break;
         }
-        const err = placementError(map, ctx, state.towers, cmd.cx, cmd.cy);
+        const err = placementError(map, ctx, state.towers, cmd.cx, cmd.cy, cmd.towerType);
         if (err) {
           const msgs: Record<string, string> = {
             fuera: 'Fuera del mapa',
             camino: 'No puedes construir sobre el camino',
             bloqueado: 'Celda bloqueada',
             ocupado: 'Ya hay una torre ahí',
+            fuera_camino: 'La Trampa solo va SOBRE el camino',
           };
           reject(events, playerId, msgs[err]);
           break;
@@ -54,6 +55,9 @@ export function applyCommands(
           invested: lvl.cost,
           kills: 0,
           damage: 0,
+          stunnedUntil: 0,
+          charges: lvl.charges ?? 0,
+          growthBonus: 0,
         });
         events.push({ e: 'place', x: cmd.cx + 0.5, y: cmd.cy + 0.5, towerType: cmd.towerType });
         break;
@@ -64,6 +68,36 @@ export function applyCommands(
         if (!tower) break;
         if (tower.owner !== playerId) {
           reject(events, playerId, 'Solo el dueño puede mejorar esta torre');
+          break;
+        }
+        // la Trampa de púas no se mejora (se agota y desaparece)
+        if (TOWERS[tower.type].onPathOnly) {
+          reject(events, playerId, 'La Trampa no se puede mejorar');
+          break;
+        }
+        // Rango II: una torre ya especializada (nivel 3, spec elegida) con `rank2`
+        // puede subir al nivel 4 pagando el coste del Rango II. Reutiliza el comando
+        // `upgrade` en vez de inventar protocolo nuevo.
+        if (tower.spec >= 0) {
+          if (tower.level >= 4) {
+            reject(events, playerId, 'Ya está en el Rango II');
+            break;
+          }
+          if (!hasRank2(tower.type, tower.spec)) {
+            reject(events, playerId, 'Esta especialización no tiene Rango II');
+            break;
+          }
+          const r2cost = rank2Cost(tower.type, tower.spec)!;
+          if (player.gold < r2cost) {
+            reject(events, playerId, 'No te alcanza el oro');
+            break;
+          }
+          player.gold -= r2cost;
+          player.stats.goldSpent += r2cost;
+          tower.level = 4;
+          tower.invested += r2cost;
+          tower.cooldownLeft = 0;
+          events.push({ e: 'upgrade', x: tower.cx + 0.5, y: tower.cy + 0.5, level: tower.level });
           break;
         }
         if (tower.level >= 3) {

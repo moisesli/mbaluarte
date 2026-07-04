@@ -7,7 +7,18 @@ export const CLASSIC_WAVES = 20;
 // Velocidades de simulación que puede elegir el anfitrión (steps por tick de red).
 export const GAME_SPEEDS = [1, 2, 3] as const;
 
-export const START_LIVES = 20;
+export const START_LIVES = 30;
+
+// ---------- modo horda ----------
+// Los enemigos no se escapan: dan vueltas en bucle. Se pierde por SATURACIÓN
+// (demasiados vivos a la vez). Cap de enemigos vivos por dificultad; al alcanzarlo
+// la partida termina en derrota.
+export const HORDE_CAP: Record<string, number> = { easy: 45, normal: 38, hard: 32 };
+// Cansancio (anti-esponja): cada vuelta completada baja el maxHp efectivo del
+// enemigo un −10% de su maxHp BASE (el que tenía al nacer, antes de dar vueltas),
+// acumulable, con un suelo del 10% para que nunca llegue a 0 de golpe.
+export const HORDE_LAP_HP_LOSS = 0.1;
+export const HORDE_LAP_HP_FLOOR = 0.1;
 export const SELL_REFUND = 0.7;
 export const CALL_WAVE_GOLD_PER_SEC = 2; // oro por segundo restante al llamar la oleada antes
 export const FIRST_INTERLUDE_SEC = 25;
@@ -23,6 +34,35 @@ export const ELITE_HP_MULT = 2.6;
 export const ELITE_BOUNTY_MULT = 3;
 export const ELITE_RADIUS_MULT = 1.3;
 export const ELITE_EXTRA_LIVES = 1; // vidas extra que cuesta si se escapa
+
+// ---------- F4.1 · sistema de oleadas Green TD ----------
+// Inmunidad mágica: cada N oleadas desde IMMUNE_FROM (10,15,20…) la oleada sale
+// inmune (todos sus enemigos y élites `spellImmune`). Fuerza tener daño físico.
+export const IMMUNE_FROM = 10;
+export const IMMUNE_EVERY = 5;
+// El Tesla (rayo mágico) hace este multiplicador de daño a los inmunes.
+export const SPELL_IMMUNE_TESLA_MULT = 0.3; // −70%
+// Fuga escalonada: coste extra de vidas = floor(oleada / LEAK_WAVE_DIV).
+export const LEAK_WAVE_DIV = 10;
+// Oleada bendecida (bonus riesgo/recompensa): desde BLESSED_FROM, con probabilidad
+// 1/BLESSED_ODDS (RNG determinista), toda la oleada gana un afijo común (sin el ×2.6
+// de hp de élite) + botín ×BLESSED_BOUNTY_MULT + bono de fin de oleada ×BLESSED_BONUS_MULT.
+export const BLESSED_FROM = 6;
+export const BLESSED_ODDS = 15;
+export const BLESSED_BOUNTY_MULT = 1.5;
+export const BLESSED_BONUS_MULT = 1.5;
+
+// ---------- F4.2 · torres nuevas + Rango II ----------
+// Trampa de púas: cargas iniciales (cada golpe consume 1; a 0 se auto-vende).
+export const TRAP_CHARGES = 20;
+// Alquimista: multiplicador de bounty para las bajas dentro de su radio (no apila).
+export const ALCHEMIST_BOUNTY_MULT = 1.3; // +30%
+// Rango II · Obús/Metralla II: shred de armadura AoE.
+export const SHRED_CHANCE = 0.03; // 3% por impacto
+export const SHRED_RADIUS = 1.5; // celdas alrededor del enemigo golpeado
+export const SHRED_DURATION = 4; // segundos que dura el shred (armadura a la mitad)
+// Rango II · Arco Largo/Explorador II: crecimiento permanente por disparo.
+export const GROWTH_PER_SHOT = 8; // +8 de daño base por cada disparo, para siempre
 
 // oro de entrada para quien se une con la partida ya empezada
 export const midJoinGold = (wave: number) => 180 + wave * 22;
@@ -59,5 +99,5 @@ export const PLAYER_COLORS = [
   '#e57373', // rojo
 ];
 
-export const BALANCE_VERSION = 1;
+export const BALANCE_VERSION = 5;
 export const PROTOCOL_VERSION = 1;

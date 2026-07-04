@@ -14,11 +14,21 @@ import { ENEMIES } from '../balance/enemies.js';
 import { TOWERS, activeStats, towerTargetsAir } from '../balance/towers.js';
 import { generateWave, waveBountyMult, waveHpMult } from '../balance/waves.js';
 import {
+  BLESSED_BOUNTY_MULT,
+  BLESSED_BONUS_MULT,
   ELITE_BOUNTY_MULT,
   ELITE_EXTRA_LIVES,
   ELITE_HP_MULT,
   ELITE_RADIUS_MULT,
+  GROWTH_PER_SHOT,
+  HORDE_CAP,
+  HORDE_LAP_HP_FLOOR,
+  HORDE_LAP_HP_LOSS,
   INTERLUDE_SEC,
+  LEAK_WAVE_DIV,
+  SHRED_DURATION,
+  SHRED_RADIUS,
+  SPELL_IMMUNE_TESLA_MULT,
   TICK_RATE,
   WAVE_BONUS_BASE,
   WAVE_BONUS_PER_WAVE,
@@ -85,9 +95,43 @@ function spawnEnemy(
     auraRadius: 0,
     auraHps: 0,
     deathSpawn: 0,
+    laps: 0,
+    spellImmune: def.spellImmune ?? false,
+    stunTowerId: 0,
+    lastWpIdx: at ? at.wpIdx : 1,
+    armorShredUntil: 0,
   };
   state.enemies.push(enemy);
   return enemy;
+}
+
+// Aplica SOLO el efecto de un afijo (sin tocar hp/botín/radio). Compartido por
+// las élites (×2.6 hp) y la "oleada bendecida" (mismo efecto, sin la subida de hp).
+function applyAffixEffect(enemy: EnemyState, a: AffixId): void {
+  switch (a) {
+    case 'swift':
+      enemy.speedMult *= 1.5;
+      break;
+    case 'armored':
+      enemy.armorBonus += 12;
+      break;
+    case 'regen':
+      enemy.regenBonus += Math.max(6, Math.round(enemy.maxHp * 0.02));
+      break;
+    case 'vampiric':
+      enemy.auraRadius = 1.9;
+      enemy.auraHps = 22;
+      break;
+    case 'elusive':
+      enemy.dodgeBonus += 0.4;
+      break;
+    case 'frostward':
+      enemy.slowResist = 0.7;
+      break;
+    case 'explosive':
+      enemy.deathSpawn = 3;
+      break;
+  }
 }
 
 // Convierte un enemigo recién generado en élite y le aplica sus afijos.
@@ -98,32 +142,33 @@ function makeElite(enemy: EnemyState, affixes: AffixId[]): void {
   enemy.maxHp = enemy.hp;
   enemy.bountyMult *= ELITE_BOUNTY_MULT;
   enemy.radiusMult = ELITE_RADIUS_MULT;
-  for (const a of affixes) {
-    switch (a) {
-      case 'swift':
-        enemy.speedMult *= 1.5;
-        break;
-      case 'armored':
-        enemy.armorBonus += 12;
-        break;
-      case 'regen':
-        enemy.regenBonus += Math.max(6, Math.round(enemy.maxHp * 0.02));
-        break;
-      case 'vampiric':
-        enemy.auraRadius = 1.9;
-        enemy.auraHps = 22;
-        break;
-      case 'elusive':
-        enemy.dodgeBonus += 0.4;
-        break;
-      case 'frostward':
-        enemy.slowResist = 0.7;
-        break;
-      case 'explosive':
-        enemy.deathSpawn = 3;
-        break;
-    }
+  for (const a of affixes) applyAffixEffect(enemy, a);
+}
+
+// Oleada bendecida ("makeElite ligero"): aplica UN afijo común a un enemigo normal
+// SIN la subida de hp de élite, con botín ×1.5. No lo marca como élite (no lleva
+// corona ni cuesta vida extra al escapar) — es un buff de oleada, no un enemigo raro.
+function makeBlessed(enemy: EnemyState, affix: AffixId): void {
+  if (!enemy.affixes.includes(affix)) enemy.affixes = [...enemy.affixes, affix];
+  enemy.bountyMult *= BLESSED_BOUNTY_MULT;
+  applyAffixEffect(enemy, affix);
+}
+
+// Multiplicador de bounty del Alquimista para una posición (la del enemigo al
+// morir). Escanea las torres tipo Alquimista (con `auraBounty`) cuyo radio cubre
+// el punto y toma el MEJOR (+30% base, más en specs) — NO apila. Determinista:
+// orden estable de `state.towers`, sin RNG. 1 = sin Alquimista cerca.
+function bountyMultAt(state: GameState, x: number, y: number): number {
+  let best = 1;
+  for (const t of state.towers) {
+    const lvl = activeStats(t.type, t.level, t.spec);
+    const bonus = lvl.auraBounty;
+    if (bonus === undefined || bonus <= 0) continue;
+    if (dist(t.cx + 0.5, t.cy + 0.5, x, y) > lvl.range) continue;
+    const mult = 1 + bonus;
+    if (mult > best) best = mult;
   }
+  return best;
 }
 
 function killEnemy(
@@ -134,7 +179,10 @@ function killEnemy(
   events: GameEvent[],
 ): void {
   const def = ENEMIES[enemy.type];
-  const bounty = Math.round(def.bounty * enemy.bountyMult);
+  // Aura del Alquimista: si la posición donde muere el enemigo está cubierta por
+  // un Alquimista, su bounty gana +30% (o más en spec). No apila.
+  const alchemistMult = bountyMultAt(state, enemy.x, enemy.y);
+  const bounty = Math.round(def.bounty * enemy.bountyMult * alchemistMult);
   const tower = state.towers.find((t) => t.id === killerTowerId);
   let killerName = '';
   if (tower) {
@@ -166,9 +214,19 @@ function killEnemy(
   }
 }
 
+// Armadura efectiva de un enemigo: si tiene shred activo (Obús/Metralla II), su
+// armadura (plana + bonus de afijo) queda a la MITAD durante la duración.
+function effectiveArmor(state: GameState, enemy: EnemyState): number {
+  const base = ENEMIES[enemy.type].armor + enemy.armorBonus;
+  return enemy.armorShredUntil > state.tick ? base * 0.5 : base;
+}
+
 // Aplica daño; devuelve true si el enemigo murió.
 // `execute`: si tras el golpe el enemigo queda por debajo de esta fracción de
-// vida, se remata al instante (0 = desactivado).
+// vida MÁXIMA, se remata al instante (0 = desactivado).
+// `executeCurrent`: Rango II del Cañón de Riel — remata por debajo de esta
+// fracción de la vida ACTUAL (anti-tanque). También es daño de hechizo: no
+// funciona contra inmunes.
 function damageEnemy(
   state: GameState,
   ctx: SimContext,
@@ -178,14 +236,37 @@ function damageEnemy(
   sourceTowerId: number,
   events: GameEvent[],
   execute = 0,
+  executeCurrent = 0,
+  shredChance = 0,
 ): boolean {
   if (enemy.hp <= 0) return false;
-  const def = ENEMIES[enemy.type];
-  const armor = pierceArmor ? 0 : def.armor + enemy.armorBonus;
+  const armor = pierceArmor ? 0 : effectiveArmor(state, enemy);
   const dmg = Math.max(1, amount - armor);
+  const hpBefore = enemy.hp;
   enemy.hp -= dmg;
-  if (execute > 0 && enemy.hp > 0 && enemy.hp < enemy.maxHp * execute) {
-    enemy.hp = 0; // rematado
+  // execute es daño de HECHIZO: no remata a los inmunes a magia.
+  if (execute > 0 && !enemy.spellImmune && enemy.hp > 0 && enemy.hp < enemy.maxHp * execute) {
+    enemy.hp = 0; // rematado (umbral sobre la vida MÁX)
+  }
+  // executeCurrent (Cañón de Riel II): si el golpe hace ≥ 75% de la vida ACTUAL
+  // que tenía el objetivo antes del impacto, lo remata. Anti-tanque; no inmunes.
+  if (executeCurrent > 0 && !enemy.spellImmune && enemy.hp > 0 && dmg >= hpBefore * executeCurrent) {
+    enemy.hp = 0;
+  }
+  // Shred de armadura (Obús/Metralla II): proc por impacto. Con probabilidad
+  // `shredChance` (RNG determinista de la sim), reduce a la mitad la armadura de
+  // los enemigos en radio SHRED_RADIUS alrededor del golpeado durante SHRED_DURATION.
+  if (shredChance > 0 && rand(state) < shredChance) {
+    const until = state.tick + Math.round(SHRED_DURATION * TICK_RATE);
+    const n = state.enemies.length; // longitud fija (no shredear crías nacidas ahora)
+    for (let i = 0; i < n; i++) {
+      const other = state.enemies[i];
+      if (other.hp <= 0) continue;
+      if (dist(enemy.x, enemy.y, other.x, other.y) <= SHRED_RADIUS) {
+        other.armorShredUntil = Math.max(other.armorShredUntil, until);
+      }
+    }
+    events.push({ e: 'shred', x: enemy.x, y: enemy.y, r: SHRED_RADIUS });
   }
   const tower = state.towers.find((t) => t.id === sourceTowerId);
   if (tower) {
@@ -249,27 +330,89 @@ function pickTarget(
   return best;
 }
 
+// Refuerzo que un Estandarte aplica a las torres bajo su aura (fracciones).
+export interface AuraBuff {
+  dmgMult: number;
+  hasteMult: number;
+}
+
+// ¿Es esta torre un Estandarte (torre de aura, no dispara)?
+function isBanner(lvl: { auraDamage?: number; auraHaste?: number }): boolean {
+  return lvl.auraDamage !== undefined || lvl.auraHaste !== undefined;
+}
+
+// Calcula, por cada torre buffeada, el MEJOR aura de daño y de cadencia de todos
+// los Estandartes que la cubren (de CUALQUIER dueño, co-op). No se apila: se toma
+// el máximo de cada tipo, no la suma. Solo lee `state`; es determinista (orden
+// estable de `state.towers`, sin RNG).
+export function computeAuras(state: GameState): Map<number, AuraBuff> {
+  const buffs = new Map<number, AuraBuff>();
+  for (const banner of state.towers) {
+    const blvl = activeStats(banner.type, banner.level, banner.spec);
+    if (!isBanner(blvl)) continue;
+    const dmg = blvl.auraDamage ?? 0;
+    const haste = blvl.auraHaste ?? 0;
+    if (dmg <= 0 && haste <= 0) continue;
+    const bx = banner.cx + 0.5;
+    const by = banner.cy + 0.5;
+    for (const target of state.towers) {
+      if (target.id === banner.id) continue;
+      const tlvl = activeStats(target.type, target.level, target.spec);
+      if (isBanner(tlvl)) continue; // un estandarte no buffea a otro estandarte
+      if (tlvl.incomePerWave) continue; // ni a la mina
+      if (tlvl.auraBounty !== undefined) continue; // ni al Alquimista (no dispara)
+      if (TOWERS[target.type].onPathOnly) continue; // ni a la Trampa de púas
+      if (dist(bx, by, target.cx + 0.5, target.cy + 0.5) > blvl.range) continue;
+      let buff = buffs.get(target.id);
+      if (!buff) {
+        buff = { dmgMult: 0, hasteMult: 0 };
+        buffs.set(target.id, buff);
+      }
+      if (dmg > buff.dmgMult) buff.dmgMult = dmg;
+      if (haste > buff.hasteMult) buff.hasteMult = haste;
+    }
+  }
+  return buffs;
+}
+
 function fireTower(
   state: GameState,
   ctx: SimContext,
   tower: TowerState,
   events: GameEvent[],
+  auras: Map<number, AuraBuff>,
 ): void {
   const towerDef = TOWERS[tower.type];
   const lvl = activeStats(tower.type, tower.level, tower.spec);
-  if (lvl.incomePerWave || lvl.slowAura) return; // la mina y la permafrost no disparan
+  // no disparan: la mina, la Escarcha Eterna, el Estandarte, el Alquimista (aura de
+  // bounty) ni la Trampa de púas (daña por contacto, ver stepTraps).
+  if (lvl.incomePerWave || lvl.slowAura || isBanner(lvl) || lvl.auraBounty !== undefined || towerDef.onPathOnly) return;
 
   const canAir = towerTargetsAir(tower.type, tower.spec);
   const canGround = towerDef.targetsGround;
   const execute = lvl.execute ?? 0;
+  const executeCurrent = lvl.executeCurrent ?? 0;
+  const shredChance = lvl.shredChance ?? 0;
   const shots = Math.max(1, lvl.shots ?? 1);
 
   const target = pickTarget(state, ctx, tower, lvl, canAir, canGround);
   if (!target) return;
 
+  // refuerzo del/los Estandarte(s) que cubren esta torre (mejor de cada tipo)
+  const buff = auras.get(tower.id);
+  const dmgMult = buff ? buff.dmgMult : 0;
+  const hasteMult = buff ? buff.hasteMult : 0;
+  // Crecimiento permanente (Arco Largo/Explorador II): el bono acumulado se suma al
+  // daño base ANTES del aura. Se captura el bono ACTUAL para este disparo y luego se
+  // incrementa (una vez POR DISPARO, no por objetivo), de modo que el próximo pega más.
+  const growthNow = tower.growthBonus;
+  const dmgFor = (base: number) => Math.round((base + growthNow) * (1 + dmgMult));
+  const growth = lvl.growth ?? 0;
+  if (growth > 0) tower.growthBonus += growth;
+
   const tx = tower.cx + 0.5;
   const ty = tower.cy + 0.5;
-  tower.cooldownLeft = Math.round(lvl.cooldown * TICK_RATE);
+  tower.cooldownLeft = Math.round((lvl.cooldown * TICK_RATE) / (1 + hasteMult));
 
   if (towerDef.projectileKind === 'beam') {
     // Tesla: cadena instantánea (el multidisparo no aplica; se cubre con más saltos)
@@ -278,11 +421,13 @@ function fireTower(
     const hitIds = new Set<number>();
     const pts: [number, number][] = [[tx, ty]];
     let current: EnemyState | null = target;
-    let dmg = lvl.damage;
+    let dmg = dmgFor(lvl.damage);
     for (let i = 0; i < chain.targets && current; i++) {
       hitIds.add(current.id);
       pts.push([current.x, current.y]);
-      damageEnemy(state, ctx, current, dmg, lvl.pierceArmor ?? false, tower.id, events, execute);
+      // el rayo Tesla es mágico: los inmunes reciben −70% (execute ya se ignora en damageEnemy)
+      const linkDmg = current.spellImmune ? Math.max(1, Math.round(dmg * SPELL_IMMUNE_TESLA_MULT)) : dmg;
+      damageEnemy(state, ctx, current, linkDmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
       dmg = Math.max(1, Math.round(dmg * chain.falloff));
       // buscar el siguiente eslabón cerca del último golpeado
       let next: EnemyState | null = null;
@@ -320,7 +465,7 @@ function fireTower(
     // Francotirador: impacto instantáneo, ignora esquiva
     for (const t of targets) {
       events.push({ e: 'shot', x: tx, y: ty, tx: t.x, ty: t.y, kind: 'snipe', color: towerDef.color });
-      damageEnemy(state, ctx, t, lvl.damage, lvl.pierceArmor ?? false, tower.id, events, execute);
+      damageEnemy(state, ctx, t, dmgFor(lvl.damage), lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
     }
     return;
   }
@@ -338,7 +483,7 @@ function fireTower(
       speed: (lvl.projectileSpeed ?? 12) / TICK_RATE,
       towerId: tower.id,
       owner: tower.owner,
-      damage: lvl.damage,
+      damage: dmgFor(lvl.damage),
       splash: lvl.splash ?? 0,
       slow: lvl.slow
         ? { factor: lvl.slow.factor, durationTicks: Math.round(lvl.slow.duration * TICK_RATE) }
@@ -350,6 +495,8 @@ function fireTower(
       execute,
       color: towerDef.color,
       groundOnly: !canAir,
+      executeCurrent,
+      shredChance,
     };
     state.projectiles.push(proj);
   }
@@ -367,21 +514,23 @@ function applyPayload(
   enemy: EnemyState,
   events: GameEvent[],
 ): void {
-  if (proj.slow) {
+  // los inmunes a magia ignoran el slow del hielo y el veneno (DoT); solo reciben
+  // el daño físico del proyectil.
+  if (proj.slow && !enemy.spellImmune) {
     const factor = resolvedSlow(proj.slow.factor, enemy.slowResist);
     if (factor < 1) {
       if (factor < enemy.slowFactor) enemy.slowFactor = factor;
       enemy.slowUntil = Math.max(enemy.slowUntil, state.tick + proj.slow.durationTicks);
     }
   }
-  if (proj.poison) {
+  if (proj.poison && !enemy.spellImmune) {
     if (proj.poison.dps >= enemy.poisonDps) {
       enemy.poisonDps = proj.poison.dps;
       enemy.poisonSrc = proj.towerId;
     }
     enemy.poisonUntil = Math.max(enemy.poisonUntil, state.tick + proj.poison.durationTicks);
   }
-  damageEnemy(state, ctx, enemy, proj.damage, proj.pierceArmor, proj.towerId, events, proj.execute);
+  damageEnemy(state, ctx, enemy, proj.damage, proj.pierceArmor, proj.towerId, events, proj.execute, proj.executeCurrent, proj.shredChance);
 }
 
 function explode(
@@ -460,9 +609,25 @@ function stepProjectiles(state: GameState, ctx: SimContext, events: GameEvent[])
   state.projectiles = alive;
 }
 
+// Torre viva más cercana a un punto, dentro de `maxDist` (celdas). Orden estable:
+// recorre `state.towers` en orden y desempata por el primero (determinista).
+function nearestTower(state: GameState, x: number, y: number, maxDist: number): TowerState | null {
+  let best: TowerState | null = null;
+  let bestD = maxDist;
+  for (const t of state.towers) {
+    const d = dist(x, y, t.cx + 0.5, t.cy + 0.5);
+    if (d < bestD) {
+      bestD = d;
+      best = t;
+    }
+  }
+  return best;
+}
+
 function stepEnemies(state: GameState, ctx: SimContext, events: GameEvent[]): void {
   const players = connectedCount(state);
   const speedMult = state.difficulty === 'easy' ? 0.9 : state.difficulty === 'hard' ? 1.08 : 1;
+  const stunTicks = 2; // ticks que dura el aturdimiento del Zapador (se renueva cada tick)
 
   // longitud fija: las crías que nacen al morir un enemigo (veneno) NO deben
   // moverse/curar en su propio tick de nacimiento; se procesan en el siguiente
@@ -504,8 +669,31 @@ function stepEnemies(state: GameState, ctx: SimContext, events: GameEvent[]): vo
       }
     }
 
-    // movimiento por waypoints
-    let moveLeft = (def.speed * speedMult * enemy.speedMult * enemy.slowFactor) / TICK_RATE;
+    // Berserker: bajo cierta fracción de vida corre más rápido (determinista, lee hp).
+    let rageMult = 1;
+    if (def.berserkBelow && enemy.hp < enemy.maxHp * def.berserkBelow) {
+      rageMult = def.berserkMult ?? 1;
+    }
+
+    // Zapador: si hay una torre viva a su alcance, se DETIENE junto a ella y la
+    // aturde mientras siga vivo (el aturdimiento se renueva cada tick; al morir el
+    // zapador, expira solo en `stunTicks`). Determinista: torre más cercana estable.
+    let sapping = false;
+    if (def.sapper) {
+      const tower = nearestTower(state, enemy.x, enemy.y, 1.6);
+      if (tower) {
+        tower.stunnedUntil = state.tick + stunTicks;
+        enemy.stunTowerId = tower.id;
+        sapping = true;
+      } else {
+        enemy.stunTowerId = 0;
+      }
+    }
+
+    // movimiento por waypoints (el zapador que está aturdiendo NO avanza)
+    let moveLeft = sapping
+      ? 0
+      : (def.speed * speedMult * enemy.speedMult * enemy.slowFactor * rageMult) / TICK_RATE;
     const wps = ctx.waypoints[enemy.pathIdx];
     while (moveLeft > 0 && enemy.wpIdx < wps.length) {
       const wp = wps[enemy.wpIdx];
@@ -524,20 +712,78 @@ function stepEnemies(state: GameState, ctx: SimContext, events: GameEvent[]): vo
       }
     }
 
-    // llegó al final: fuga (los élites cuestan vidas extra)
+    // Behemot: al CRUZAR una esquina (avanza el índice de waypoint) aturde todas las
+    // torres en radio. Se dispara una vez por esquina (compara con lastWpIdx).
+    if (def.stunOnCorner && enemy.wpIdx > enemy.lastWpIdx && enemy.wpIdx < wps.length) {
+      const stun = state.tick + Math.round(def.stunOnCorner.seconds * TICK_RATE);
+      for (const t of state.towers) {
+        if (dist(enemy.x, enemy.y, t.cx + 0.5, t.cy + 0.5) <= def.stunOnCorner.radius) {
+          t.stunnedUntil = Math.max(t.stunnedUntil, stun);
+        }
+      }
+    }
+    enemy.lastWpIdx = enemy.wpIdx;
+
+    // llegó al final del camino
     if (enemy.wpIdx >= wps.length) {
-      const cost = def.livesCost + (enemy.elite ? ELITE_EXTRA_LIVES : 0);
-      state.lives = Math.max(0, state.lives - cost);
-      enemy.hp = 0; // sale del juego sin bounty
-      events.push({ e: 'leak', lives: state.lives, type: enemy.type });
-      if (state.lives <= 0 && !state.over) {
-        state.over = { victory: false };
-        events.push({ e: 'gameover', victory: false });
+      if (state.mode === 'horde') {
+        // BUCLE: no escapa ni quita vidas — se teletransporta al inicio de su
+        // camino conservando su hp actual, pero gana un stack de CANSANCIO.
+        const start = ctx.waypoints[enemy.pathIdx][0];
+        enemy.x = start.x;
+        enemy.y = start.y;
+        enemy.wpIdx = 1;
+        enemy.travelled = 0;
+        // cansancio: −10% del maxHp BASE por vuelta (suelo 10%). Reconstruimos el
+        // maxHp base a partir de la retención de la vuelta actual y aplicamos la
+        // de la siguiente, clampeando la hp. Determinista (solo aritmética).
+        const prevRetention = Math.max(HORDE_LAP_HP_FLOOR, 1 - enemy.laps * HORDE_LAP_HP_LOSS);
+        const baseMaxHp = enemy.maxHp / prevRetention;
+        enemy.laps += 1;
+        const nextRetention = Math.max(HORDE_LAP_HP_FLOOR, 1 - enemy.laps * HORDE_LAP_HP_LOSS);
+        enemy.maxHp = Math.max(1, Math.round(baseMaxHp * nextRetention));
+        if (enemy.hp > enemy.maxHp) enemy.hp = enemy.maxHp;
+      } else if (def.stealGold) {
+        // Ladrón: no quita vidas — roba oro repartido entre los jugadores. Reparto
+        // determinista (orden estable de players; el resto va al primero).
+        enemy.hp = 0;
+        const total = def.stealGold;
+        const ps = state.players;
+        const per = Math.floor(total / ps.length);
+        let taken = 0;
+        for (let pi = 0; pi < ps.length; pi++) {
+          const amount = pi === 0 ? total - per * (ps.length - 1) : per;
+          const real = Math.min(ps[pi].gold, amount);
+          ps[pi].gold -= real;
+          taken += real;
+        }
+        events.push({ e: 'steal', gold: taken, x: enemy.x, y: enemy.y });
+      } else {
+        // fuga escalonada: cuesta `livesCost + floor(oleada/10)` (+extra si es élite).
+        const cost = def.livesCost + Math.floor(state.wave / LEAK_WAVE_DIV) + (enemy.elite ? ELITE_EXTRA_LIVES : 0);
+        state.lives = Math.max(0, state.lives - cost);
+        enemy.hp = 0; // sale del juego sin bounty
+        events.push({ e: 'leak', lives: state.lives, type: enemy.type });
+        if (state.lives <= 0 && !state.over) {
+          state.over = { victory: false };
+          events.push({ e: 'gameover', victory: false });
+        }
       }
     }
   }
 
   state.enemies = state.enemies.filter((e) => e.hp > 0);
+
+  // DERROTA POR SATURACIÓN (horda): si hay demasiados enemigos vivos a la vez,
+  // la fortaleza cae. Se evalúa tras el filtrado; el spawn de esta oleada ya
+  // ocurrió en stepWaves (antes de stepEnemies), así que el conteo es fiel.
+  if (state.mode === 'horde' && !state.over) {
+    const cap = HORDE_CAP[state.difficulty] ?? HORDE_CAP.normal;
+    if (state.enemies.length >= cap) {
+      state.over = { victory: false };
+      events.push({ e: 'gameover', victory: false });
+    }
+  }
   void players;
 }
 
@@ -551,7 +797,13 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
       const gen = generateWave(state, state.wave + 1, connectedCount(state), ctx.map.paths.length);
       state.pendingWave = gen.entries;
       state.pendingBoss = gen.hasBoss;
+      state.pendingBossType = gen.bossType;
       state.nextWaveComp = gen.comp;
+      // etiquetas de telegrafía para la vista previa (leídas por buildSnap)
+      state.nextWaveImmune = gen.immune;
+      state.nextWaveBlessed = gen.blessed;
+      state.nextWaveFlying = gen.flying;
+      state.nextWaveBoss = gen.bossType;
     }
     state.interludeLeft -= 1;
     if (state.interludeLeft <= 0) {
@@ -559,11 +811,20 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
       state.spawnQueue = state.pendingWave;
       state.spawnCooldown = 0;
       state.waveState = 'active';
+      // el bono de fin de oleada se multiplica en las oleadas bendecidas
+      state.blessedBonusMult = state.nextWaveBlessed ? BLESSED_BONUS_MULT : 1;
       events.push({ e: 'wave_start', wave: state.wave, comp: state.nextWaveComp });
-      if (state.pendingBoss) events.push({ e: 'boss', name: ENEMIES.golem.name });
+      if (state.pendingBoss && state.pendingBossType) {
+        events.push({ e: 'boss', name: ENEMIES[state.pendingBossType].name });
+      }
       state.pendingWave = null;
       state.pendingBoss = false;
+      state.pendingBossType = null;
       state.nextWaveComp = [];
+      state.nextWaveImmune = false;
+      state.nextWaveBlessed = false;
+      state.nextWaveFlying = false;
+      state.nextWaveBoss = null;
     }
     return;
   }
@@ -575,13 +836,27 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
       const entry = state.spawnQueue.shift()!;
       const enemy = spawnEnemy(state, ctx, entry.type, entry.pathIdx);
       if (entry.elite) makeElite(enemy, entry.affixes ?? []);
+      // oleada inmune: todos los enemigos normales (incl. élites) son inmunes a magia.
+      // Los JEFES quedan EXENTOS: ya son un muro de por sí; hacerlos también inmunes a
+      // hielo/veneno/tesla los volvería casi invencibles (doble castigo).
+      if (entry.immune && !ENEMIES[entry.type].boss) enemy.spellImmune = true;
+      // oleada bendecida: afijo común ligero (sin ×2.6 hp) — no en jefes
+      if (entry.blessed && entry.blessedAffix && !ENEMIES[entry.type].boss) {
+        makeBlessed(enemy, entry.blessedAffix);
+      }
       state.spawnCooldown = state.spawnQueue.length > 0 ? state.spawnQueue[0].delay : 0;
     }
   }
 
-  // fin de oleada: cola vacía y sin enemigos vivos
-  if (state.spawnQueue.length === 0 && state.enemies.length === 0) {
-    const bonus = WAVE_BONUS_BASE + state.wave * WAVE_BONUS_PER_WAVE;
+  // fin de oleada: cola de spawn vacía. En classic/endless exigimos además que no
+  // queden enemigos vivos; en HORDA no, porque la horda da vueltas indefinidamente
+  // y nunca se vaciaría el mapa — la siguiente oleada arranca al vaciarse la cola.
+  const waveCleared =
+    state.spawnQueue.length === 0 && (state.mode === 'horde' || state.enemies.length === 0);
+  if (waveCleared) {
+    // el bono se multiplica en las oleadas bendecidas (riesgo/recompensa)
+    const bonus = Math.round((WAVE_BONUS_BASE + state.wave * WAVE_BONUS_PER_WAVE) * state.blessedBonusMult);
+    state.blessedBonusMult = 1;
     for (const p of state.players) {
       p.gold += bonus;
       p.stats.goldEarned += bonus;
@@ -617,14 +892,53 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
   }
 }
 
-function stepTowers(state: GameState, ctx: SimContext, events: GameEvent[]): void {
+function stepTowers(state: GameState, ctx: SimContext, events: GameEvent[], auras: Map<number, AuraBuff>): void {
   for (const tower of state.towers) {
+    // torre ATURDIDA (Zapador / Behemot): no dispara mientras dure el aturdimiento.
+    if (tower.stunnedUntil > state.tick) continue;
     if (tower.cooldownLeft > 0) {
       tower.cooldownLeft -= 1;
       continue;
     }
-    fireTower(state, ctx, tower, events);
+    fireTower(state, ctx, tower, events, auras);
   }
+}
+
+// Trampa de púas (F4.2): NO dispara. Cada tick que hay ≥1 enemigo sobre su celda,
+// golpea a TODOS los de la celda (daño FÍSICO, funciona contra inmunes) y consume 1
+// carga. A 0 cargas se auto-elimina (aviso `sys`). Determinista: orden estable de
+// torres y enemigos, sin RNG. Se ejecuta tras el movimiento de enemigos.
+function stepTraps(state: GameState, ctx: SimContext, events: GameEvent[]): void {
+  let removedAny = false;
+  for (const trap of state.towers) {
+    const def = TOWERS[trap.type];
+    if (!def.onPathOnly) continue; // solo las trampas
+    if (trap.charges <= 0) continue;
+    const lvl = activeStats(trap.type, trap.level, trap.spec);
+    // enemigos cuya celda coincide con la de la trampa (longitud fija: las crías que
+    // nazcan por una muerte no reciben este mismo golpe)
+    const n = state.enemies.length;
+    let hitAny = false;
+    for (let i = 0; i < n; i++) {
+      const e = state.enemies[i];
+      if (e.hp <= 0) continue;
+      if (ENEMIES[e.type].flying) continue; // la trampa está en el suelo
+      if (Math.floor(e.x) !== trap.cx || Math.floor(e.y) !== trap.cy) continue;
+      hitAny = true;
+      // daño físico (pierceArmor irrelevante: es daño directo, funciona vs inmunes)
+      damageEnemy(state, ctx, e, lvl.damage, false, trap.id, events, 0, 0, 0);
+    }
+    if (hitAny) {
+      trap.charges -= 1;
+      events.push({ e: 'hit', x: trap.cx + 0.5, y: trap.cy + 0.5, r: 0.4, kind: 'impact' });
+      if (trap.charges <= 0) {
+        removedAny = true;
+        events.push({ e: 'sell', x: trap.cx + 0.5, y: trap.cy + 0.5, refund: 0 });
+        events.push({ e: 'sys', msg: '🪤 Una Trampa de púas se agotó y desapareció.' });
+      }
+    }
+  }
+  if (removedAny) state.towers = state.towers.filter((t) => !(TOWERS[t.type].onPathOnly && t.charges <= 0));
 }
 
 // Auras pasivas (Escarcha Eterna): ralentizan sin disparar a todo lo que rodean.
@@ -638,6 +952,7 @@ function stepTowerAuras(state: GameState): void {
     const ty = tower.cy + 0.5;
     for (const e of state.enemies) {
       if (e.hp <= 0) continue;
+      if (e.spellImmune) continue; // los inmunes ignoran el aura de Escarcha
       if (ENEMIES[e.type].flying && !canAir) continue;
       if (dist(tx, ty, e.x, e.y) > aura.radius) continue;
       const factor = resolvedSlow(aura.factor, e.slowResist);
@@ -659,11 +974,24 @@ export function stepGame(
     state.tick += 1;
     return events;
   }
+  // aviso de sistema al arrancar la partida (una sola vez, tick 0): telegrafía las
+  // reglas duras de Green TD. Solo en classic/endless (la horda no tiene fuga/jefes fijos).
+  if (state.tick === 0 && state.mode !== 'horde') {
+    events.push({
+      e: 'sys',
+      msg: '🛡 Las oleadas múltiplos de 5 (desde la 10) son INMUNES a la magia: ten daño físico de reserva. ☠ Los jefes llegan cada 10 (la Quimera voladora en la 15/25/35).',
+    });
+  }
   applyCommands(state, ctx.map, ctx.placement, commands, events);
   stepWaves(state, ctx, events);
   stepTowerAuras(state);
   stepEnemies(state, ctx, events);
-  stepTowers(state, ctx, events);
+  // Trampas de púas: golpean a los enemigos que pisan su celda y consumen carga.
+  stepTraps(state, ctx, events);
+  // refuerzo de los Estandartes: se calcula una vez por tick (solo lee el estado)
+  // y se pasa a las torres para que multipliquen daño/cadencia al disparar.
+  const auras = computeAuras(state);
+  stepTowers(state, ctx, events, auras);
   stepProjectiles(state, ctx, events);
   state.enemies = state.enemies.filter((e) => e.hp > 0);
   state.tick += 1;

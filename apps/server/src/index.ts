@@ -91,12 +91,22 @@ wss.on('connection', (ws) => {
     if (msg.type === 'create_room') {
       if (room) return;
       const created = rooms.create(msg.settings);
-      const player = created.addPlayer(msg.name, msg.token, ws);
-      if (typeof player === 'string') {
-        ws.send(JSON.stringify({ type: 'error', msg: player }));
+      const res = created.addPlayer(msg.name, msg.token, ws);
+      if (res.kind === 'error') {
+        ws.send(JSON.stringify({ type: 'error', msg: res.msg }));
         return;
       }
       socketRoom.set(ws, created);
+      // crear una sala nunca produce espectador (no hay partida en curso), pero
+      // por simetría con join_room lo tratamos igual
+      if (res.kind === 'spectator') {
+        const spec = res.spectator;
+        created.sendTo(ws, { type: 'room_joined', code: created.code, playerId: spec.id, isHost: false, spectator: true });
+        created.broadcastLobby();
+        created.sendGameStateToSpectator(spec);
+        return;
+      }
+      const player = res.player;
       created.send(player, {
         type: 'room_joined',
         code: created.code,
@@ -115,12 +125,20 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'error', msg: `No existe la sala "${(msg.code ?? '').toUpperCase()}"` }));
         return;
       }
-      const player = found.addPlayer(msg.name, msg.token, ws);
-      if (typeof player === 'string') {
-        ws.send(JSON.stringify({ type: 'error', msg: player }));
+      const res = found.addPlayer(msg.name, msg.token, ws);
+      if (res.kind === 'error') {
+        ws.send(JSON.stringify({ type: 'error', msg: res.msg }));
         return;
       }
       socketRoom.set(ws, found);
+      if (res.kind === 'spectator') {
+        const spec = res.spectator;
+        found.sendTo(ws, { type: 'room_joined', code: found.code, playerId: spec.id, isHost: false, spectator: true });
+        found.broadcastLobby();
+        found.sendGameStateToSpectator(spec);
+        return;
+      }
+      const player = res.player;
       found.send(player, {
         type: 'room_joined',
         code: found.code,

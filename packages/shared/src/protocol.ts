@@ -4,7 +4,9 @@ import type {
   GameEvent,
   GameMode,
   GameState,
+  ReplayData,
   TargetMode,
+  TowerTypeId,
   WaveComp,
 } from './types.js';
 import { ENEMIES, ENEMY_ORDER } from './balance/enemies.js';
@@ -33,7 +35,7 @@ export interface LobbyPlayer {
 // haría throw en getMap() al iniciar la partida y tumbaría el proceso/DO entero.
 export function sanitizeSettings(s: Partial<RoomSettings> | undefined): RoomSettings {
   const mapId = s?.mapId && MAPS.some((m) => m.id === s.mapId) ? s.mapId : MAPS[0].id;
-  const mode = s?.mode === 'endless' ? 'endless' : 'classic';
+  const mode: GameMode = s?.mode === 'endless' ? 'endless' : s?.mode === 'horde' ? 'horde' : 'classic';
   const difficulty = s?.difficulty === 'easy' || s?.difficulty === 'hard' ? s.difficulty : 'normal';
   return { mapId, mode, difficulty };
 }
@@ -41,11 +43,13 @@ export function sanitizeSettings(s: Partial<RoomSettings> | undefined): RoomSett
 // ---------- Snapshot compacto (arrays para ahorrar bytes) ----------
 
 // enemigo: [id, typeIdx, x, y, hpFrac, flags, affixMask]
-//   flags: 1=slow 2=poison 4=boss 8=elite   affixMask: bits de balance/affixes
+//   flags: 1=slow 2=poison 4=boss 8=elite 16=inmune 32=shred   affixMask: bits de balance/affixes
 export type SnapEnemy = [number, number, number, number, number, number, number];
-// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec]
-//   spec: -1 sin especializar, 0/1 rama elegida
-export type SnapTower = [number, number, number, number, number, number, number, number, number, number];
+// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec, stunned, charges, growth]
+//   spec: -1 sin especializar, 0/1 rama; stunned: 0/1; charges: Trampa (0 = N/A);
+//   growth: bono de crecimiento permanente (Arco Largo/Explorador II; 0 = N/A)
+//   (los campos F4.2 charges/growth van al FINAL para no romper índices previos)
+export type SnapTower = [number, number, number, number, number, number, number, number, number, number, number, number, number];
 // proyectil: [id, kindIdx(0 bullet,1 shell,2 bomb), x, y, colorIdx(=typeIdx de torre)]
 export type SnapProj = [number, number, number, number, number];
 
@@ -65,6 +69,11 @@ export interface Snap {
   active: boolean; // false = interludio
   interludeSec: number;
   nextWave: [number, number][]; // [enemyTypeIdx, count]
+  // telegrafía de la PRÓXIMA oleada (durante el interludio): 🛡 inmune / ⭐ bendecida / 🦅 aérea / ☠ jefe
+  nextImmune: boolean;
+  nextBlessed: boolean;
+  nextFlying: boolean;
+  nextBossType: number; // typeIdx del jefe de la próxima oleada, o -1
   players: SnapPlayer[];
   enemies: SnapEnemy[];
   towers: SnapTower[];
@@ -90,6 +99,10 @@ export function buildSnap(state: GameState): Snap {
     active: state.waveState === 'active',
     interludeSec: Math.max(0, Math.ceil(state.interludeLeft / TICK_RATE)),
     nextWave: state.nextWaveComp.map((c: WaveComp) => [enemyTypeIdx.get(c.type) ?? 0, c.count]),
+    nextImmune: state.nextWaveImmune,
+    nextBlessed: state.nextWaveBlessed,
+    nextFlying: state.nextWaveFlying,
+    nextBossType: state.nextWaveBoss ? (enemyTypeIdx.get(state.nextWaveBoss) ?? -1) : -1,
     players: state.players.map((p) => ({
       id: p.id,
       gold: Math.floor(p.gold),
@@ -104,6 +117,8 @@ export function buildSnap(state: GameState): Snap {
       if (e.poisonUntil > state.tick) flags |= 2;
       if (ENEMIES[e.type].boss) flags |= 4;
       if (e.elite) flags |= 8;
+      if (e.spellImmune) flags |= 16;
+      if (e.armorShredUntil > state.tick) flags |= 32; // shred de armadura activo
       return [
         e.id,
         enemyTypeIdx.get(e.type) ?? 0,
@@ -127,6 +142,9 @@ export function buildSnap(state: GameState): Snap {
           t.kills,
           Math.round(t.damage),
           t.spec,
+          t.stunnedUntil > state.tick ? 1 : 0,
+          t.charges,
+          Math.round(t.growthBonus),
         ] as SnapTower,
     ),
     projs: state.projectiles.map((p) => {
@@ -172,6 +190,9 @@ export interface HighscoreEntry {
   mapId: string;
   difficulty: Difficulty;
   date: string;
+  // modo con récord. Opcional para compatibilidad con récords antiguos (sin campo),
+  // que se asumen 'endless' (el único modo que guardaba récords antes de F2.2).
+  mode?: 'endless' | 'horde';
 }
 
 // ---------- Mensajes cliente -> servidor ----------
@@ -187,7 +208,7 @@ export type ClientMsg =
   | { type: 'pause' }
   | { type: 'resume' }
   | { type: 'set_speed'; speed: number }
-  | { type: 'map_ping'; x: number; y: number } // ping cooperativo en el mapa
+  | { type: 'map_ping'; x: number; y: number; towerType?: TowerTypeId } // ping cooperativo (opcional: sugerir una torre)
   | { type: 'ping'; t: number };
 
 // ---------- Mensajes servidor -> cliente ----------
@@ -202,14 +223,14 @@ export interface GameInit {
 
 export type ServerMsg =
   | { type: 'error'; msg: string }
-  | { type: 'room_joined'; code: string; playerId: string; isHost: boolean }
+  | { type: 'room_joined'; code: string; playerId: string; isHost: boolean; spectator?: boolean }
   | { type: 'lobby_state'; players: LobbyPlayer[]; settings: RoomSettings; inGame: boolean }
   | { type: 'game_started'; init: GameInit }
   | { type: 'tick'; t: number; snap: Snap; events: GameEvent[] }
-  | { type: 'game_over'; stats: EndStats }
+  | { type: 'game_over'; stats: EndStats; replay?: ReplayData }
   | { type: 'chat'; from: string; color: string; text: string }
   | { type: 'paused'; by: string }
   | { type: 'resumed' }
   | { type: 'speed'; speed: number; by: string }
-  | { type: 'map_ping'; x: number; y: number; by: string; color: string }
+  | { type: 'map_ping'; x: number; y: number; by: string; color: string; towerType?: TowerTypeId }
   | { type: 'pong'; t: number };

@@ -1,4 +1,5 @@
-import type { GameState, MapDef, Vec } from '../types.js';
+import type { GameState, MapDef, TowerTypeId, Vec } from '../types.js';
+import { TOWERS } from '../balance/towers.js';
 
 // Waypoints de un camino en coordenadas de mundo (centros de celda).
 export function pathWaypoints(map: MapDef, pathIdx: number): Vec[] {
@@ -49,19 +50,31 @@ export function makePlacementContext(map: MapDef): PlacementContext {
   return { paths: pathCells(map), blocked: blockedCells(map) };
 }
 
-export type PlacementError = 'fuera' | 'camino' | 'bloqueado' | 'ocupado' | null;
+export type PlacementError = 'fuera' | 'camino' | 'bloqueado' | 'ocupado' | 'fuera_camino' | null;
 
+// `towerType` opcional: relaja la regla del camino por tipo. La Trampa de púas
+// (`onPathOnly`) SOLO puede ir SOBRE el camino; el resto de torres, SOLO fuera.
 export function placementError(
   map: MapDef,
   ctx: PlacementContext,
   towers: { cx: number; cy: number }[],
   cx: number,
   cy: number,
+  towerType?: TowerTypeId,
 ): PlacementError {
   if (!Number.isInteger(cx) || !Number.isInteger(cy)) return 'fuera';
   if (cx < 0 || cy < 0 || cx >= map.gridW || cy >= map.gridH) return 'fuera';
   const key = `${cx},${cy}`;
-  if (ctx.paths.has(key)) return 'camino';
+  const onPathOnly = towerType ? TOWERS[towerType]?.onPathOnly === true : false;
+  const isPath = ctx.paths.has(key);
+  if (onPathOnly) {
+    // la Trampa DEBE ir sobre el camino; fuera del camino, rechazar
+    if (!isPath) return 'fuera_camino';
+    // dentro del camino puede haber otra trampa ocupando la celda
+    if (towers.some((t) => t.cx === cx && t.cy === cy)) return 'ocupado';
+    return null;
+  }
+  if (isPath) return 'camino';
   if (ctx.blocked.has(key)) return 'bloqueado';
   if (towers.some((t) => t.cx === cx && t.cy === cy)) return 'ocupado';
   return null;

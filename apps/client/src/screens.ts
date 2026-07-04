@@ -5,6 +5,7 @@ import { saveName, store } from './store.js';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const DIFF_LABELS: Record<string, string> = { easy: 'Fácil', normal: 'Normal', hard: 'Difícil' };
+const MODE_LABELS: Record<string, string> = { classic: 'Clásico', endless: 'Infinito', horde: 'Horda 🌀' };
 
 // colores de las miniaturas por tema (versión compacta de las paletas del renderer)
 const MINI_THEME: Record<MapDef['theme'], { bg: string; path: string; blocked: string }> = {
@@ -232,8 +233,10 @@ async function loadHighscores(): Promise<void> {
       .map(
         (s) =>
           `<li><b>Oleada ${s.wave}</b> — ${s.names.map(escapeHtml).join(', ')} <span class="hint">(${
-            MAPS.find((m) => m.id === s.mapId)?.name ?? s.mapId
-          }, ${DIFF_LABELS[s.difficulty] ?? s.difficulty})</span></li>`,
+            MODE_LABELS[s.mode ?? 'endless']
+          } · ${MAPS.find((m) => m.id === s.mapId)?.name ?? s.mapId}, ${
+            DIFF_LABELS[s.difficulty] ?? s.difficulty
+          })</span></li>`,
       )
       .join('');
   } catch {
@@ -308,9 +311,14 @@ export function renderLobby(): void {
 
 export function showEnd(stats: EndStats): void {
   $('end-title').textContent = stats.victory ? '🎉 ¡VICTORIA!' : '💀 Derrota…';
-  $('end-sub').textContent = stats.victory
-    ? `Defendieron la fortaleza durante las ${stats.wave} oleadas. ¡Bien jugado, equipo!`
-    : `La fortaleza cayó en la oleada ${stats.wave}${stats.totalWaves ? ` de ${stats.totalWaves}` : ''}.`;
+  if (stats.mode === 'horde') {
+    // en horda no hay victoria: se juega hasta la saturación
+    $('end-sub').textContent = `La horda 🌀 desbordó la fortaleza en la oleada ${stats.wave}. ¡Buen aguante!`;
+  } else {
+    $('end-sub').textContent = stats.victory
+      ? `Defendieron la fortaleza durante las ${stats.wave} oleadas. ¡Bien jugado, equipo!`
+      : `La fortaleza cayó en la oleada ${stats.wave}${stats.totalWaves ? ` de ${stats.totalWaves}` : ''}.`;
+  }
 
   const sorted = [...stats.players].sort((a, b) => b.damage - a.damage);
   const maxDamage = sorted[0]?.damage ?? 0;

@@ -38,6 +38,7 @@
               <div id="home-mode" class="seg">
                 <button data-value="classic" class="active">Clásico<small>20 oleadas</small></button>
                 <button data-value="endless">Infinito<small>récords</small></button>
+                <button data-value="horde">Horda 🌀<small>récords</small></button>
               </div>
             </div>
           </div>
@@ -61,9 +62,16 @@
         <p id="home-error" class="error" hidden></p>
 
         <div id="home-scores" class="scores" hidden>
-          <h3>🏆 Récords (modo infinito)</h3>
+          <h3>🏆 Récords (Infinito / Horda)</h3>
           <ol id="home-scores-list"></ol>
         </div>
+
+        <div id="home-replays" class="replays" hidden>
+          <h3>🎬 Repeticiones</h3>
+          <ul id="home-replays-list" class="replay-list"></ul>
+        </div>
+        <button id="btn-load-replay" class="btn ghost small">📂 Cargar repetición (.json)</button>
+        <input id="replay-file" type="file" accept="application/json,.json" hidden />
       </div>
     </section>
 
@@ -88,6 +96,7 @@
                 <div id="lobby-mode" class="seg">
                   <button data-value="classic">Clásico<small>20 oleadas</small></button>
                   <button data-value="endless">Infinito<small>récords</small></button>
+                  <button data-value="horde">Horda 🌀<small>récords</small></button>
                 </div>
               </div>
             </div>
@@ -129,15 +138,35 @@
         <div class="hud-group">
           <button id="btn-callwave" class="btn small primary" hidden>⚔️ ¡Ya! <span id="callwave-timer"></span></button>
           <button id="btn-ping" class="btn small ghost" title="Marcar un punto para tu equipo (o mantén pulsado el mapa)">📍</button>
+          <button id="btn-minimap" class="btn small ghost" title="Mostrar/ocultar el minimapa">🗺</button>
           <button id="btn-speed" class="btn small ghost" hidden>▶ x1</button>
           <button id="btn-pause" class="btn small ghost" hidden>⏸</button>
           <button id="btn-mute" class="btn small ghost">🔊</button>
+          <button id="btn-settings" class="btn small ghost" title="Ajustes de sonido" aria-haspopup="true" aria-expanded="false">⚙</button>
         </div>
       </div>
+
+      <div id="settings-panel" hidden role="dialog" aria-label="Ajustes de sonido">
+        <h4>🎚️ Sonido</h4>
+        <label class="set-row">
+          <span>🔊 Efectos</span>
+          <input id="set-sfx" type="range" min="0" max="100" step="1" />
+          <span id="set-sfx-val" class="set-val">80%</span>
+        </label>
+        <label class="set-row">
+          <span>🎵 Música</span>
+          <input id="set-music" type="range" min="0" max="100" step="1" />
+          <span id="set-music-val" class="set-val">60%</span>
+        </label>
+        <p class="hint set-hint">La música llega en una próxima actualización.</p>
+      </div>
+
+      <div id="spectator-banner" hidden>👁 Estás mirando — entrarás en la próxima partida</div>
 
       <div id="hud-players"></div>
       <div id="hud-preview" hidden>
         <span class="preview-label">Próxima oleada</span>
+        <span id="hud-preview-tags"></span>
         <span id="hud-preview-list"></span>
       </div>
 
@@ -161,6 +190,18 @@
 
       <div id="toasts"></div>
 
+      <!-- barra del reproductor de repeticiones (visible solo en modo replay) -->
+      <div id="replay-bar" hidden>
+        <div id="replay-warn" hidden>⚠️ Repetición de una versión anterior — puede no coincidir.</div>
+        <div class="replay-controls">
+          <button id="replay-play" class="btn small primary" title="Reproducir / Pausar">▶</button>
+          <button id="replay-speed" class="btn small ghost" title="Velocidad">x1</button>
+          <input id="replay-seek" type="range" min="0" max="100" step="1" value="0" />
+          <span id="replay-time" class="replay-time">0:00 / 0:00</span>
+          <button id="replay-exit" class="btn small ghost" title="Salir de la repetición">✕</button>
+        </div>
+      </div>
+
       <div id="overlay-pause" class="overlay" hidden>
         <div class="overlay-card panel">
           <h2>⏸ Pausa</h2>
@@ -175,7 +216,10 @@
           <p id="end-sub"></p>
           <div id="end-podium"></div>
           <div id="end-stats"></div>
-          <button id="btn-back-lobby" class="btn primary big">Volver al lobby</button>
+          <div class="end-actions">
+            <button id="btn-watch-replay" class="btn ghost big" hidden>🎬 Ver repetición</button>
+            <button id="btn-back-lobby" class="btn primary big">Volver al lobby</button>
+          </div>
         </div>
       </div>
     </section>

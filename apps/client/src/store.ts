@@ -20,6 +20,13 @@ export type Selection =
   | { kind: 'tower'; id: number }
   | { kind: 'placing'; towerType: TowerTypeId };
 
+// Premovimiento (estilo ajedrez / Hikaru en chess.com): una acción encolada que
+// el cliente dispara automáticamente en cuanto el jugador tiene el oro (y madera)
+// necesarios. Es puramente local: el servidor valida el comando como cualquier otro.
+export type Premove =
+  | { kind: 'place'; towerType: TowerTypeId; cx: number; cy: number }
+  | { kind: 'upgrade'; towerId: number };
+
 export interface GameStore {
   init: GameInit;
   map: MapDef;
@@ -29,6 +36,8 @@ export interface GameStore {
   hoverCell: { cx: number; cy: number } | null;
   // colocación táctil en dos toques: primer toque marca la celda, el segundo confirma
   pendingPlace: { cx: number; cy: number } | null;
+  // premovimientos encolados (se disparan solos al alcanzar el coste). Ver Premove.
+  premoves: Premove[];
   speed: number;
   paused: boolean;
   pausedBy: string;
@@ -129,6 +138,7 @@ export function startGameStore(init: GameInit): GameStore {
     selection: null,
     hoverCell: null,
     pendingPlace: null,
+    premoves: [],
     speed: 1,
     paused: false,
     pausedBy: '',

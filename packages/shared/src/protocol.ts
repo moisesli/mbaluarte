@@ -33,6 +33,9 @@ export interface LobbyPlayer {
   color: string;
   isHost: boolean;
   connected: boolean;
+  // ¿el jugador marcó «Listo»? El anfitrión está siempre listo. La partida solo
+  // arranca cuando TODOS los no-anfitriones conectados están listos.
+  ready: boolean;
 }
 
 // Los ajustes vienen del cliente: nunca confiar en ellos. Un mapId desconocido
@@ -238,6 +241,10 @@ export type ClientMsg =
   | { type: 'join_room'; name: string; token: string; code: string; prevToken?: string }
   | { type: 'leave_room' }
   | { type: 'set_settings'; settings: RoomSettings }
+  // el anfitrión expulsa a un jugador de la sala (solo en el lobby)
+  | { type: 'kick_player'; playerId: string }
+  // el jugador marca/desmarca «Listo» en el lobby
+  | { type: 'set_ready'; ready: boolean }
   | { type: 'start_game' }
   | { type: 'chat'; text: string }
   | { type: 'cmd'; cmd: Command }
@@ -261,6 +268,9 @@ export type ServerMsg =
   | { type: 'error'; msg: string }
   | { type: 'room_joined'; code: string; playerId: string; isHost: boolean; spectator?: boolean }
   | { type: 'lobby_state'; players: LobbyPlayer[]; settings: RoomSettings; inGame: boolean }
+  // cuenta regresiva antes de iniciar ('start') o reanudar ('resume') la partida.
+  // El cliente muestra `seconds`..1 en pantalla; el servidor arranca/reanuda al llegar a 0.
+  | { type: 'countdown'; kind: 'start' | 'resume'; seconds: number }
   | { type: 'game_started'; init: GameInit }
   | { type: 'tick'; t: number; snap: Snap; events: GameEvent[] }
   | { type: 'game_over'; stats: EndStats; replay?: ReplayData }

@@ -118,6 +118,8 @@
             </div>
 
             <button id="btn-start" class="btn primary big">▶ ¡Empezar partida!</button>
+            <button id="btn-ready" class="btn primary big" hidden>✅ Estoy listo</button>
+            <p id="lobby-ready-status" class="hint" hidden></p>
             <p id="lobby-wait" class="hint" hidden>Esperando a que el anfitrión inicie…</p>
             <button id="btn-leave" class="btn ghost">Salir de la sala</button>
           </div>
@@ -253,6 +255,14 @@
 
     <div id="overlay-reconnect" class="overlay" hidden>
       <div class="overlay-card panel"><h2>📡 Reconectando…</h2></div>
+    </div>
+
+    <!-- cuenta regresiva (inicio de partida / reanudación tras pausa) -->
+    <div id="overlay-countdown" class="overlay" hidden>
+      <div class="countdown-box">
+        <p id="countdown-label">¡Empieza en…!</p>
+        <div id="countdown-num">3</div>
+      </div>
     </div>
 
     <!-- ============ GUÍA (desde Home, pausa o el HUD del juego) ============ -->

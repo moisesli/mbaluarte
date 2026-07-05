@@ -34,6 +34,7 @@ export interface RoomPlayer {
   color: string;
   ws: WebSocket | null;
   isHost: boolean;
+  ready: boolean; // ¿marcó «Listo»? El anfitrión está siempre listo.
 }
 
 // Espectador: entra con la partida en curso. Ve la partida en vivo y puede guiar
@@ -54,6 +55,11 @@ export type JoinResult =
 
 const CHAT_MAX = 200;
 const MAX_SPECTATORS = 8;
+// segundos de cuenta regresiva antes de iniciar o reanudar la partida
+const COUNTDOWN_SEC = 3;
+// código de cierre de socket cuando el anfitrión expulsa a un jugador (el cliente
+// lo respeta y NO se reconecta, igual que el 4001 de inactividad)
+const KICK_CODE = 4002;
 
 export class Room {
   readonly code: string;
@@ -64,6 +70,9 @@ export class Room {
   simCtx: SimContext | null = null;
   private pendingCmds: PlayerCommand[] = [];
   private interval: ReturnType<typeof setInterval> | null = null;
+  // cuentas regresivas de inicio y de reanudación (3 s); no-null = en marcha
+  private startTimer: ReturnType<typeof setTimeout> | null = null;
+  private resumeTimer: ReturnType<typeof setTimeout> | null = null;
   private paused = false;
   private speed = 1; // steps de simulación por tick de red (x1/x2/x3)
   // ---- grabación de la repetición (replay) de la partida en curso ----
@@ -117,13 +126,15 @@ export class Room {
       return { kind: 'spectator', spectator };
     }
     if (this.players.filter((p) => p.ws).length >= MAX_PLAYERS) return { kind: 'error', msg: 'La sala está llena' };
+    const isHost = this.players.length === 0;
     const player: RoomPlayer = {
       id: `p${this.nextPlayerNum++}`,
       token,
       name: (name || 'Jugador').slice(0, 16),
       color: PLAYER_COLORS[(this.nextPlayerNum - 2) % PLAYER_COLORS.length],
       ws,
-      isHost: this.players.length === 0,
+      isHost,
+      ready: isHost, // el anfitrión ya cuenta como listo
     };
     this.players.push(player);
     this.emptySince = null;
@@ -173,6 +184,7 @@ export class Room {
       if (next) {
         player.isHost = false;
         next.isHost = true;
+        next.ready = true; // el nuevo anfitrión cuenta como listo
         this.systemMsg(`${next.name} ahora es el anfitrión`);
       }
     }
@@ -236,7 +248,14 @@ export class Room {
       color: p.color,
       isHost: p.isHost,
       connected: p.ws !== null,
+      ready: p.isHost || p.ready,
     }));
+  }
+
+  // ¿están listos TODOS los no-anfitriones conectados? (el anfitrión juega en solitario
+  // si no hay nadie más). Cierra la puerta a iniciar hasta que el equipo confirme.
+  private allReady(): boolean {
+    return this.players.filter((p) => p.ws && !p.isHost).every((p) => p.ready);
   }
 
   broadcastLobby(): void {
@@ -274,6 +293,10 @@ export class Room {
     this.pendingCmds = [];
     this.paused = false;
     this.speed = 1;
+    if (this.resumeTimer) {
+      clearTimeout(this.resumeTimer);
+      this.resumeTimer = null;
+    }
 
     // arrancar la grabación de la repetición: semilla, roster inicial y log vacío
     this.replaySeed = seed;
@@ -391,6 +414,7 @@ export class Room {
         stayed.push(spec);
         continue;
       }
+      const isHost = this.players.length === 0;
       const player: RoomPlayer = {
         // conserva el id del espectador para que el cliente se reconozca como el
         // mismo participante (si no, quedaría atascado en modo espectador)
@@ -399,7 +423,8 @@ export class Room {
         name: spec.name,
         color: PLAYER_COLORS[this.players.length % PLAYER_COLORS.length],
         ws: spec.ws,
-        isHost: this.players.length === 0,
+        isHost,
+        ready: isHost,
       };
       this.players.push(player);
       // avísale que ya es jugador (actualiza spectator/isHost en el cliente)
@@ -411,6 +436,10 @@ export class Room {
   stop(): void {
     if (this.interval) clearInterval(this.interval);
     this.interval = null;
+    if (this.startTimer) clearTimeout(this.startTimer);
+    if (this.resumeTimer) clearTimeout(this.resumeTimer);
+    this.startTimer = null;
+    this.resumeTimer = null;
     for (const p of this.players) p.ws?.close();
     for (const s of this.spectators) s.ws.close();
   }
@@ -434,6 +463,33 @@ export class Room {
       case 'set_settings':
         if (!player.isHost || this.game) break;
         this.settings = sanitizeSettings(msg.settings);
+        // cambiar la configuración invalida los «Listo»: que el equipo reconfirme
+        for (const p of this.players) if (!p.isHost) p.ready = false;
+        this.broadcastLobby();
+        break;
+
+      case 'kick_player': {
+        if (!player.isHost) {
+          this.send(player, { type: 'error', msg: 'Solo el anfitrión puede expulsar' });
+          break;
+        }
+        if (this.game && !this.game.over) break; // expulsar solo en el lobby
+        const target = this.players.find((p) => p.id === msg.playerId);
+        if (!target || target.id === player.id) break;
+        this.systemMsg(`${target.name} fue expulsado por el anfitrión`);
+        this.players = this.players.filter((p) => p !== target);
+        try {
+          target.ws?.close(KICK_CODE, 'kicked');
+        } catch {
+          // ignore
+        }
+        this.broadcastLobby();
+        break;
+      }
+
+      case 'set_ready':
+        if (this.game) break;
+        player.ready = msg.ready === true;
         this.broadcastLobby();
         break;
 
@@ -443,7 +499,17 @@ export class Room {
           break;
         }
         if (this.game && !this.game.over) break;
-        this.startGame();
+        if (this.startTimer) break; // ya en cuenta atrás
+        if (!this.allReady()) {
+          this.send(player, { type: 'error', msg: 'Espera a que todos marquen «Listo»' });
+          break;
+        }
+        // cuenta regresiva de 3 s y luego arranca (solo si queda alguien conectado)
+        this.broadcast({ type: 'countdown', kind: 'start', seconds: COUNTDOWN_SEC });
+        this.startTimer = setTimeout(() => {
+          this.startTimer = null;
+          if (this.players.some((p) => p.ws)) this.startGame();
+        }, COUNTDOWN_SEC * 1000);
         break;
 
       case 'chat': {
@@ -458,16 +524,30 @@ export class Room {
         this.pendingCmds.push({ playerId: player.id, cmd: msg.cmd });
         break;
 
-      case 'pause':
+      case 'pause': {
         if (!player.isHost || !this.game) break;
+        // pausar cancela una reanudación en cuenta atrás: nos quedamos en pausa
+        const hadResume = this.resumeTimer !== null;
+        if (this.resumeTimer) {
+          clearTimeout(this.resumeTimer);
+          this.resumeTimer = null;
+        }
+        if (this.paused && !hadResume) break; // ya en pausa firme
         this.paused = true;
         this.broadcast({ type: 'paused', by: player.name });
         break;
+      }
 
       case 'resume':
-        if (!player.isHost || !this.game) break;
-        this.paused = false;
-        this.broadcast({ type: 'resumed' });
+        if (!player.isHost || !this.game || !this.paused) break;
+        if (this.resumeTimer) break; // ya en cuenta atrás
+        // cuenta regresiva de 3 s antes de reanudar (el juego sigue en pausa mientras tanto)
+        this.broadcast({ type: 'countdown', kind: 'resume', seconds: COUNTDOWN_SEC });
+        this.resumeTimer = setTimeout(() => {
+          this.resumeTimer = null;
+          this.paused = false;
+          this.broadcast({ type: 'resumed' });
+        }, COUNTDOWN_SEC * 1000);
         break;
 
       case 'set_speed': {

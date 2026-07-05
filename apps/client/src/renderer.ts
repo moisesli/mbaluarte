@@ -3449,6 +3449,56 @@ function drawPlacement(gs: GameStore, now: number): void {
   g.restore();
 }
 
+// ---------- premovimientos (fantasmas de acciones encoladas) ----------
+
+// Dibuja los premovimientos del jugador: colocaciones pendientes (marco celeste
+// punteado + torre fantasma + ⏳) y mejoras pendientes (anillo dorado sobre la
+// torre). Se disparan solos al alcanzar el coste (ver hud.ts).
+function drawPremoves(gs: GameStore, now: number): void {
+  const pms = gs.premoves;
+  if (!pms || pms.length === 0) return;
+  const s = view.scale;
+  const pulse = 0.5 + Math.sin(now / 240) * 0.3;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  for (const pm of pms) {
+    if (pm.kind === 'place') {
+      const { cx, cy, towerType } = pm;
+      g.strokeStyle = `rgba(79,195,247,${0.55 + pulse * 0.35})`;
+      g.lineWidth = 2;
+      g.setLineDash([5, 4]);
+      g.strokeRect(toX(cx) + 2, toY(cy) + 2, s - 4, s - 4);
+      g.setLineDash([]);
+      // torre fantasma (arte real, muy tenue) en celeste
+      g.save();
+      g.globalAlpha = 0.4;
+      g.translate(toX(cx) + s / 2, toY(cy) + s / 2);
+      drawTowerArt(towerType, s, 1, now / 1000, { angle: -Math.PI / 2, recoil: 0, flash: 0 }, '#4fc3f7', false);
+      g.restore();
+      g.fillStyle = '#4fc3f7';
+      g.font = `bold ${Math.max(11, s * 0.34)}px system-ui, sans-serif`;
+      g.fillText('⏳', toX(cx) + s / 2, toY(cy) + s / 2);
+    } else {
+      const t = gs.latest?.towers.find((tt) => tt[0] === pm.towerId);
+      if (!t) continue;
+      const cx = t[2];
+      const cy = t[3];
+      g.strokeStyle = `rgba(255,213,79,${0.55 + pulse * 0.35})`;
+      g.lineWidth = 2.5;
+      g.setLineDash([5, 4]);
+      g.beginPath();
+      g.arc(toX(cx + 0.5), toY(cy + 0.5), s * 0.55, 0, Math.PI * 2);
+      g.stroke();
+      g.setLineDash([]);
+      g.fillStyle = '#ffd54f';
+      g.font = `bold ${Math.max(10, s * 0.3)}px system-ui, sans-serif`;
+      g.fillText('⏳⬆', toX(cx + 0.5), toY(cy) - s * 0.12);
+    }
+  }
+  g.textAlign = 'left';
+  g.textBaseline = 'alphabetic';
+}
+
 // posiciona la burbuja de confirmación (DOM) sobre la celda pendiente
 let bubbleEl: HTMLElement | null = null;
 function syncPlaceBubble(gs: GameStore): void {
@@ -3633,6 +3683,7 @@ function loop(): void {
   drawAmbient(now);
   drawPings(dt);
   drawPlacement(gs, now);
+  drawPremoves(gs, now);
 
   g.restore();
 

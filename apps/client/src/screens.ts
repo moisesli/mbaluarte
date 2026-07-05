@@ -294,6 +294,19 @@ export function initLobby(): void {
   wireSeg('lobby-visibility', (v) => sendSettings({ public: v === 'public' }));
 
   $('btn-start').addEventListener('click', () => net.send({ type: 'start_game' }));
+
+  // botón «Listo» (jugadores no-anfitrión): alterna el estado propio
+  $('btn-ready').addEventListener('click', () => {
+    const me = store.lobby.players.find((p) => p.id === store.playerId);
+    net.send({ type: 'set_ready', ready: !(me?.ready ?? false) });
+  });
+
+  // expulsar (solo anfitrión): delegación en la lista de jugadores, que se reescribe
+  $('lobby-players').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-kick]');
+    if (btn && store.isHost) net.send({ type: 'kick_player', playerId: btn.dataset.kick! });
+  });
+
   $('btn-leave').addEventListener('click', () => {
     net.disconnect(); // cierra el socket: el servidor nos saca de la sala
     store.roomCode = '';
@@ -327,14 +340,27 @@ export function renderLobby(): void {
   $('lobby-code').textContent = store.roomCode;
 
   $('lobby-players').innerHTML = players
-    .map(
-      (p) => `
+    .map((p) => {
+      const isMe = p.id === store.playerId;
+      // insignia de estado: el anfitrión no necesita marcar «Listo»; el resto sí
+      const badge = p.isHost
+        ? '<span class="host-tag">👑 anfitrión</span>'
+        : p.ready
+          ? '<span class="ready-tag on">✅ listo</span>'
+          : '<span class="ready-tag off">⏳ esperando</span>';
+      // el anfitrión puede expulsar a cualquier otro jugador
+      const kick =
+        store.isHost && !isMe
+          ? `<button class="kick-btn" data-kick="${p.id}" title="Expulsar a ${escapeHtml(p.name)}" aria-label="Expulsar">✕</button>`
+          : '';
+      return `
       <li class="${p.connected ? '' : 'offline'}">
         <span class="player-dot" style="background:${p.color};color:${p.color}"></span>
-        <span>${escapeHtml(p.name)}${p.id === store.playerId ? ' (tú)' : ''}</span>
-        ${p.isHost ? '<span class="host-tag">👑 anfitrión</span>' : ''}
-      </li>`,
-    )
+        <span class="player-name">${escapeHtml(p.name)}${isMe ? ' (tú)' : ''}</span>
+        ${badge}
+        ${kick}
+      </li>`;
+    })
     .join('');
 
   renderMapCards('lobby-maps', settings.mapId, !store.isHost, (id) => sendSettings({ mapId: id }));
@@ -342,8 +368,32 @@ export function renderLobby(): void {
   setSeg('lobby-mode', settings.mode, !store.isHost);
   setSeg('lobby-diff', settings.difficulty, !store.isHost);
   setSeg('lobby-visibility', settings.public ? 'public' : 'private', !store.isHost);
-  $('btn-start').hidden = !store.isHost;
+
+  // estado de «Listo» del equipo (solo cuentan los no-anfitriones conectados)
+  const others = players.filter((p) => p.connected && !p.isHost);
+  const readyCount = others.filter((p) => p.ready).length;
+  const allReady = others.every((p) => p.ready);
+  const me = players.find((p) => p.id === store.playerId);
+
+  const startBtn = $<HTMLButtonElement>('btn-start');
+  const readyBtn = $<HTMLButtonElement>('btn-ready');
+  const status = $('lobby-ready-status');
+
+  startBtn.hidden = !store.isHost;
+  readyBtn.hidden = store.isHost;
   $('lobby-wait').hidden = store.isHost;
+
+  if (store.isHost) {
+    startBtn.disabled = !allReady;
+    startBtn.textContent = allReady ? '▶ ¡Empezar partida!' : '⏳ Esperando a que todos estén listos…';
+    status.hidden = others.length === 0;
+    status.textContent = others.length > 0 ? `${readyCount}/${others.length} jugadores listos` : '';
+  } else {
+    const iAmReady = me?.ready ?? false;
+    readyBtn.classList.toggle('active', iAmReady);
+    readyBtn.textContent = iAmReady ? '⏳ Cancelar «Listo»' : '✅ Estoy listo';
+    status.hidden = true;
+  }
 }
 
 // ---------- fin de partida ----------

@@ -9,11 +9,13 @@ import {
   FUSIONS,
   hasRank2,
   HORDE_CAP,
+  placementError,
   rank2Cost,
   SELL_REFUND,
   TARGET_MODES,
   TOWERS,
   TOWER_ORDER,
+  towerLevel,
   towerTotalCost,
   ORC_RATES,
   ORC_UPGRADE_COSTS,
@@ -27,8 +29,8 @@ import {
   type TowerTypeId,
 } from '@td/shared';
 import { net } from './net.js';
-import { myGold, myWood, store } from './store.js';
-import { computeBannerAuras, countBannerTargets, ENEMY_ICONS, TOWER_ICONS, type ClientAura } from './renderer.js';
+import { myGold, myWood, store, type Premove } from './store.js';
+import { computeBannerAuras, countBannerTargets, ENEMY_ICONS, getPlacementCtx, TOWER_ICONS, type ClientAura } from './renderer.js';
 import { clearSelection, setPlacing } from './input.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -44,6 +46,137 @@ const TARGET_LABELS: Record<TargetMode, string> = {
 // los nombres de jugador son datos del usuario: SIEMPRE escapar antes de innerHTML
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+// ---------- premovimientos (estilo Hikaru / chess.com) ----------
+// Una acción encolada (plantar o mejorar) que se dispara sola en cuanto el
+// jugador tiene el oro (y madera) necesarios. Todo es local; el servidor valida
+// el comando resultante como cualquier otro. Ver Premove en store.ts.
+
+const MAX_PREMOVES = 20;
+
+// coste de la próxima mejora de una torre del snapshot, o null si no se puede
+// mejorar (fusión, torre de camino, nivel máximo, o hace falta especializar).
+function premoveUpgradeCost(snap: Snap, towerId: number): { gold: number; wood: number } | null {
+  const t = snap.towers.find((tt) => tt[0] === towerId);
+  if (!t) return null;
+  const type = TOWER_ORDER[t[1]];
+  const level = t[4];
+  const spec = t[9] ?? -1;
+  const fusion = t[13] ?? -1;
+  if (fusion >= 0 || TOWERS[type].onPathOnly) return null;
+  if (spec >= 0) {
+    if (level >= 4 || !hasRank2(type, spec)) return null;
+    return { gold: rank2Cost(type, spec) ?? 0, wood: WOOD_COST_RANK2 };
+  }
+  if (level >= 3) return null; // nivel máximo sin especializar: hay que especializar, no mejorar
+  return { gold: towerLevel(type, level + 1).cost, wood: 0 };
+}
+
+// ¿hay un premovimiento de mejora encolado para esta torre?
+export function hasUpgradePremove(towerId: number): boolean {
+  return store.game?.premoves.some((pm) => pm.kind === 'upgrade' && pm.towerId === towerId) ?? false;
+}
+
+// HTML del botón de mejora en modo premovimiento (sin oro suficiente): refleja si
+// ya está encolado (para poder cancelarlo). El click lo maneja wirePanel.
+function premoveUpgradeBtn(towerId: number, label: string): string {
+  const active = hasUpgradePremove(towerId);
+  return `<button id="panel-upgrade" class="btn primary premove${active ? ' active' : ''}">${
+    active ? '⏳ Cancelar premovimiento' : label
+  }</button>`;
+}
+
+// alterna (encola/cancela) un premovimiento de mejora para la torre seleccionada
+export function toggleUpgradePremove(towerId: number): void {
+  const gs = store.game;
+  if (!gs) return;
+  const idx = gs.premoves.findIndex((pm) => pm.kind === 'upgrade' && pm.towerId === towerId);
+  if (idx >= 0) {
+    gs.premoves.splice(idx, 1);
+    toast('⏳ Premovimiento de mejora cancelado', 'info');
+  } else if (gs.premoves.length < MAX_PREMOVES) {
+    gs.premoves.push({ kind: 'upgrade', towerId });
+    toast('⏳ Premovimiento: se mejorará al alcanzar el oro', 'info');
+  } else {
+    toast('Demasiados premovimientos en cola');
+  }
+  refreshPanel();
+}
+
+// encola (o cancela, si ya existe en esa celda) un premovimiento de colocación.
+export function queuePlacePremove(towerType: TowerTypeId, cx: number, cy: number): void {
+  const gs = store.game;
+  if (!gs) return;
+  const idx = gs.premoves.findIndex((pm) => pm.kind === 'place' && pm.cx === cx && pm.cy === cy);
+  if (idx >= 0) {
+    gs.premoves.splice(idx, 1);
+    toast('⏳ Premovimiento cancelado', 'info');
+    return;
+  }
+  if (gs.premoves.length >= MAX_PREMOVES) {
+    toast('Demasiados premovimientos en cola');
+    return;
+  }
+  gs.premoves.push({ kind: 'place', towerType, cx, cy });
+  toast(`⏳ Premovimiento: se plantará al alcanzar 🪙${TOWERS[towerType].levels[0].cost}`, 'info');
+}
+
+// cancela cualquier premovimiento de colocación en una celda (al tocarla). true si canceló.
+export function cancelPremoveAt(cx: number, cy: number): boolean {
+  const gs = store.game;
+  if (!gs) return false;
+  const idx = gs.premoves.findIndex((pm) => pm.kind === 'place' && pm.cx === cx && pm.cy === cy);
+  if (idx < 0) return false;
+  gs.premoves.splice(idx, 1);
+  toast('⏳ Premovimiento cancelado', 'info');
+  return true;
+}
+
+// Se llama en cada tick: dispara los premovimientos cuyo coste ya se alcanzó y
+// descarta los que dejaron de ser válidos (torre vendida, celda ocupada…).
+function processPremoves(snap: Snap): void {
+  const gs = store.game;
+  if (!gs) return;
+  if (store.spectator || store.replay) {
+    gs.premoves = [];
+    return;
+  }
+  if (gs.premoves.length === 0) return;
+  // presupuesto disponible que vamos consumiendo al disparar varios en un mismo
+  // tick (evita comprometer más oro/madera del que hay antes de que el servidor
+  // refleje el gasto en el siguiente snapshot).
+  let availGold = myGold(gs);
+  let availWood = myWood(gs);
+  const towerCells = snap.towers.map((t) => ({ cx: t[2], cy: t[3] }));
+  const keep: Premove[] = [];
+  for (const pm of gs.premoves) {
+    if (pm.kind === 'place') {
+      const err = placementError(gs.map, getPlacementCtx(gs.map), towerCells, pm.cx, pm.cy, pm.towerType);
+      if (err) {
+        toast('⏳ Premovimiento cancelado: la casilla ya no está libre');
+        continue; // deja de ser válido → descartar
+      }
+      const cost = TOWERS[pm.towerType].levels[0].cost;
+      if (availGold >= cost) {
+        net.send({ type: 'cmd', cmd: { kind: 'place', towerType: pm.towerType, cx: pm.cx, cy: pm.cy } });
+        availGold -= cost;
+        continue; // disparado → sacar de la cola
+      }
+      keep.push(pm);
+    } else {
+      const cost = premoveUpgradeCost(snap, pm.towerId);
+      if (!cost) continue; // torre vendida o ya no mejorable → descartar en silencio
+      if (availGold >= cost.gold && availWood >= cost.wood) {
+        net.send({ type: 'cmd', cmd: { kind: 'upgrade', towerId: pm.towerId } });
+        availGold -= cost.gold;
+        availWood -= cost.wood;
+        continue; // disparado
+      }
+      keep.push(pm);
+    }
+  }
+  gs.premoves = keep;
 }
 
 // ---------- barra de torres ----------
@@ -244,7 +377,12 @@ function wirePanel(): void {
     const mode = target.closest<HTMLElement>('.tmode')?.dataset.mode;
     const fuseBtn = target.closest<HTMLButtonElement>('.fuse-btn');
     if (upgrade && !upgrade.disabled) {
-      net.send({ type: 'cmd', cmd: { kind: 'upgrade', towerId } });
+      // botón de mejora en modo premovimiento (sin oro suficiente): encola/cancela
+      if (upgrade.classList.contains('premove')) {
+        toggleUpgradePremove(towerId);
+      } else {
+        net.send({ type: 'cmd', cmd: { kind: 'upgrade', towerId } });
+      }
     } else if (fuseBtn && !fuseBtn.disabled) {
       // la fusión se queda en la celda de la torre SELECCIONADA (keepId = towerId);
       // para quedarse en la otra celda, selecciona la otra torre y fusiona desde ahí
@@ -514,26 +652,34 @@ export function refreshPanel(): void {
       // Rango II: mejora identidad de la especialización (reutiliza el comando upgrade)
       const r2desc = def.specs[spec].rank2?.desc ?? 'Mejora de Rango II';
       const wood = myWood(gs);
+      const affordR2 = gold >= r2cost && wood >= WOOD_COST_RANK2;
+      const r2btn = affordR2
+        ? `<button id="panel-upgrade" class="btn primary">★★ Rango II 🪙${r2cost} · 🪵${WOOD_COST_RANK2}</button>`
+        : premoveUpgradeBtn(id, `⏳ Premover Rango II ★★`);
       actions = `
         <div class="spec-title">Rango II</div>
         <p class="spec-desc" style="padding:0 4px 6px">${escapeHtml(r2desc)}</p>
         ${fuseHtml}
         <div class="prow">
-          <button id="panel-upgrade" class="btn primary" ${gold < r2cost || wood < WOOD_COST_RANK2 ? 'disabled' : ''}>
-            ★★ Rango II 🪙${r2cost} · 🪵${WOOD_COST_RANK2}
-          </button>
+          ${r2btn}
           <button id="panel-sell" class="btn ghost">💸 ${sellValue}</button>
         </div>
         ${targetModesHtml(projKind, lvl, modeIdx)}`;
     } else {
       const nextCost = next?.cost ?? null;
       const maxedLabel = isRank2 ? 'Máximo (Rango II)' : 'Máximo';
+      let upBtn: string;
+      if (nextCost === null) {
+        upBtn = `<button id="panel-upgrade" class="btn primary" disabled>${maxedLabel}</button>`;
+      } else if (gold >= nextCost) {
+        upBtn = `<button id="panel-upgrade" class="btn primary">⬆ Mejorar 🪙${nextCost}</button>`;
+      } else {
+        upBtn = premoveUpgradeBtn(id, `⏳ Premover mejora 🪙${nextCost}`);
+      }
       actions = `
         ${fuseHtml}
         <div class="prow">
-          <button id="panel-upgrade" class="btn primary" ${nextCost === null || gold < nextCost ? 'disabled' : ''}>
-            ${nextCost === null ? maxedLabel : `⬆ Mejorar 🪙${nextCost}`}
-          </button>
+          ${upBtn}
           <button id="panel-sell" class="btn ghost">💸 ${sellValue}</button>
         </div>
         ${targetModesHtml(projKind, lvl, modeIdx)}`;
@@ -695,6 +841,7 @@ export function onTick(snap: Snap): void {
 
   syncTowerBar();
   syncMarket(snap);
+  processPremoves(snap); // dispara los premovimientos cuyo coste ya se alcanzó
 
   // refrescar el panel de torre (máx 4 veces por segundo para no perder clicks)
   const now = performance.now();

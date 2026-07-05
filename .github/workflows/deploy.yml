@@ -1,0 +1,91 @@
+name: Sync upstream & deploy to Cloudflare
+
+# Mantiene este fork SIEMPRE al día con el repo padre (EijunnN/fortaleza-td).
+# Se ejecuta:
+#  - cada 15 min: baja los commits nuevos del padre a este fork
+#  - en cada push a main (tus propios cambios)
+#  - manualmente desde la pestaña Actions (workflow_dispatch)
+#
+# El deploy a Cloudflare solo ocurre cuando REALMENTE hubo cambios nuevos
+# (o cuando tú haces push / lo lanzas a mano), para no redesplegar en vano.
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Cada 15 min, con offset (evita el :00 que GitHub suele retrasar).
+    - cron: "5,20,35,50 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # 1) Sincroniza el fork con el repo padre. Corre SIEMPRE (barato: ~15s).
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.sync.outputs.changed }}
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Trae y mezcla TODOS los commits nuevos del padre. Nuestra única
+      # divergencia es .github/ y wrangler.jsonc (aditivos), así que la
+      # mezcla es limpia salvo que el upstream toque esas mismas líneas.
+      - name: Sync from upstream
+        id: sync
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/EijunnN/fortaleza-td.git || true
+          git fetch upstream
+          BEFORE=$(git rev-parse HEAD)
+          git merge --no-edit upstream/main
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" != "$AFTER" ]; then
+            git push origin main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Sincronizados commits nuevos del upstream."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Ya estaba al día con el upstream."
+          fi
+
+  # 2) Compila y despliega. Solo si hubo cambios del padre, o si fue push/manual.
+  deploy:
+    needs: sync
+    if: ${{ needs.sync.outputs.changed == 'true' || github.event_name != 'schedule' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build client
+        run: pnpm --filter @td/client build
+
+      - name: Deploy Worker to Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm --filter @td/worker exec wrangler deploy

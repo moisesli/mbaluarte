@@ -19,9 +19,10 @@ export class Net {
   private firstMsg: ClientMsg | null = null;
   onOpen: () => void = () => {};
   onDrop: () => void = () => {};
-  // el servidor cerró la sala A PROPÓSITO (p. ej. inactividad, código 4001):
-  // NO reconectar — sin este respeto, la auto-reconexión revivía la sala al instante
-  onKicked: () => void = () => {};
+  // el servidor cerró la sala/al jugador A PROPÓSITO (código 4001 = inactividad,
+  // 4002 = expulsado por el anfitrión): NO reconectar — sin este respeto, la
+  // auto-reconexión revivía la sala/sesión al instante. `code` distingue el motivo.
+  onKicked: (code: number) => void = () => {};
 
   // Abre (o reabre) una conexión a una sala. `firstMsg` se envía en cuanto abre
   // y se reenvía en cada reconexión (create_room al crear, join_room al unirse).
@@ -118,11 +119,12 @@ export class Net {
     ws.onclose = (ev) => {
       this.ws = null;
       if (!this.wantOpen) return;
-      // 4001 = cierre deliberado del servidor (sala inactiva): obedecer y no volver
-      if (ev.code === 4001) {
+      // 4001 (sala inactiva) / 4002 (expulsado): cierre deliberado del servidor.
+      // Obedecer y NO reconectar; el motivo lo distingue el código.
+      if (ev.code === 4001 || ev.code === 4002) {
         this.wantOpen = false;
         this.firstMsg = null;
-        this.onKicked();
+        this.onKicked(ev.code);
         return;
       }
       this.onDrop();

@@ -1,8 +1,8 @@
 import { placementError, TOWER_ORDER, TOWERS, type PlacementError, type TowerTypeId } from '@td/shared';
 import { net } from './net.js';
-import { store } from './store.js';
+import { myGold, store } from './store.js';
 import { centerOn, getPlacementCtx, getView, minimapHit, panBy, resetCamera, zoomAt } from './renderer.js';
-import { hidePanel, showPanel, syncTowerBar, toast } from './hud.js';
+import { cancelPremoveAt, hidePanel, queuePlacePremove, showPanel, syncTowerBar, toast } from './hud.js';
 import { installAudioUnlock } from './audio.js';
 
 // ¿el dispositivo tiene puntero con hover (ratón)? controla el fantasma bajo el
@@ -80,6 +80,15 @@ function sendPlace(cx: number, cy: number, keepPlacing: boolean): void {
     toast(PLACE_ERRORS[err]);
     return;
   }
+  // sin oro suficiente: en vez de rechazar, encola un PREMOVIMIENTO — se plantará
+  // sola en cuanto el jugador alcance el coste (estilo Hikaru en chess.com).
+  const cost = TOWERS[gs.selection.towerType].levels[0].cost;
+  if (myGold(gs) < cost) {
+    queuePlacePremove(gs.selection.towerType, cx, cy);
+    gs.pendingPlace = null;
+    if (!keepPlacing) clearSelection();
+    return;
+  }
   net.send({
     type: 'cmd',
     cmd: { kind: 'place', towerType: gs.selection.towerType, cx, cy },
@@ -135,6 +144,9 @@ function tapSelect(canvas: HTMLCanvasElement, clientX: number, clientY: number, 
     }
     return;
   }
+
+  // tocar una celda con un premovimiento de colocación encolado lo cancela
+  if (cancelPremoveAt(cell.cx, cell.cy)) return;
 
   // ¿hay una torre en esa celda?
   const tower = gs.latest.towers.find((t) => t[2] === cell.cx && t[3] === cell.cy);

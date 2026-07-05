@@ -487,6 +487,23 @@ export class Room {
         break;
       }
 
+      case 'transfer_host': {
+        if (!player.isHost) {
+          this.send(player, { type: 'error', msg: 'Solo el anfitrión puede ceder la sala' });
+          break;
+        }
+        if (this.game && !this.game.over) break; // ceder solo en el lobby
+        const target = this.players.find((p) => p.id === msg.playerId);
+        if (!target || target.id === player.id || !target.ws) break;
+        player.isHost = false;
+        player.ready = true; // el ex-anfitrión ya estaba listo; lo dejamos listo
+        target.isHost = true;
+        target.ready = true; // el nuevo anfitrión cuenta como listo
+        this.systemMsg(`${player.name} cedió la sala a ${target.name}`);
+        this.broadcastLobby();
+        break;
+      }
+
       case 'set_ready':
         if (this.game) break;
         player.ready = msg.ready === true;

@@ -243,6 +243,8 @@ export type ClientMsg =
   | { type: 'set_settings'; settings: RoomSettings }
   // el anfitrión expulsa a un jugador de la sala (solo en el lobby)
   | { type: 'kick_player'; playerId: string }
+  // el anfitrión cede la propiedad de la sala a otro jugador conectado (solo en el lobby)
+  | { type: 'transfer_host'; playerId: string }
   // el jugador marca/desmarca «Listo» en el lobby
   | { type: 'set_ready'; ready: boolean }
   | { type: 'start_game' }

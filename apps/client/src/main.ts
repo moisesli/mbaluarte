@@ -479,7 +479,7 @@ function wireNet(): void {
     switchScreen('home');
     homeError(
       code === 4002
-        ? '🚪 El anfitrión te expulsó de la sala.'
+        ? '🚪 Fue expulsado por el anfitrión.'
         : '⏰ La sala se cerró por inactividad (30 min sin actividad). Crea otra cuando quieran — es un toque.',
     );
   };

@@ -301,10 +301,19 @@ export function initLobby(): void {
     net.send({ type: 'set_ready', ready: !(me?.ready ?? false) });
   });
 
-  // expulsar (solo anfitrión): delegación en la lista de jugadores, que se reescribe
+  // expulsar / ceder anfitrión (solo anfitrión): delegación en la lista de jugadores
   $('lobby-players').addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-kick]');
-    if (btn && store.isHost) net.send({ type: 'kick_player', playerId: btn.dataset.kick! });
+    const kickBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-kick]');
+    if (kickBtn && store.isHost) {
+      net.send({ type: 'kick_player', playerId: kickBtn.dataset.kick! });
+      return;
+    }
+    const cedeBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-cede]');
+    if (cedeBtn && store.isHost) {
+      const name = cedeBtn.title.replace('Ceder anfitrión a ', '');
+      if (confirm(`¿Ceder la sala a ${name}? Ya no podrás iniciar la partida ni cambiar los ajustes.`))
+        net.send({ type: 'transfer_host', playerId: cedeBtn.dataset.cede! });
+    }
   });
 
   $('btn-leave').addEventListener('click', () => {
@@ -348,16 +357,20 @@ export function renderLobby(): void {
         : p.ready
           ? '<span class="ready-tag on">✅ listo</span>'
           : '<span class="ready-tag off">⏳ esperando</span>';
-      // el anfitrión puede expulsar a cualquier otro jugador
-      const kick =
-        store.isHost && !isMe
-          ? `<button class="kick-btn" data-kick="${p.id}" title="Expulsar a ${escapeHtml(p.name)}" aria-label="Expulsar">✕</button>`
-          : '';
+      // el anfitrión puede expulsar y ceder la sala a cualquier otro jugador conectado
+      const canManage = store.isHost && !isMe && p.connected;
+      const cede = canManage
+        ? `<button class="cede-btn" data-cede="${p.id}" title="Ceder anfitrión a ${escapeHtml(p.name)}" aria-label="Ceder anfitrión">👑</button>`
+        : '';
+      const kick = canManage
+        ? `<button class="kick-btn" data-kick="${p.id}" title="Expulsar a ${escapeHtml(p.name)}" aria-label="Expulsar">✕</button>`
+        : '';
       return `
       <li class="${p.connected ? '' : 'offline'}">
         <span class="player-dot" style="background:${p.color};color:${p.color}"></span>
         <span class="player-name">${escapeHtml(p.name)}${isMe ? ' (tú)' : ''}</span>
         ${badge}
+        ${cede}
         ${kick}
       </li>`;
     })

@@ -13,6 +13,7 @@ import {
   rank2Cost,
   SELL_REFUND,
   TARGET_MODES,
+  TICK_RATE,
   TOWERS,
   TOWER_ORDER,
   towerLevel,
@@ -25,6 +26,7 @@ import {
   WOOD_SELL_SPREAD,
   type Snap,
   type TargetMode,
+  type TowerDef,
   type TowerLevelDef,
   type TowerTypeId,
 } from '@td/shared';
@@ -476,6 +478,31 @@ function targetModesHtml(projKind: string, lvl: TowerLevelDef, modeIdx: number):
   ).join('')}</div>`;
 }
 
+// F6.2 · ¿esta torre DISPARA? (para decidir si mostrarle el contador de próximo
+// ataque). Espeja towerFires() de la sim: NO disparan la mina (incomePerWave), el
+// aura de hielo/Escarcha Eterna (slowAura), el Estandarte puro (auraDamage/auraHaste
+// sin alsoFires), el Alquimista (auraBounty) ni las torres de camino (trampa/barril).
+// EXCEPCIÓN: el Señor de la Guerra (alsoFires) tiene aura Y ADEMÁS dispara.
+function towerAttacks(lvl: TowerLevelDef, def: TowerDef): boolean {
+  if (lvl.alsoFires) return true;
+  if (def.onPathOnly) return false;
+  if (lvl.incomePerWave) return false;
+  if (lvl.slowAura) return false;
+  if (lvl.auraBounty !== undefined) return false;
+  if (lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) return false;
+  return true;
+}
+
+// F6.2 · texto del contador de próximo ataque a partir de la tupla del snapshot.
+// El aturdimiento (índice 10) manda sobre el cooldown: una torre aturdida no
+// dispara. cdTicks (índice 16) son los ticks que faltan para el próximo disparo;
+// 0 = lista. Con el juego en PAUSA no llegan ticks, así que el valor se congela
+// solo (comportamiento correcto, sin trabajo extra).
+function cooldownText(stunned: number, cdTicks: number): string {
+  if (stunned) return '💫 Aturdida';
+  return cdTicks <= 0 ? '⚔️ listo' : `⚔️ ${(cdTicks / TICK_RATE).toFixed(1)}s`;
+}
+
 export function refreshPanel(): void {
   const gs = store.game;
   const panel = $('hud-panel');
@@ -495,7 +522,9 @@ export function refreshPanel(): void {
   }
   const [id, typeIdx, , , level, ownerIdx, modeIdx, kills, damage] = data;
   const spec = data[9] ?? -1;
+  const stunned = data[10] ?? 0; // F6.2 · aturdida: no dispara (manda sobre el cooldown)
   const charges = data[11] ?? 0;
+  const cdTicks = data[16] ?? 0; // F6.2 · ticks hasta el próximo disparo (0 = lista)
   // F4.3: índice de fusión e inversión total (para el valor de venta de fusiones)
   const fusionIdx = data[13] ?? -1;
   const invested = data[14] ?? 0;
@@ -521,6 +550,13 @@ export function refreshPanel(): void {
   // aura de Estandarte activa SOBRE esta torre → el panel muestra stats efectivos
   const auraBuff = computeBannerAuras(gs.latest).get(id);
   const statLines = statBlock(lvl, next, auraBuff);
+  // F6.2 · contador de PRÓXIMO ATAQUE, solo para torres que disparan (las de apoyo
+  // y las de camino no lo muestran). Va en un span con id estable para poder
+  // refrescarlo en CADA tick desde onTick (a 15/s) sin re-renderizar el panel
+  // entero (que solo se rehace 4/s). Ver la actualización directa en onTick.
+  if (towerAttacks(lvl, def)) {
+    statLines.push(`Próximo disparo: <span id="panel-cd" class="pcd">${cooldownText(stunned, cdTicks)}</span>`);
+  }
   // Valores VOLÁTILES (cambian cada tick en combate: bajas/daño/cargas/oro…):
   // van en spans estables `data-lv` y se actualizan por textContent, FUERA del
   // dirty-check estructural. Si entraran al innerHTML, el panel se reescribiría
@@ -848,6 +884,23 @@ export function onTick(snap: Snap): void {
   if (gs.selection?.kind === 'tower' && now - lastPanelSync > 250) {
     lastPanelSync = now;
     refreshPanel();
+  }
+
+  // F6.2 · el contador de próximo ataque baja FLUIDO: se refresca en CADA tick
+  // (15/s), no solo cuando el panel se rehace (4/s). Solo tocamos el span si
+  // existe —refreshPanel lo crea únicamente para torres que disparan— y por
+  // textContent, así que no re-renderizamos nada ni robamos clicks (mismo criterio
+  // que los volátiles data-lv). Sin rAF ni timers nuevos.
+  const sel = gs.selection;
+  if (sel?.kind === 'tower') {
+    const cdEl = document.getElementById('panel-cd');
+    if (cdEl) {
+      const t = snap.towers.find((tt) => tt[0] === sel.id);
+      if (t) {
+        const txt = cooldownText(t[10] ?? 0, t[16] ?? 0);
+        if (cdEl.textContent !== txt) cdEl.textContent = txt;
+      }
+    }
   }
 }
 

@@ -735,6 +735,8 @@ html, body {
 #hud-panel .pstats .up { color: var(--ok); font-weight: 700; }
 /* valor EFECTIVO bajo un aura de Estandarte (⚑ dorado, como su anillo) */
 #hud-panel .pstats .aura { color: var(--accent-hi); font-weight: 700; }
+/* F6.2 · contador de próximo ataque de la torre (baja en cada tick) */
+#hud-panel .pstats .pcd { color: var(--accent-hi); font-weight: 700; }
 #hud-panel .prow { display: flex; gap: 8px; margin-top: 8px; }
 #hud-panel .prow .btn { flex: 1; font-size: 0.85rem; padding: 9px 6px; }
 .tmodes { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }

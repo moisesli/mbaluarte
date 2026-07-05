@@ -64,16 +64,18 @@ export interface PublicRoomInfo {
 // enemigo: [id, typeIdx, x, y, hpFrac, flags, affixMask]
 //   flags: 1=slow 2=poison 4=boss 8=elite 16=inmune 32=shred   affixMask: bits de balance/affixes
 export type SnapEnemy = [number, number, number, number, number, number, number];
-// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec, stunned, charges, growth, fusion, invested, goldGen]
+// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec, stunned, charges, growth, fusion, invested, goldGen, cd]
 //   spec: -1 sin especializar, 0/1 rama; stunned: 0/1; charges: Trampa (0 = N/A);
 //   growth: bono de crecimiento permanente (Arco Largo/Explorador II; 0 = N/A);
 //   fusion: índice en FUSION_ORDER (−1 = sin fusión); invested: oro invertido total
 //   (el panel lo usa para el valor de venta de las fusiones, cuya inversión real
 //   no puede reconstruirse desde type/level/spec);
-//   goldGen: oro EXTRA que el aura del Alquimista añadió a los botines (F5.3)
-//   (los campos F4.2 charges/growth, F4.3 fusion/invested y F5.3 goldGen van al
-//   FINAL para no romper índices previos)
-export type SnapTower = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
+//   goldGen: oro EXTRA que el aura del Alquimista añadió a los botines (F5.3);
+//   cd: ticks que le faltan a la torre para su PRÓXIMO disparo (0 = lista). El panel
+//   lo muestra como contador de cadencia; las torres que no disparan lo ignoran (F6.2)
+//   (los campos F4.2 charges/growth, F4.3 fusion/invested, F5.3 goldGen y F6.2 cd van
+//   al FINAL para no romper índices previos)
+export type SnapTower = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
 // proyectil: [id, kindIdx(0 bullet,1 shell,2 bomb), x, y, colorIdx(=typeIdx de torre)]
 export type SnapProj = [number, number, number, number, number];
 
@@ -177,6 +179,10 @@ export function buildSnap(state: GameState): Snap {
           t.fusion,
           Math.round(t.invested),
           Math.round(t.goldGen),
+          // F6.2 · ticks hasta el próximo disparo (0 = lista). Solo LEEMOS el
+          // cooldown de la sim; no lo tocamos. El panel de torre lo pinta como
+          // contador de cadencia (las torres de apoyo/camino no lo muestran).
+          t.cooldownLeft,
         ] as SnapTower,
     ),
     projs: state.projectiles.map((p) => {

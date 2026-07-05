@@ -633,8 +633,11 @@ export function onTick(snap: Snap): void {
     }
   }
 
-  $('hud-wave').textContent =
-    snap.totalWaves > 0 ? `Oleada ${snap.wave}/${snap.totalWaves}` : `Oleada ${snap.wave} ∞`;
+  // la etiqueta lleva sus dos formas (palabra en escritorio, 🌊 en móvil) y el
+  // CSS muestra una u otra según el ancho de pantalla
+  const waveLabel = '<span class="wv-word">Oleada</span><span class="wv-icon" aria-hidden="true">🌊</span>';
+  $('hud-wave').innerHTML =
+    snap.totalWaves > 0 ? `${waveLabel} ${snap.wave}/${snap.totalWaves}` : `${waveLabel} ${snap.wave} ∞`;
   $('hud-gold').textContent = `🪙 ${myGold(gs)}`;
   $('hud-wood').textContent = `🪵 ${myWood(gs)}`;
 
@@ -644,7 +647,9 @@ export function onTick(snap: Snap): void {
   if (!store.spectator && !snap.active && snap.over === 0) {
     btn.hidden = false;
     const bonus = snap.interludeSec * CALL_WAVE_GOLD_PER_SEC;
-    $('callwave-timer').textContent = `${snap.interludeSec}s +🪙${bonus}`;
+    // el bonus va en su propio span: en móvil se oculta por CSS para que el
+    // botón no estruje la fila de stats (dejaría el chip 🪵 fuera de pantalla)
+    $('callwave-timer').innerHTML = `${snap.interludeSec}s <span class="cw-bonus">+🪙${bonus}</span>`;
   } else {
     btn.hidden = true;
   }

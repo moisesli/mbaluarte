@@ -366,14 +366,20 @@ html, body {
 /* botones de la barra superior: misma altura y radio que los stats (pills a juego) */
 #hud-top .btn.small { padding: 7px 11px; border-radius: 11px; border-color: rgba(44, 56, 84, 0.85); }
 .stat.gold { color: var(--accent-hi); }
-/* el chip de madera es un BOTÓN: abre el mercado (el resto de stats no se tocan) */
+/* la etiqueta de oleada tiene dos formas: palabra ("Oleada") en escritorio e
+   icono (🌊) en móvil, donde la palabra empujaba el chip 🪵 fuera de la barra */
+#hud-wave .wv-icon { display: none; }
+/* el chip de madera es un BOTÓN: abre el mercado (el resto de stats no se tocan).
+   Longhands en vez del atajo `font:` a propósito: la font-size debe venir de
+   .stat para que los breakpoints móviles encojan este botón igual que al resto
+   (el atajo la pisaba por especificidad y el chip 🪵 quedaba gigante en móvil) */
 .stat.wood {
   color: #bcaaa4;
   pointer-events: auto;
   cursor: pointer;
-  font: inherit;
+  font-family: inherit;
+  line-height: inherit;
   font-weight: 700;
-  font-size: 0.95rem;
 }
 .stat.wood:active { transform: scale(0.96); }
 /* flechita: señala que el chip se abre (los demás stats no se tocan) */
@@ -1084,19 +1090,38 @@ html, body {
      fila y los chips de jugador (top:52px) los tapaban. */
   #hud-top { padding: 6px 8px; align-items: flex-start; gap: 6px; }
   .hud-group { gap: 5px; }
-  /* stats (❤/oleada/🪙/🪵/👾) SIEMPRE en una línea: si en un móvil angosto no
+  /* stats (❤/🌊/🪙/🪵/👾) SIEMPRE en una línea: si en un móvil angosto no
      caben, el grupo se desplaza de lado (con degradado de aviso) en vez de
      empujar los botones o taparse con los chips de jugador */
   .hud-group:first-child {
     flex-wrap: nowrap;
-    max-width: 60vw;
+    max-width: 64vw;
     overflow-x: auto;
+    /* sin pointer-events el dedo no podía desplazar el grupo: los chips que
+       quedaban fuera del corte (🪵 en móviles angostos) eran INALCANZABLES */
+    pointer-events: auto;
+    touch-action: pan-x;
+    /* colchón: el degradado difumina este relleno y no el último chip cuando cabe */
+    padding-right: 12px;
     scrollbar-width: none;
     mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent 100%);
     -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent 100%);
   }
   .hud-group:first-child::-webkit-scrollbar { display: none; }
   .stat { font-size: 0.74rem; padding: 4px 7px; }
+  /* la palabra "Oleada" era el chip más ancho de la barra: en móvil se cambia
+     por 🌊 para que el chip de madera 🪵 quepa sin desplazar */
+  #hud-wave .wv-word { display: none; }
+  #hud-wave .wv-icon { display: inline; }
+  /* si la fila no cabe (p. ej. el interludio, cuando ⚔️ ¡Ya! la estruja), el
+     corte se come el FINAL: al final va lo menos accionable. 🪙/🪵 (construir y
+     mercado) y 👾 (lleva el aviso de saturación de horda) nunca quedan fuera;
+     la oleada 🌊 ya se ve en la vista previa y en el killfeed */
+  #hud-alive { order: 5; }
+  #hud-wave { order: 6; }
+  /* el bonus de oro del botón ⚔️ ¡Ya! se omite: su ancho estrujaba la fila de
+     stats hasta cortar el chip 🪵 justo en el interludio (cuando se compra) */
+  #callwave-timer .cw-bonus { display: none; }
   .btn.small { padding: 6px 9px; font-size: 0.82rem; }
   /* menos botones en pantallas chicas: el minimapa no necesita toggle (se usa
      tocándolo directo) y la Guía 📖 vive en la pausa — ahora cualquiera puede

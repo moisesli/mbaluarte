@@ -87,6 +87,9 @@ export interface TowerLevelDef {
   incomeToAll?: boolean; // el ingreso va a TODOS los jugadores
   slowAura?: { factor: number; radius: number }; // ralentiza pasivamente a su alrededor (no dispara)
   targetsAirOverride?: boolean; // sobrescribe si la torre alcanza aire
+  // F6.2 · multiplicador de daño contra VOLADORES (la Metralla es LA respuesta
+  // dura a los tanques aéreos tipo Coloso Alado; 1/ausente = sin bonus)
+  airBonus?: number;
   // auras de soporte del Estandarte (no dispara): fracciones, p. ej. 0.25 = +25%.
   // El radio del aura es el propio `range`. Se toma el MEJOR de cada tipo, no se apilan.
   auraDamage?: number; // +daño a las torres cercanas (fracción)
@@ -271,6 +274,8 @@ export interface ProjectileState {
   // --- F4.2 ---
   executeCurrent: number; // remata por debajo de esta fracción de la vida ACTUAL (Cañón de Riel II; 0 = nunca)
   shredChance: number; // prob. de shred de armadura AoE por impacto (Obús/Metralla II; 0 = nunca)
+  // --- F6.2 ---
+  airBonus: number; // multiplicador de daño contra voladores (1 = sin bonus)
 }
 
 export interface PlayerStats {

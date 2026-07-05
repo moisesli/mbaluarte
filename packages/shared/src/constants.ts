@@ -127,5 +127,5 @@ export const PLAYER_COLORS = [
   '#e57373', // rojo
 ];
 
-export const BALANCE_VERSION = 11; // F5.5: el orco leñador se mejora (nv 1..5, más tala)
+export const BALANCE_VERSION = 12; // F6.2: la Metralla hace bonus de daño a voladores (anti-Coloso)
 export const PROTOCOL_VERSION = 1;

@@ -116,7 +116,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
       {
         key: 'flak',
         name: 'Metralla',
-        desc: 'Ráfaga doble que ahora también derriba a los voladores.',
+        desc: 'Ráfaga doble antiaérea: a los VOLADORES les hace +50% de daño.',
         cost: 380,
         damage: 52,
         range: 3.0,
@@ -125,15 +125,20 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
         splash: 1.0,
         shots: 2,
         targetsAirOverride: true,
+        // F6.2 · LA respuesta dura a los tanques aéreos (Coloso Alado): la
+        // metralla despedaza voladores. Sin esto, un coloso de horda alta
+        // (~10k hp) era una esponja eterna para todo el arsenal.
+        airBonus: 1.5,
         rank2: {
-          // *Antiaéreo II*: ráfaga triple demoledora contra tierra y aire.
+          // *Antiaéreo II*: ráfaga triple demoledora; aún más letal contra el aire.
           cost: 400,
-          desc: 'Antiaéreo II: ráfaga triple, más daño y área.',
+          desc: 'Antiaéreo II: ráfaga triple, más daño y área; +60% contra voladores.',
           damage: 90,
           range: 3.3,
           cooldown: 1.0,
           splash: 1.2,
           shots: 3,
+          airBonus: 1.6,
         },
       },
     ],

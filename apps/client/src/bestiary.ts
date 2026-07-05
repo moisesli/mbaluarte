@@ -27,7 +27,8 @@ const DESC: Record<EnemyTypeId, string> = {
   thief: 'No quita vidas: si escapa, ROBA oro del equipo. Rápido y frágil; no lo dejes pasar.',
   berserker:
     'Al bajar del 40% de vida se ENFURECE y corre un 50% más rápido. Remátalo de golpe antes de que acelere.',
-  skywhale: 'Volador TANQUE: enorme cantidad de vida por el aire. Castiga no tener buen anti-aire.',
+  skywhale:
+    'Volador TANQUE: enorme cantidad de vida por el aire. La respuesta dura es la METRALLA (spec del cañón): le hace ×1.5 de daño.',
   wraith:
     'Esquiva el 45% e INMUNE a la magia (hielo, veneno y ejecución; el tesla le pega reducido). Usa daño físico o el disparo certero del francotirador.',
   chimera: 'Jefe VOLADOR (oleadas 15/25/35). Obliga a tener anti-aire: el cañón y el mortero no la alcanzan.',

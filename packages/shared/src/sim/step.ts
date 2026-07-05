@@ -448,6 +448,7 @@ function fireTower(
   const execute = lvl.execute ?? 0;
   const executeCurrent = lvl.executeCurrent ?? 0;
   const shredChance = lvl.shredChance ?? 0;
+  const airBonus = lvl.airBonus ?? 1; // F6.2: multiplicador vs voladores
   const shots = Math.max(1, lvl.shots ?? 1);
 
   const target = pickTarget(state, ctx, tower, lvl, canAir, canGround);
@@ -493,7 +494,8 @@ function fireTower(
       if (along < -0.2 || along > lvl.range) continue;
       const perp = Math.abs(px * uy - py * ux); // distancia perpendicular a la línea
       if (perp > lvl.lineWidth + edef.radius * e.radiusMult) continue;
-      const dmg = e.spellImmune ? Math.max(1, Math.round(dmgBase * SPELL_IMMUNE_TESLA_MULT)) : dmgBase;
+      let dmg = e.spellImmune ? Math.max(1, Math.round(dmgBase * SPELL_IMMUNE_TESLA_MULT)) : dmgBase;
+      if (edef.flying && airBonus > 1) dmg = Math.round(dmg * airBonus);
       damageEnemy(state, ctx, e, dmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
     }
     events.push({ e: 'shot', x: tx, y: ty, tx: tx + ux * lvl.range, ty: ty + uy * lvl.range, kind: 'beam', color });
@@ -512,7 +514,8 @@ function fireTower(
       hitIds.add(current.id);
       pts.push([current.x, current.y]);
       // el rayo Tesla es mágico: los inmunes reciben −70% (execute ya se ignora en damageEnemy)
-      const linkDmg = current.spellImmune ? Math.max(1, Math.round(dmg * SPELL_IMMUNE_TESLA_MULT)) : dmg;
+      let linkDmg = current.spellImmune ? Math.max(1, Math.round(dmg * SPELL_IMMUNE_TESLA_MULT)) : dmg;
+      if (ENEMIES[current.type].flying && airBonus > 1) linkDmg = Math.round(linkDmg * airBonus);
       damageEnemy(state, ctx, current, linkDmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
       dmg = Math.max(1, Math.round(dmg * chain.falloff));
       // buscar el siguiente eslabón cerca del último golpeado
@@ -551,7 +554,9 @@ function fireTower(
     // Francotirador: impacto instantáneo, ignora esquiva
     for (const t of targets) {
       events.push({ e: 'shot', x: tx, y: ty, tx: t.x, ty: t.y, kind: 'snipe', color });
-      damageEnemy(state, ctx, t, dmgFor(lvl.damage), lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
+      let dmg = dmgFor(lvl.damage);
+      if (ENEMIES[t.type].flying && airBonus > 1) dmg = Math.round(dmg * airBonus);
+      damageEnemy(state, ctx, t, dmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
     }
     return;
   }
@@ -583,6 +588,7 @@ function fireTower(
       groundOnly: !canAir,
       executeCurrent,
       shredChance,
+      airBonus,
     };
     state.projectiles.push(proj);
   }
@@ -616,7 +622,11 @@ function applyPayload(
     }
     enemy.poisonUntil = Math.max(enemy.poisonUntil, state.tick + proj.poison.durationTicks);
   }
-  damageEnemy(state, ctx, enemy, proj.damage, proj.pierceArmor, proj.towerId, events, proj.execute, proj.executeCurrent, proj.shredChance);
+  // F6.2 · bonus antiaéreo (Metralla): se resuelve AQUÍ, por enemigo golpeado —
+  // en un splash mixto solo los voladores reciben el extra.
+  const dmgAmount =
+    proj.airBonus > 1 && ENEMIES[enemy.type].flying ? Math.round(proj.damage * proj.airBonus) : proj.damage;
+  damageEnemy(state, ctx, enemy, dmgAmount, proj.pierceArmor, proj.towerId, events, proj.execute, proj.executeCurrent, proj.shredChance);
 }
 
 function explode(

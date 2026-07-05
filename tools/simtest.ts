@@ -1189,6 +1189,28 @@ console.log('— F5.2 · Madera: el orco leñador tala solo; especializar cuesta
   assert(p.wood < 50 - WOOD_COST_SPEC + 1, `descontó 🪵${WOOD_COST_SPEC} de madera (quedan ${p.wood.toFixed(1)})`);
 }
 
+console.log('— F6.2 · Metralla antiaérea: ×1.5 a voladores, daño normal a tierra —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  // Mide el primer impacto de una Metralla (cañón spec 1) sobre un objetivo dado.
+  function flakHit(type: EnemyTypeId): number {
+    const st = createGame('sendero', 'endless', 'normal', 950, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const enemy = mkEnemy(type, { id: 2600, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5, wpIdx: 1, dodgeBonus: -1 });
+    st.enemies.push(enemy);
+    st.towers.push(mkTower('cannon', { id: 3600, cx: 5, cy: 1, level: 3, spec: 1, invested: 820 }));
+    for (let i = 0; i < TICK_RATE * 2 && enemy.hp === 100000; i++) stepGame(st, simCtx, []);
+    return 100000 - enemy.hp;
+  }
+  // Metralla: daño 52, splash. Contra el Coloso (volador, armadura 2):
+  // round(52×1.5) − 2 = 76. Contra el Bruto (tierra, armadura 2): 52 − 2 = 50.
+  const vsAir = flakHit('skywhale');
+  const vsGround = flakHit('brute');
+  assert(vsAir === 76, `la Metralla hace ×1.5 al Coloso Alado (${vsAir} == 76 por impacto)`);
+  assert(vsGround === 50, `contra tierra el daño es el normal (${vsGround} == 50)`);
+}
+
 console.log('— F5.5 · Orco mejorable: más tala por nivel, coste en oro, tope —');
 {
   const map = getMap('sendero');

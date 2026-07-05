@@ -118,6 +118,7 @@ function specialStats(lvl: TowerLevelDef): string[] {
   if (lvl.auraBounty) out.push(`+${Math.round(lvl.auraBounty * 100)}% oro por baja`);
   if (lvl.charges && lvl.charges > 1) out.push(`${lvl.charges} cargas`);
   if (lvl.shots && lvl.shots > 1) out.push(`${lvl.shots} disparos`);
+  if (lvl.airBonus && lvl.airBonus > 1) out.push(`×${lvl.airBonus} a voladores`);
   if (lvl.pierceArmor) out.push('Antiarmadura');
   if (lvl.minRange) out.push(`Mín. ${lvl.minRange}`);
   return out;
@@ -325,6 +326,7 @@ function statBlock(lvl: TowerLevelDef, next: TowerLevelDef | null, aura?: Client
   if (lvl.poisonBountyMult) lines.push(`Botín <b>×${lvl.poisonBountyMult}</b> por bajas de su veneno`);
   if (lvl.auraBounty) lines.push(stat('Aura de oro', `+${Math.round(lvl.auraBounty * 100)}%`, next?.auraBounty ? `+${Math.round(next.auraBounty * 100)}%` : null));
   if (lvl.incomePerWave) lines.push(stat('Ingreso', `🪙${lvl.incomePerWave}${lvl.incomeToAll ? ' a todos' : ''}`, next?.incomePerWave ? `🪙${next.incomePerWave}` : null));
+  if (lvl.airBonus && lvl.airBonus > 1) lines.push(`Antiaérea: <b>×${lvl.airBonus}</b> de daño a voladores`);
   if (lvl.pierceArmor) lines.push('Perfora armadura');
   return lines;
 }

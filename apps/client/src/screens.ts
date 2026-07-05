@@ -1,6 +1,6 @@
-import { MAPS, type EndStats, type HighscoreEntry, type MapDef, type RoomSettings } from '@td/shared';
+import { MAPS, type EndStats, type HighscoreEntry, type MapDef, type PublicRoomInfo, type RoomSettings } from '@td/shared';
 import { net, wsPathCreate, wsPathJoin } from './net.js';
-import { saveName, store } from './store.js';
+import { roomPrevToken, saveName, store } from './store.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -131,7 +131,7 @@ function setSeg(id: string, value: string, disabled = false): void {
 
 // ---------- inicio ----------
 
-const homeSel: RoomSettings = { mapId: MAPS[0].id, mode: 'classic', difficulty: 'normal' };
+const homeSel: RoomSettings = { mapId: MAPS[0].id, mode: 'classic', difficulty: 'normal', public: false };
 
 export function initHome(): void {
   const nameInput = $<HTMLInputElement>('home-name');
@@ -154,8 +154,13 @@ export function initHome(): void {
     homeSel.difficulty = v as RoomSettings['difficulty'];
     setSeg('home-diff', v);
   });
+  wireSeg('home-visibility', (v) => {
+    homeSel.public = v === 'public';
+    setSeg('home-visibility', v);
+  });
   setSeg('home-mode', homeSel.mode);
   setSeg('home-diff', homeSel.difficulty);
+  setSeg('home-visibility', homeSel.public ? 'public' : 'private');
 
   $('tab-create').addEventListener('click', () => {
     $('tab-create').classList.add('active');
@@ -201,10 +206,21 @@ export function initHome(): void {
     $('tab-join').click();
   }
 
+  // lista de salas públicas: clic en Entrar/Observar une por código (delegación:
+  // las filas se reescriben en cada refresco)
+  $('home-rooms-list').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-code]');
+    if (btn) joinByCode(btn.dataset.code!);
+  });
+  void loadRooms();
+  setInterval(() => void loadRooms(), 4000);
+
   void loadHighscores();
 }
 
-function joinFromInput(): void {
+// Une a una sala por código (desde el input o desde la lista de salas públicas).
+// Si la sala está en partida, el servidor nos hace ESPECTADORES automáticamente.
+function joinByCode(code: string): void {
   const nameInput = $<HTMLInputElement>('home-name');
   const name = nameInput.value.trim();
   if (!name) {
@@ -213,13 +229,57 @@ function joinFromInput(): void {
     return;
   }
   saveName(name);
+  homeError('');
+  net.connect(wsPathJoin(code), { type: 'join_room', name, token: store.token, code, prevToken: roomPrevToken(code) });
+}
+
+function joinFromInput(): void {
   const code = $<HTMLInputElement>('home-code').value.trim().toUpperCase();
   if (code.length !== 4) {
     homeError('El código tiene 4 letras');
     return;
   }
-  homeError('');
-  net.connect(wsPathJoin(code), { type: 'join_room', name, token: store.token, code });
+  joinByCode(code);
+}
+
+// ---------- salas públicas (F5) ----------
+
+async function loadRooms(): Promise<void> {
+  // solo con la portada visible (ni en lobby/partida ni con la pestaña oculta)
+  if (store.screen !== 'home' || document.hidden) return;
+  try {
+    const res = await fetch('/api/rooms');
+    if (!res.ok) {
+      // backend sin directorio (p. ej. el servidor Node): ocultar la sección
+      $('home-rooms').hidden = true;
+      return;
+    }
+    const rooms = (await res.json()) as PublicRoomInfo[];
+    $('home-rooms').hidden = false;
+    renderRooms(Array.isArray(rooms) ? rooms : []);
+  } catch {
+    // error transitorio de red: conservar lo que hubiera en pantalla
+  }
+}
+
+function renderRooms(rooms: PublicRoomInfo[]): void {
+  $('home-rooms-empty').hidden = rooms.length > 0;
+  $('home-rooms-list').innerHTML = rooms
+    .slice(0, 12)
+    .map((r) => {
+      const mapName = MAPS.find((m) => m.id === r.mapId)?.name ?? r.mapId;
+      const state = r.inGame
+        ? `<span class="room-state ingame">⚔️ Oleada ${r.wave}</span>`
+        : '<span class="room-state lobby">🟢 En el lobby</span>';
+      return `<li class="room-row">
+        <div class="room-info">
+          ${state}
+          <span class="room-meta"><b>${escapeHtml(r.host)}</b> · ${mapName} · ${MODE_LABELS[r.mode]} · ${DIFF_LABELS[r.difficulty]} · 👥 ${r.players}</span>
+        </div>
+        <button class="btn small ${r.inGame ? 'ghost' : 'primary'}" data-code="${r.code}">${r.inGame ? '👁 Observar' : '⚔️ Entrar'}</button>
+      </li>`;
+    })
+    .join('');
 }
 
 async function loadHighscores(): Promise<void> {
@@ -254,6 +314,7 @@ function sendSettings(patch: Partial<RoomSettings>): void {
 export function initLobby(): void {
   wireSeg('lobby-mode', (v) => sendSettings({ mode: v as RoomSettings['mode'] }));
   wireSeg('lobby-diff', (v) => sendSettings({ difficulty: v as RoomSettings['difficulty'] }));
+  wireSeg('lobby-visibility', (v) => sendSettings({ public: v === 'public' }));
 
   $('btn-start').addEventListener('click', () => net.send({ type: 'start_game' }));
   $('btn-leave').addEventListener('click', () => {
@@ -303,6 +364,7 @@ export function renderLobby(): void {
   $('lobby-map-desc').textContent = mapDesc(settings.mapId);
   setSeg('lobby-mode', settings.mode, !store.isHost);
   setSeg('lobby-diff', settings.difficulty, !store.isHost);
+  setSeg('lobby-visibility', settings.public ? 'public' : 'private', !store.isHost);
   $('btn-start').hidden = !store.isHost;
   $('lobby-wait').hidden = store.isHost;
 }

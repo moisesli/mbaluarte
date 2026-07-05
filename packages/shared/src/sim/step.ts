@@ -33,6 +33,9 @@ import {
   TICK_RATE,
   WAVE_BONUS_BASE,
   WAVE_BONUS_PER_WAVE,
+  WOOD_COST_RANK2,
+  WOOD_COST_SPEC,
+  WOOD_PER_SEC,
 } from '../constants.js';
 import { rand } from '../rng.js';
 import { dist, pathLength, pathWaypoints, type PlacementContext } from './grid.js';
@@ -158,18 +161,23 @@ function makeBlessed(enemy: EnemyState, affix: AffixId): void {
 // Multiplicador de bounty del Alquimista para una posición (la del enemigo al
 // morir). Escanea las torres tipo Alquimista (con `auraBounty`) cuyo radio cubre
 // el punto y toma el MEJOR (+30% base, más en specs) — NO apila. Determinista:
-// orden estable de `state.towers`, sin RNG. 1 = sin Alquimista cerca.
-function bountyMultAt(state: GameState, x: number, y: number): number {
+// orden estable de `state.towers`, sin RNG. mult 1 / tower null = sin Alquimista.
+// Devuelve también la torre ganadora para acreditarle el oro extra (goldGen).
+function bountyMultAt(state: GameState, x: number, y: number): { mult: number; tower: TowerState | null } {
   let best = 1;
+  let bestTower: TowerState | null = null;
   for (const t of state.towers) {
     const lvl = statsOf(t);
     const bonus = lvl.auraBounty;
     if (bonus === undefined || bonus <= 0) continue;
     if (dist(t.cx + 0.5, t.cy + 0.5, x, y) > lvl.range) continue;
     const mult = 1 + bonus;
-    if (mult > best) best = mult;
+    if (mult > best) {
+      best = mult;
+      bestTower = t;
+    }
   }
-  return best;
+  return { mult: best, tower: bestTower };
 }
 
 // `viaPoison`: la baja la causó un tick de DoT (veneno) — lo pasa stepEnemies.
@@ -187,12 +195,14 @@ function killEnemy(
   const tower = state.towers.find((t) => t.id === killerTowerId);
   // Aura del Alquimista: si la posición donde muere el enemigo está cubierta por
   // un Alquimista, su bounty gana +30% (o más en spec). No apila.
-  const alchemistMult = bountyMultAt(state, enemy.x, enemy.y);
+  const alch = bountyMultAt(state, enemy.x, enemy.y);
   // Piedra Filosofal (F4.3): las bajas por SU veneno pagan botín multiplicado.
   // Orden de multiplicadores (un solo redondeo al final):
   //   base × bountyMult (oleada/élite/bendición) × aura Alquimista × Piedra Filosofal.
   const poisonMult = viaPoison && tower ? (statsOf(tower).poisonBountyMult ?? 1) : 1;
-  const bounty = Math.round(def.bounty * enemy.bountyMult * alchemistMult * poisonMult);
+  const bounty = Math.round(def.bounty * enemy.bountyMult * alch.mult * poisonMult);
+  // parte del botín que puso el aura del Alquimista (vs el mismo botín sin ella)
+  const alchExtra = alch.tower ? Math.max(0, bounty - Math.round(def.bounty * enemy.bountyMult * poisonMult)) : 0;
   let killerName = '';
   if (tower) {
     tower.kills += 1;
@@ -202,9 +212,20 @@ function killEnemy(
       owner.stats.goldEarned += bounty;
       owner.stats.kills += 1;
       killerName = owner.id;
+      // acreditar el EXTRA al Alquimista que cubrió la baja (solo si se pagó)
+      if (alch.tower && alchExtra > 0) alch.tower.goldGen += alchExtra;
     }
   }
-  events.push({ e: 'death', x: enemy.x, y: enemy.y, type: enemy.type, bounty, killer: killerName, elite: enemy.elite });
+  events.push({
+    e: 'death',
+    x: enemy.x,
+    y: enemy.y,
+    type: enemy.type,
+    bounty,
+    killer: killerName,
+    elite: enemy.elite,
+    ...(alchExtra > 0 && killerName ? { alch: alchExtra } : {}),
+  });
   const spawns: { type: EnemyTypeId; count: number }[] = [];
   if (def.spawnOnDeath) spawns.push(def.spawnOnDeath);
   // afijo explosivo: suelta larvas al morir (además de lo que ya suelte el tipo)
@@ -1119,6 +1140,16 @@ export function stepGame(
       msg: '🛡 Las oleadas múltiplos de 5 (desde la 10) son INMUNES a la magia: ten daño físico de reserva. ☠ Los jefes llegan cada 10 (la Quimera voladora en la 15/25/35).',
     });
   }
+  if (state.tick === 0) {
+    events.push({
+      e: 'sys',
+      msg: `🪵 Tu orco leñador tala madera sin parar (+${WOOD_PER_SEC}/s). La necesitas para ★especializar (${WOOD_COST_SPEC}) y el ★★Rango II (${WOOD_COST_RANK2}).`,
+    });
+  }
+  // F5.2 · madera: el orco leñador de cada jugador tala automáticamente. Aritmética
+  // pura por tick (determinista); también para desconectados, como el ingreso de
+  // las minas — su economía no se congela por un F5.
+  for (const p of state.players) p.wood += WOOD_PER_SEC / TICK_RATE;
   applyCommands(state, ctx.map, ctx.placement, commands, events);
   stepWaves(state, ctx, events);
   stepTowerAuras(state);

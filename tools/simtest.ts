@@ -27,6 +27,10 @@ import {
   TICK_RATE,
   TOWERS,
   TOWER_ORDER,
+  START_WOOD,
+  WOOD_COST_RANK2,
+  WOOD_COST_SPEC,
+  WOOD_PER_SEC,
   type EnemyState,
   type EnemyTypeId,
   type FusionId,
@@ -41,7 +45,7 @@ import {
 
 const MAP_ID = 'sendero';
 const SEED = 123456789;
-const MAX_TICKS = TICK_RATE * 60 * 12; // 12 minutos de juego
+const MAX_TICKS = TICK_RATE * 60 * 40; // 40 minutos de juego (el clásico ahora son 36 oleadas)
 
 // Fábricas para pruebas dirigidas (construir estado a mano sin repetir 25 campos).
 function mkEnemy(type: EnemyTypeId, over: Partial<EnemyState> = {}): EnemyState {
@@ -59,7 +63,7 @@ function mkTower(type: TowerTypeId, over: Partial<TowerState> = {}): TowerState 
   return {
     id: 2000, type, cx: 5, cy: 1, level: 3, spec: -1, owner: 'p1',
     cooldownLeft: 0, targetMode: 'first', invested: 100, kills: 0, damage: 0, stunnedUntil: 0,
-    charges: 0, growthBonus: 0, fusion: -1,
+    charges: 0, growthBonus: 0, goldGen: 0, fusion: -1,
     ...over,
   };
 }
@@ -103,6 +107,7 @@ function botCommands(
   const used = new Set(state.towers.map((t) => `${t.cx},${t.cy}`));
   for (const player of state.players) {
     let budget = player.gold; // oro disponible tras las órdenes de este tick
+    let woodBudget = player.wood; // madera disponible (F5.2: specs y Rango II la cuestan)
 
     // F4.3 · FUSIONAR (máx. una por tick): dos torres propias ESPECIALIZADAS,
     // adyacentes (Chebyshev 1) y con receta → fuse (se queda en la celda de la 1ª).
@@ -157,10 +162,11 @@ function botCommands(
       if (maxed) {
         const specIdx = maxed.id % 2;
         const specCost = TOWERS[maxed.type].specs[specIdx].cost;
-        if (budget >= specCost) {
+        if (budget >= specCost && woodBudget >= WOOD_COST_SPEC) {
           cmds.push({ playerId: player.id, cmd: { kind: 'specialize', towerId: maxed.id, spec: specIdx } });
           maxed.spec = specIdx;
           budget -= specCost;
+          woodBudget -= WOOD_COST_SPEC;
           continue;
         }
       }
@@ -169,10 +175,11 @@ function botCommands(
       const r2able = mine.find((t) => t.level === 3 && t.spec >= 0 && hasRank2(t.type, t.spec));
       if (r2able) {
         const r2cost = rank2Cost(r2able.type, r2able.spec) ?? Infinity;
-        if (budget >= r2cost) {
+        if (budget >= r2cost && woodBudget >= WOOD_COST_RANK2) {
           cmds.push({ playerId: player.id, cmd: { kind: 'upgrade', towerId: r2able.id } });
           r2able.level = 4;
           budget -= r2cost;
+          woodBudget -= WOOD_COST_RANK2;
           continue;
         }
       }
@@ -390,6 +397,8 @@ assert(
   a.state.over?.victory === true,
   `los bots GANAN el clásico en normal (oleada ${a.maxWave}, ${a.state.lives} vidas, over=${JSON.stringify(a.state.over)})`,
 );
+// F5.2: el clásico dura 36 oleadas, como Green TD
+assert(a.state.totalWaves === 36 && a.maxWave >= 36, `el clásico dura 36 oleadas (jugadas ${a.maxWave}/${a.state.totalWaves})`);
 assert((a.eventCounts.get('wave_end') ?? 0) >= 4, 'se completan oleadas');
 assert((a.eventCounts.get('hit') ?? 0) > 50, 'hay impactos de proyectiles');
 assert((a.eventCounts.get('chain') ?? 0) > 0, 'la torre tesla dispara cadenas');
@@ -437,7 +446,7 @@ console.log('— Regresión: las crías de spawnOnDeath sobreviven a un golpe de
   const cannon: TowerState = {
     id: 2000, type: 'cannon', cx: 5, cy: 1, level: 3, spec: -1, owner: 'p1',
     cooldownLeft: 0, targetMode: 'first', invested: 440, kills: 0, damage: 0, stunnedUntil: 0,
-    charges: 0, growthBonus: 0, fusion: -1,
+    charges: 0, growthBonus: 0, goldGen: 0, fusion: -1,
   };
   st.towers.push(cannon);
 
@@ -479,14 +488,14 @@ console.log('— Estandarte: refuerza el daño de las torres cercanas (sin apila
     const archer: TowerState = {
       id: 2000, type: 'archer', cx: 5, cy: 1, level: 1, spec: -1, owner: 'p1',
       cooldownLeft: 0, targetMode: 'first', invested: 50, kills: 0, damage: 0, stunnedUntil: 0,
-      charges: 0, growthBonus: 0, fusion: -1,
+      charges: 0, growthBonus: 0, goldGen: 0, fusion: -1,
     };
     st.towers.push(archer);
     for (let i = 0; i < banners; i++) {
       st.towers.push({
         id: 3000 + i, type: 'banner', cx: 6 + i, cy: 1, level: 1, spec: -1, owner: 'p1',
         cooldownLeft: 0, targetMode: 'first', invested: 90, kills: 0, damage: 0, stunnedUntil: 0,
-        charges: 0, growthBonus: 0, fusion: -1,
+        charges: 0, growthBonus: 0, goldGen: 0, fusion: -1,
       });
     }
     // un tick: el arquero está listo y dispara; leemos el proyectil emitido
@@ -1137,6 +1146,37 @@ console.log('— F4.4 · Barril explosivo: los voladores NI lo disparan NI lo su
   assert(placementError(map, ctx, [], off[0], off[1], 'boom') === 'fuera_camino', 'el Barril NO se coloca fuera del camino');
 }
 
+console.log('— F5.2 · Madera: el orco leñador tala solo; especializar cuesta madera —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 800, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const p = st.players[0];
+  assert(p.wood === START_WOOD, `se empieza con 🪵${START_WOOD} de madera (${p.wood})`);
+
+  // tala pasiva: 5 segundos de sim → +WOOD_PER_SEC*5, sin construir nada
+  for (let i = 0; i < TICK_RATE * 5; i++) stepGame(st, simCtx, []);
+  const expected = START_WOOD + WOOD_PER_SEC * 5;
+  assert(Math.abs(p.wood - expected) < 0.01, `el orco tala solo: ${p.wood.toFixed(2)} ≈ ${expected.toFixed(2)} tras 5 s`);
+
+  // especializar SIN madera suficiente: rechazo claro y la torre queda intacta
+  const archer = mkTower('archer', { id: 4000, cx: 5, cy: 1, level: 3, owner: 'p1', invested: 235 });
+  st.towers.push(archer);
+  p.gold = 10000;
+  p.wood = 10;
+  let events = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'specialize', towerId: 4000, spec: 0 } }]);
+  const rej = events.find((e) => e.e === 'reject');
+  assert(rej !== undefined && rej.e === 'reject' && rej.reason.includes('madera'), `sin madera, especializar se RECHAZA (${rej && rej.e === 'reject' ? rej.reason : 'sin reject'})`);
+  assert(archer.spec === -1, 'la torre queda sin especializar tras el rechazo');
+
+  // CON madera: se especializa y descuenta el coste
+  p.wood = 50;
+  events = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'specialize', towerId: 4000, spec: 0 } }]);
+  assert(archer.spec === 0, 'con madera suficiente, la especialización procede');
+  assert(p.wood < 50 - WOOD_COST_SPEC + 1, `descontó 🪵${WOOD_COST_SPEC} de madera (quedan ${p.wood.toFixed(1)})`);
+}
+
 console.log('— F4.2 · Alquimista: +30% de bounty en su radio, sin apilar —');
 {
   const map = getMap('sendero');
@@ -1165,6 +1205,26 @@ console.log('— F4.2 · Alquimista: +30% de bounty en su radio, sin apilar —'
   assert(base > 0, `matar da bounty base (${base})`);
   assert(withOne === Math.round(base * 1.3), `el Alquimista sube el bounty ×1.3 (${base} → ${withOne})`);
   assert(withTwo === withOne, `dos Alquimistas NO apilan: mismo bounty que uno (${withOne} == ${withTwo})`);
+}
+
+console.log('— F5.3 · Alquimista: acumula el oro EXTRA (goldGen) y la baja viene marcada (⚗) —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 711, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const enemy = mkEnemy('goblin', { id: 2350, hp: 5, maxHp: 32, x: 5.5, y: 2.5, wpIdx: 1 });
+  st.enemies.push(enemy);
+  st.towers.push(mkTower('archer', { id: 3210, cx: 5, cy: 1, level: 3, invested: 200 }));
+  const alch = mkTower('alchemist', { id: 3310, cx: 5, cy: 3, level: 1, spec: -1, invested: 120 });
+  st.towers.push(alch);
+  let deathAlch = 0;
+  for (let i = 0; i < TICK_RATE * 2 && st.enemies.some((e) => e.id === 2350); i++) {
+    const events = stepGame(st, simCtx, []);
+    for (const ev of events) if (ev.e === 'death' && ev.type === 'goblin') deathAlch = ev.alch ?? 0;
+  }
+  assert(deathAlch > 0, `la baja dentro del anillo viene marcada con su extra (alch=${deathAlch})`);
+  assert(alch.goldGen === deathAlch, `el Alquimista ACUMULA el oro extra en goldGen (${alch.goldGen} == ${deathAlch})`);
 }
 
 console.log('— F4.2 · Rango II de ejecución: remata al 75% de la vida ACTUAL, NO a un inmune —');

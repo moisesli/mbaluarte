@@ -3,7 +3,7 @@ export const TICK_MS = 1000 / TICK_RATE;
 export const INTERP_DELAY_MS = 120; // el cliente renderiza este delay por detrás para interpolar
 
 export const MAX_PLAYERS = 8;
-export const CLASSIC_WAVES = 20;
+export const CLASSIC_WAVES = 36; // como en Green TD (antes 20)
 // Velocidades de simulación que puede elegir el anfitrión (steps por tick de red).
 export const GAME_SPEEDS = [1, 2, 3] as const;
 
@@ -64,6 +64,16 @@ export const SHRED_DURATION = 4; // segundos que dura el shred (armadura a la mi
 // Rango II · Arco Largo/Explorador II: crecimiento permanente por disparo.
 export const GROWTH_PER_SHOT = 8; // +8 de daño base por cada disparo, para siempre
 
+// ---------- F5.2 · madera (economía secundaria estilo Green TD) ----------
+// Cada jugador tiene un orco leñador implícito que tala madera AUTOMÁTICAMENTE,
+// sin construir nada (como el peón de Green TD). El oro compra torres; la madera
+// compra PODER: las ★especializaciones y el ★★Rango II cuestan madera además de
+// oro. (Un edificio que acelere la tala puede venir en una iteración futura.)
+export const WOOD_PER_SEC = 0.4; // tala del orco (madera/segundo, por jugador)
+export const START_WOOD = 30; // madera inicial
+export const WOOD_COST_SPEC = 45; // coste en madera de una especialización (★)
+export const WOOD_COST_RANK2 = 60; // coste en madera del Rango II (★★)
+
 // oro de entrada para quien se une con la partida ya empezada
 export const midJoinGold = (wave: number) => 180 + wave * 22;
 
@@ -99,5 +109,5 @@ export const PLAYER_COLORS = [
   '#e57373', // rojo
 ];
 
-export const BALANCE_VERSION = 8; // F4.4b: el Barril ELIMINA a los no-jefes del área (jefes: solo daño)
+export const BALANCE_VERSION = 9; // F5.2: madera (specs/Rango II cuestan 🪵) + clásico a 36 oleadas
 export const PROTOCOL_VERSION = 1;

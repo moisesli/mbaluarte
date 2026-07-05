@@ -17,11 +17,18 @@
     "run_worker_first": ["/api/*", "/ws"]
   },
 
-  // Una sala en tiempo real = un Durable Object (RoomDO).
+  // Una sala en tiempo real = un Durable Object (RoomDO). El directorio de salas
+  // publicas (F5) es OTRO DO unico (DirectoryDO, idFromName 'v1'), solo memoria.
   "durable_objects": {
-    "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }]
+    "bindings": [
+      { "name": "ROOM", "class_name": "RoomDO" },
+      { "name": "DIRECTORY", "class_name": "DirectoryDO" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RoomDO"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RoomDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["DirectoryDO"] }
+  ],
 
   "observability": { "enabled": true },
 

@@ -36,7 +36,7 @@
             <div class="grow">
               <p class="field-label">Modo</p>
               <div id="home-mode" class="seg">
-                <button data-value="classic" class="active">Clásico<small>20 oleadas</small></button>
+                <button data-value="classic" class="active">Clásico<small>36 oleadas</small></button>
                 <button data-value="endless">Infinito<small>récords</small></button>
                 <button data-value="horde">Horda 🌀<small>récords</small></button>
               </div>
@@ -47,6 +47,12 @@
             <button data-value="easy">😊 Fácil</button>
             <button data-value="normal" class="active">🙂 Normal</button>
             <button data-value="hard">😈 Difícil</button>
+          </div>
+
+          <p class="field-label">Visibilidad</p>
+          <div id="home-visibility" class="seg">
+            <button data-value="private" class="active">🔒 Privada<small>solo con el código</small></button>
+            <button data-value="public">🌐 Pública<small>aparece en la lista</small></button>
           </div>
 
           <button id="btn-create" class="btn primary big">⚔️ Crear sala</button>
@@ -60,6 +66,12 @@
         </div>
 
         <p id="home-error" class="error" hidden></p>
+
+        <div id="home-rooms" class="rooms">
+          <h3>🌐 Salas públicas</h3>
+          <ul id="home-rooms-list" class="room-list"></ul>
+          <p id="home-rooms-empty" class="hint">No hay salas públicas ahora mismo — crea una y márcala «🌐 Pública».</p>
+        </div>
 
         <div id="home-scores" class="scores" hidden>
           <h3>🏆 Récords (Infinito / Horda)</h3>
@@ -95,7 +107,7 @@
               <div class="grow">
                 <h3>Modo</h3>
                 <div id="lobby-mode" class="seg">
-                  <button data-value="classic">Clásico<small>20 oleadas</small></button>
+                  <button data-value="classic">Clásico<small>36 oleadas</small></button>
                   <button data-value="endless">Infinito<small>récords</small></button>
                   <button data-value="horde">Horda 🌀<small>récords</small></button>
                 </div>
@@ -106,6 +118,11 @@
               <button data-value="easy">😊 Fácil</button>
               <button data-value="normal">🙂 Normal</button>
               <button data-value="hard">😈 Difícil</button>
+            </div>
+            <h3>Visibilidad</h3>
+            <div id="lobby-visibility" class="seg">
+              <button data-value="private">🔒 Privada<small>solo con el código</small></button>
+              <button data-value="public">🌐 Pública<small>aparece en la lista</small></button>
             </div>
 
             <button id="btn-start" class="btn primary big">▶ ¡Empezar partida!</button>
@@ -134,6 +151,7 @@
           <span id="hud-lives" class="stat">❤️ 20</span>
           <span id="hud-wave" class="stat">Oleada 0</span>
           <span id="hud-gold" class="stat gold">🪙 0</span>
+          <span id="hud-wood" class="stat wood" title="Madera: tu orco leñador la tala sin parar. Especializar (★) cuesta 🪵45 y el Rango II (★★) 🪵60.">🪵 0</span>
           <span id="hud-alive" class="stat" hidden>👾 0</span>
         </div>
         <div class="hud-group">

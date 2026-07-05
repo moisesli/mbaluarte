@@ -21,6 +21,10 @@ export interface RoomSettings {
   mapId: string;
   mode: GameMode;
   difficulty: Difficulty;
+  // F5 · sala PÚBLICA: aparece en la lista de salas de la portada (con partida en
+  // curso se puede entrar a mirar). Opcional para no romper clientes viejos;
+  // sanitizeSettings lo normaliza (por defecto: privada).
+  public?: boolean;
 }
 
 export interface LobbyPlayer {
@@ -37,7 +41,19 @@ export function sanitizeSettings(s: Partial<RoomSettings> | undefined): RoomSett
   const mapId = s?.mapId && MAPS.some((m) => m.id === s.mapId) ? s.mapId : MAPS[0].id;
   const mode: GameMode = s?.mode === 'endless' ? 'endless' : s?.mode === 'horde' ? 'horde' : 'classic';
   const difficulty = s?.difficulty === 'easy' || s?.difficulty === 'hard' ? s.difficulty : 'normal';
-  return { mapId, mode, difficulty };
+  return { mapId, mode, difficulty, public: s?.public === true };
+}
+
+// F5 · entrada del directorio de salas públicas (GET /api/rooms en el Worker).
+export interface PublicRoomInfo {
+  code: string;
+  host: string; // nombre del anfitrión
+  mapId: string;
+  mode: GameMode;
+  difficulty: Difficulty;
+  players: number; // jugadores conectados
+  inGame: boolean; // true = partida en curso (se entra como espectador)
+  wave: number; // oleada actual (0 en el lobby)
 }
 
 // ---------- Snapshot compacto (arrays para ahorrar bytes) ----------
@@ -45,21 +61,23 @@ export function sanitizeSettings(s: Partial<RoomSettings> | undefined): RoomSett
 // enemigo: [id, typeIdx, x, y, hpFrac, flags, affixMask]
 //   flags: 1=slow 2=poison 4=boss 8=elite 16=inmune 32=shred   affixMask: bits de balance/affixes
 export type SnapEnemy = [number, number, number, number, number, number, number];
-// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec, stunned, charges, growth, fusion, invested]
+// torre: [id, typeIdx, cx, cy, level, ownerIdx, targetModeIdx, kills, damage, spec, stunned, charges, growth, fusion, invested, goldGen]
 //   spec: -1 sin especializar, 0/1 rama; stunned: 0/1; charges: Trampa (0 = N/A);
 //   growth: bono de crecimiento permanente (Arco Largo/Explorador II; 0 = N/A);
 //   fusion: índice en FUSION_ORDER (−1 = sin fusión); invested: oro invertido total
 //   (el panel lo usa para el valor de venta de las fusiones, cuya inversión real
-//   no puede reconstruirse desde type/level/spec)
-//   (los campos F4.2 charges/growth y F4.3 fusion/invested van al FINAL para no
-//   romper índices previos)
-export type SnapTower = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
+//   no puede reconstruirse desde type/level/spec);
+//   goldGen: oro EXTRA que el aura del Alquimista añadió a los botines (F5.3)
+//   (los campos F4.2 charges/growth, F4.3 fusion/invested y F5.3 goldGen van al
+//   FINAL para no romper índices previos)
+export type SnapTower = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
 // proyectil: [id, kindIdx(0 bullet,1 shell,2 bomb), x, y, colorIdx(=typeIdx de torre)]
 export type SnapProj = [number, number, number, number, number];
 
 export interface SnapPlayer {
   id: string;
   gold: number;
+  wood: number; // F5.2 · madera talada por su orco leñador
   connected: boolean;
   kills: number;
   damage: number;
@@ -110,6 +128,7 @@ export function buildSnap(state: GameState): Snap {
     players: state.players.map((p) => ({
       id: p.id,
       gold: Math.floor(p.gold),
+      wood: Math.floor(p.wood),
       connected: p.connected,
       kills: p.stats.kills,
       damage: Math.round(p.stats.damage),
@@ -151,6 +170,7 @@ export function buildSnap(state: GameState): Snap {
           Math.round(t.growthBonus),
           t.fusion,
           Math.round(t.invested),
+          Math.round(t.goldGen),
         ] as SnapTower,
     ),
     projs: state.projectiles.map((p) => {
@@ -205,7 +225,13 @@ export interface HighscoreEntry {
 
 export type ClientMsg =
   | { type: 'create_room'; name: string; token: string; settings: RoomSettings }
-  | { type: 'join_room'; name: string; token: string; code: string }
+  // `prevToken`: respaldo de identidad. El token vive en sessionStorage (una
+  // identidad por pestaña), pero los móviles lo pierden con facilidad (pestaña
+  // descartada, reabrir desde el enlace). El cliente guarda en localStorage el
+  // token con el que jugó cada sala y lo manda aquí: si el token nuevo no
+  // coincide con nadie, el servidor recupera al jugador DESCONECTADO cuyo token
+  // era `prevToken` en vez de degradarlo a espectador.
+  | { type: 'join_room'; name: string; token: string; code: string; prevToken?: string }
   | { type: 'leave_room' }
   | { type: 'set_settings'; settings: RoomSettings }
   | { type: 'start_game' }

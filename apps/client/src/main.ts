@@ -1,7 +1,7 @@
 import './style.css';
 import { ENEMIES, ENEMY_ORDER, FUSIONS, GAME_SPEEDS, START_LIVES, TOWERS, type GameEvent, type Snap } from '@td/shared';
 import { net, wsPathJoin } from './net.js';
-import { pushFrame, saveName, startGameStore, store } from './store.js';
+import { pushFrame, roomPrevToken, saveName, saveRoomToken, startGameStore, store } from './store.js';
 import { addPing, addShake, initRenderer, isMinimapOn, resetRenderer, toggleMinimap, towerFired } from './renderer.js';
 import { initInput } from './input.js';
 import { initBestiary } from './bestiary.js';
@@ -73,7 +73,15 @@ function processEvents(events: GameEvent[]): void {
         if (ev.bounty > 0) {
           const killerColor =
             gs.init.players.find((p) => p.id === ev.killer)?.color ?? '#ffd54f';
-          floatText(ev.x, ev.y - 0.3, `+${ev.bounty}`, killerColor, ev.elite ? 15 : 13);
+          // botín aumentado por un Alquimista: en verde y con ⚗, que se note
+          const boosted = (ev.alch ?? 0) > 0;
+          floatText(
+            ev.x,
+            ev.y - 0.3,
+            boosted ? `+${ev.bounty} ⚗` : `+${ev.bounty}`,
+            boosted ? '#81c784' : killerColor,
+            boosted ? 14 : ev.elite ? 15 : 13,
+          );
         }
         // firma de muerte según jerarquía: jefe (percusión) > élite (sting) > resto.
         if (def.boss) sfx.bossDeath(pan);
@@ -204,12 +212,17 @@ function wireNet(): void {
     store.spectator = msg.spectator ?? false;
     history.replaceState(null, '', `#${msg.code}`);
     $('overlay-reconnect').hidden = true;
+    // entramos como JUGADOR: respaldar el token de esta sala en localStorage para
+    // poder recuperar la identidad si el móvil pierde el sessionStorage (NUNCA
+    // al entrar de espectador: pisaría el respaldo bueno del jugador)
+    if (!msg.spectator) saveRoomToken(msg.code);
     // a partir de ahora, cualquier reconexión se une a esta sala por su código
     net.setReconnect(wsPathJoin(msg.code), {
       type: 'join_room',
       name: store.name,
       token: store.token,
       code: msg.code,
+      prevToken: roomPrevToken(msg.code),
     });
     if (store.screen === 'home') switchScreen('lobby');
   });
@@ -544,6 +557,7 @@ switchScreen('home');
       name: store.name,
       token: store.token,
       code: hashCode,
+      prevToken: roomPrevToken(hashCode),
     });
   }
 }

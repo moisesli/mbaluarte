@@ -46,7 +46,7 @@ function applyRosterAt(state: GameState, data: ReplayData, atTick: number): void
     if (e.kind === 'join') {
       // no duplicar si ya existe (por seguridad ante logs raros)
       if (!state.players.some((p) => p.id === e.player.id)) {
-        state.players.push(makePlayer(e.player, e.gold));
+        state.players.push(makePlayer(e.player, e.gold, e.wood));
       }
     } else if (e.kind === 'conn') {
       const gp = state.players.find((p) => p.id === e.playerId);

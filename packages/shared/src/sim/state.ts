@@ -4,6 +4,7 @@ import {
   FIRST_INTERLUDE_SEC,
   START_GOLD,
   START_LIVES,
+  START_WOOD,
   TICK_RATE,
 } from '../constants.js';
 
@@ -13,12 +14,13 @@ export interface NewPlayerInput {
   color: string;
 }
 
-export function makePlayer(input: NewPlayerInput, gold: number): PlayerState {
+export function makePlayer(input: NewPlayerInput, gold: number, wood = START_WOOD): PlayerState {
   return {
     id: input.id,
     name: input.name,
     color: input.color,
     gold,
+    wood,
     connected: true,
     stats: { kills: 0, damage: 0, goldEarned: 0, goldSpent: 0, towersBuilt: 0 },
   };

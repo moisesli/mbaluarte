@@ -238,6 +238,10 @@ export interface TowerState {
   // --- F4.2 ---
   charges: number; // Trampa de púas: golpes restantes; a 0 se auto-vende. Otras torres: 0
   growthBonus: number; // *Arco Largo/Explorador II*: +daño base acumulado por disparo (crecimiento permanente)
+  // --- F5.3 ---
+  // Alquimista: oro EXTRA acumulado que su aura añadió a los botines (la parte
+  // del bonus, no el botín entero). Demuestra en el panel si su posición paga.
+  goldGen: number;
   // --- F4.3 ---
   // Índice en FUSION_ORDER de la fusión de esta torre; −1 = torre normal. Una torre
   // fusionada conserva su `type` (el de la celda elegida) SOLO para arte/compat: todo
@@ -282,6 +286,9 @@ export interface PlayerState {
   name: string;
   color: string;
   gold: number;
+  // F5.2 · madera: la tala el orco leñador implícito de cada jugador (+WOOD_PER_SEC
+  // por segundo, automática); paga especializaciones (★) y Rango II (★★).
+  wood: number;
   connected: boolean;
   stats: PlayerStats;
 }
@@ -370,8 +377,9 @@ export interface ReplayPlayer {
 export type ReplayEntry =
   // un comando aplicado por un jugador en el tick `t`
   | { t: number; kind: 'cmd'; playerId: string; cmd: Command }
-  // un jugador entra a mitad de partida en el tick `t` (con su oro exacto de midJoin)
-  | { t: number; kind: 'join'; player: ReplayPlayer; gold: number }
+  // un jugador entra a mitad de partida en el tick `t` (con su oro exacto de midJoin;
+  // `wood` opcional para replays previos a F5.2)
+  | { t: number; kind: 'join'; player: ReplayPlayer; gold: number; wood?: number }
   // cambio de conexión de un jugador en el tick `t` (afecta a connectedCount)
   | { t: number; kind: 'conn'; playerId: string; connected: boolean };
 
@@ -395,7 +403,9 @@ export type GameEvent =
   | { e: 'chain'; pts: [number, number][]; color: string }
   | { e: 'hit'; x: number; y: number; r: number; kind: 'splash' | 'impact' | 'poison' | 'frost' }
   | { e: 'shred'; x: number; y: number; r: number } // proc de shred de armadura (Obús/Metralla II)
-  | { e: 'death'; x: number; y: number; type: EnemyTypeId; bounty: number; killer: string; elite: boolean }
+  // `alch`: parte del botín añadida por un aura de Alquimista (ausente/0 = sin
+  // bonus). El cliente la usa para destacar el botín aumentado (⚗ en verde).
+  | { e: 'death'; x: number; y: number; type: EnemyTypeId; bounty: number; killer: string; elite: boolean; alch?: number }
   | { e: 'miss'; x: number; y: number }
   | { e: 'leak'; lives: number; type: EnemyTypeId }
   | { e: 'steal'; gold: number; x: number; y: number } // el Ladrón escapó y robó oro

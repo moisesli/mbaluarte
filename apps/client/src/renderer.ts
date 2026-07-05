@@ -235,10 +235,30 @@ export function panBy(dx: number, dy: number): void {
   view.oy += dy;
 }
 
+// Cámara inicial estilo Green TD: NO se muestra todo el mapa de golpe — se
+// arranca ACERCADO (×1.6) sobre la entrada de los enemigos, que es donde se
+// construye al principio. El resto del mapa se explora paneando, con pellizco/
+// rueda (el zoom mínimo sigue mostrando el mapa entero) o con el minimapa, que
+// así recupera su razón de ser. El doble tap vuelve a ESTA vista.
+const START_ZOOM = 1.6;
+// centro pendiente de aplicar: computeView lo consume cuando ya conoce el
+// baseScale real del frame (aplicarlo aquí usaría una escala desfasada)
+let pendingCenter: { x: number; y: number } | null = null;
+
 export function resetCamera(): void {
-  zoom = 1;
+  const gs = store.game;
+  if (!gs) {
+    zoom = 1;
+    panX = 0;
+    panY = 0;
+    pendingCenter = null;
+    return;
+  }
+  zoom = START_ZOOM;
   panX = 0;
   panY = 0;
+  const [c, r] = gs.map.paths[0][0];
+  pendingCenter = { x: c + 0.5, y: r + 0.5 };
 }
 
 // Centra la cámara sobre un punto del mundo (celdas). Ajusta panX/panY; el
@@ -385,6 +405,14 @@ function computeView(map: MapDef): void {
   const availW = w - PAD_SIDE * 2;
   const availH = h - PAD_TOP - PAD_BOTTOM;
   baseScale = Math.max(6, Math.min(availW / map.gridW, availH / map.gridH));
+  // centro diferido de resetCamera: se aplica con el baseScale fresco de ESTE
+  // frame (el clampeo de abajo lo recorta a los bordes del mapa)
+  if (pendingCenter) {
+    const s0 = baseScale * zoom;
+    panX = (map.gridW * s0) / 2 - pendingCenter.x * s0;
+    panY = (map.gridH * s0) / 2 - pendingCenter.y * s0;
+    pendingCenter = null;
+  }
   const s = baseScale * zoom;
   const mapW = map.gridW * s;
   const mapH = map.gridH * s;

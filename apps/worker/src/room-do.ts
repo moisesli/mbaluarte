@@ -18,6 +18,7 @@ import {
   type LobbyPlayer,
   type PlayerCommand,
   type ReplayData,
+  type PublicRoomInfo,
   type ReplayEntry,
   type RoomSettings,
   type ServerMsg,
@@ -29,6 +30,7 @@ import { saveScore } from './scores.js';
 export interface Env {
   ASSETS: Fetcher;
   ROOM: DurableObjectNamespace;
+  DIRECTORY?: DurableObjectNamespace; // directorio de salas públicas (F5)
   SCORES?: KVNamespace;
 }
 
@@ -83,6 +85,7 @@ export class RoomDO {
   private replayInit: { mapId: string; mode: RoomSettings['mode']; difficulty: RoomSettings['difficulty']; players: { id: string; name: string; color: string }[] } | null = null;
   private replayLog: ReplayEntry[] = [];
   private lastPingAt = new Map<string, number>();
+  private lastDirReport = 0; // último latido enviado al directorio de salas públicas
   private nextPlayerNum = 1;
   private nextSpectatorNum = 1;
 
@@ -170,7 +173,7 @@ export class RoomDO {
 
   // ---------- gestión de jugadores ----------
 
-  private addPlayer(name: string, token: string, ws: WebSocket): JoinResult {
+  private addPlayer(name: string, token: string, ws: WebSocket, prevToken?: string): JoinResult {
     const existing = this.players.find((p) => p.token === token);
     if (existing) {
       // reconexión de un jugador que ya jugaba (por token): sigue siendo jugador
@@ -181,6 +184,35 @@ export class RoomDO {
       this.reviveLoop();
       return { kind: 'player', player: existing };
     }
+
+    // Recuperación de identidad: el token vive en sessionStorage y los móviles lo
+    // pierden con facilidad (pestaña descartada, reabrir desde el enlace). Antes
+    // eso degradaba al jugador a espectador para siempre. Dos rescates, en orden:
+    //  1) `prevToken` (respaldo por sala que el cliente guarda en localStorage):
+    //     recupera al jugador DESCONECTADO que tenía ese token. Si sigue conectado
+    //     no se toca (sería otra pestaña del mismo navegador: no robar la sesión).
+    //  2) con la partida EN CURSO, mismo NOMBRE (sin mayúsculas) de un jugador
+    //     desconectado: cubre volver a entrar desde otro navegador/dispositivo.
+    // En ambos casos el slot adopta el token nuevo, así el siguiente refresco ya
+    // reconecta por la vía normal. Va ANTES del rescate de espectador: un antiguo
+    // jugador siempre vuelve como jugador.
+    {
+      const wanted = (name || '').slice(0, 16).trim().toLowerCase();
+      const reclaim =
+        (prevToken ? this.players.find((p) => !p.ws && p.token === prevToken) : undefined) ??
+        (this.game && !this.game.over && wanted
+          ? this.players.find((p) => !p.ws && p.name.trim().toLowerCase() === wanted)
+          : undefined);
+      if (reclaim) {
+        reclaim.ws = ws;
+        reclaim.token = token;
+        reclaim.name = (name || reclaim.name).slice(0, 16);
+        this.markConnected(reclaim.id, true);
+        this.reviveLoop();
+        return { kind: 'player', player: reclaim };
+      }
+    }
+
     // un espectador que reconecta (mismo token) sigue de espectador
     const spec = this.spectators.find((s) => s.token === token);
     if (spec) {
@@ -241,10 +273,14 @@ export class RoomDO {
     if (spec) {
       this.spectators = this.spectators.filter((s) => s !== spec);
       // los espectadores cuentan para mantener el loop vivo: si el último se va
-      // (y no quedan jugadores conectados) el loop se para
-      if (this.connectedCount() === 0 && this.loop) {
-        clearInterval(this.loop);
-        this.loop = null;
+      // (y no quedan jugadores conectados) el loop se para. También aquí hay que
+      // des-listar la sala: el último en irse puede ser un espectador.
+      if (this.connectedCount() === 0) {
+        this.unlistPublic();
+        if (this.loop) {
+          clearInterval(this.loop);
+          this.loop = null;
+        }
       }
       return;
     }
@@ -269,9 +305,13 @@ export class RoomDO {
 
     // sin nadie conectado (ni jugadores ni espectadores), paramos el loop para
     // que el DO pueda liberarse (si alguien reconecta antes, reviveLoop reanuda)
-    if (this.connectedCount() === 0 && this.loop) {
-      clearInterval(this.loop);
-      this.loop = null;
+    if (this.connectedCount() === 0) {
+      // sala vacía: fuera de la lista de salas públicas (no dejar fantasmas)
+      this.unlistPublic();
+      if (this.loop) {
+        clearInterval(this.loop);
+        this.loop = null;
+      }
     }
   }
 
@@ -304,6 +344,52 @@ export class RoomDO {
       settings: this.settings,
       inGame: this.game !== null && !this.game.over,
     });
+    // cualquier cambio de sala (miembros/ajustes/estado) refresca el directorio
+    this.reportPublic(true);
+  }
+
+  // ---------- directorio de salas públicas (F5) ----------
+
+  private directoryStub(): DurableObjectStub | null {
+    const ns = this.env.DIRECTORY;
+    return ns ? ns.get(ns.idFromName('v1')) : null;
+  }
+
+  // Reporta esta sala al directorio (fire-and-forget; jamás bloquea la sala).
+  // `force` = cambio de estado real; sin force actúa de LATIDO con throttle de
+  // 10 s (lo disparan los pings de keepalive de los clientes y el tick de sim).
+  private reportPublic(force = false): void {
+    if (!this.initialized || !this.settings.public) return;
+    if (!force && Date.now() - this.lastDirReport < 10_000) return;
+    const stub = this.directoryStub();
+    if (!stub) return;
+    const connected = this.players.filter((p) => p.ws).length;
+    if (connected === 0) return; // sala sin jugadores conectados: no listar
+    this.lastDirReport = Date.now();
+    const host = this.players.find((p) => p.isHost) ?? this.players[0];
+    const info: PublicRoomInfo = {
+      code: this.code,
+      host: host?.name ?? '',
+      mapId: this.settings.mapId,
+      mode: this.settings.mode,
+      difficulty: this.settings.difficulty,
+      players: connected,
+      inGame: this.game !== null && !this.game.over,
+      wave: this.game && !this.game.over ? this.game.wave : 0,
+    };
+    void stub
+      .fetch('https://do/report', { method: 'POST', body: JSON.stringify(info) })
+      .catch(() => {});
+  }
+
+  // Saca la sala de la lista (se volvió privada o se quedó vacía).
+  private unlistPublic(): void {
+    const stub = this.directoryStub();
+    if (!stub || !this.code) return;
+    this.lastDirReport = 0;
+    void stub
+      .fetch('https://do/remove', { method: 'POST', body: JSON.stringify({ code: this.code }) })
+      .catch(() => {});
   }
 
   private gameInit(forPlayerId: string) {
@@ -347,6 +433,8 @@ export class RoomDO {
       this.send(p, { type: 'game_started', init: this.gameInit(p.id) });
     }
     this.reviveLoop(true);
+    // la lista de salas públicas pasa a mostrarla "en partida" (👁 observable)
+    this.reportPublic(true);
   }
 
   // arranca (o reanuda) el bucle de simulación si hay partida activa y jugadores
@@ -372,6 +460,10 @@ export class RoomDO {
       events.push(...stepGame(this.game, this.simCtx, []));
     }
     this.broadcast({ type: 'tick', t: this.game.tick, snap: buildSnap(this.game), events });
+
+    // latido del directorio durante la partida (throttle interno de 10 s):
+    // mantiene fresca la oleada que muestra la lista de salas públicas
+    this.reportPublic();
 
     if (this.game.over && !wasOver) this.endGame();
   }
@@ -503,7 +595,7 @@ export class RoomDO {
         this.sendTo(ws, { type: 'error', msg: `No existe la sala "${this.code}"` });
         return;
       }
-      const res = this.addPlayer(msg.name, msg.token, ws);
+      const res = this.addPlayer(msg.name, msg.token, ws, msg.prevToken);
       if (res.kind === 'error') {
         this.sendTo(ws, { type: 'error', msg: res.msg });
         return;
@@ -533,11 +625,15 @@ export class RoomDO {
     if (!player) return;
 
     switch (msg.type) {
-      case 'set_settings':
+      case 'set_settings': {
         if (!player.isHost || this.game) break;
+        const wasPublic = this.settings.public === true;
         this.settings = sanitizeSettings(msg.settings);
+        // pública → privada: salir de la lista al instante (no esperar la poda)
+        if (wasPublic && !this.settings.public) this.unlistPublic();
         this.broadcastLobby();
         break;
+      }
 
       case 'start_game':
         if (!player.isHost) {
@@ -594,6 +690,9 @@ export class RoomDO {
 
       case 'ping':
         this.send(player, { type: 'pong', t: msg.t });
+        // los pings de keepalive (cada 5 s por cliente) hacen de latido del
+        // directorio también con la sala en el LOBBY (sin loop de sim corriendo)
+        this.reportPublic();
         break;
     }
   }

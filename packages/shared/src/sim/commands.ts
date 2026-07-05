@@ -1,7 +1,7 @@
 import type { GameEvent, GameState, MapDef, PlayerCommand } from '../types.js';
 import { TOWERS, towerLevel, hasRank2, rank2Cost } from '../balance/towers.js';
 import { FUSION_ORDER, findFusion } from '../balance/fusions.js';
-import { CALL_WAVE_GOLD_PER_SEC, SELL_REFUND, TICK_RATE } from '../constants.js';
+import { CALL_WAVE_GOLD_PER_SEC, SELL_REFUND, TICK_RATE, WOOD_COST_RANK2, WOOD_COST_SPEC } from '../constants.js';
 import { placementError, type PlacementContext } from './grid.js';
 
 function reject(events: GameEvent[], playerId: string, reason: string) {
@@ -59,6 +59,7 @@ export function applyCommands(
           stunnedUntil: 0,
           charges: lvl.charges ?? 0,
           growthBonus: 0,
+          goldGen: 0,
           fusion: -1,
         });
         events.push({ e: 'place', x: cmd.cx + 0.5, y: cmd.cy + 0.5, towerType: cmd.towerType });
@@ -99,8 +100,14 @@ export function applyCommands(
             reject(events, playerId, 'No te alcanza el oro');
             break;
           }
+          // F5.2 · el Rango II también cuesta madera (la tala el orco leñador)
+          if (player.wood < WOOD_COST_RANK2) {
+            reject(events, playerId, `Te falta madera (necesitas 🪵${WOOD_COST_RANK2})`);
+            break;
+          }
           player.gold -= r2cost;
           player.stats.goldSpent += r2cost;
+          player.wood -= WOOD_COST_RANK2;
           tower.level = 4;
           tower.invested += r2cost;
           tower.cooldownLeft = 0;
@@ -151,8 +158,14 @@ export function applyCommands(
           reject(events, playerId, 'No te alcanza el oro');
           break;
         }
+        // F5.2 · especializar cuesta madera además de oro (economía Green TD)
+        if (player.wood < WOOD_COST_SPEC) {
+          reject(events, playerId, `Te falta madera (necesitas 🪵${WOOD_COST_SPEC})`);
+          break;
+        }
         player.gold -= spec.cost;
         player.stats.goldSpent += spec.cost;
+        player.wood -= WOOD_COST_SPEC;
         tower.spec = cmd.spec;
         tower.invested += spec.cost;
         tower.cooldownLeft = 0;
@@ -235,6 +248,7 @@ export function applyCommands(
         keep.invested += other.invested;
         keep.kills += other.kills;
         keep.damage += other.damage;
+        keep.goldGen += other.goldGen; // historial económico: también se suma
         keep.cooldownLeft = 0;
         keep.charges = 0;
         keep.growthBonus = 0;

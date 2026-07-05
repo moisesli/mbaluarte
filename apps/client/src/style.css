@@ -201,6 +201,38 @@ html, body {
 }
 .tab.active { background: var(--bg3); color: var(--fg); border-color: var(--accent2); }
 
+/* ---------- salas públicas (portada) ---------- */
+.rooms { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
+.rooms h3 { font-size: 1rem; margin-bottom: 8px; }
+.room-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.room-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.room-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.room-meta {
+  font-size: 0.82rem;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-meta b { color: var(--fg); }
+.room-state { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.03em; }
+.room-state.lobby { color: var(--ok); }
+.room-state.ingame { color: var(--accent-hi); }
+.room-row .btn { flex-shrink: 0; }
+@media (max-width: 700px) {
+  .room-row { flex-wrap: wrap; }
+  .room-meta { white-space: normal; }
+}
+
 .scores { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 14px; }
 .scores h3 { font-size: 1rem; margin-bottom: 8px; }
 .scores ol { padding-left: 22px; color: var(--fg-dim); font-size: 0.9rem; }
@@ -289,18 +321,22 @@ html, body {
 #hud-top .btn { pointer-events: auto; }
 .hud-group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .stat {
-  background: rgba(14, 18, 28, 0.85);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 6px 12px;
+  background: rgba(12, 16, 26, 0.85);
+  border: 1px solid rgba(44, 56, 84, 0.85);
+  border-radius: 11px;
+  padding: 7px 12px;
   font-weight: 700;
   font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
+/* botones de la barra superior: misma altura y radio que los stats (pills a juego) */
+#hud-top .btn.small { padding: 7px 11px; border-radius: 11px; border-color: rgba(44, 56, 84, 0.85); }
 .stat.gold { color: var(--accent-hi); }
+.stat.wood { color: #bcaaa4; }
 .stat.danger { color: var(--danger); border-color: rgba(239, 83, 80, 0.5); animation: pulse 0.8s infinite; }
 /* horda: aviso ámbar cuando la saturación pasa del 70% (rojo con .danger al 90%) */
 .stat.warn { color: var(--accent-hi); border-color: rgba(255, 213, 79, 0.5); }
@@ -316,15 +352,22 @@ html, body {
 }
 .pchip {
   display: flex; align-items: center; gap: 6px;
-  background: rgba(14, 18, 28, 0.75);
-  border: 1px solid rgba(44, 56, 84, 0.6);
-  border-radius: 8px;
-  padding: 3px 9px;
+  background: rgba(12, 16, 26, 0.7);
+  border: 1px solid rgba(44, 56, 84, 0.55);
+  border-radius: 999px;
+  padding: 3px 10px;
   font-size: 0.8rem;
 }
 .pchip .player-dot { width: 9px; height: 9px; }
 .pchip .pgold { color: var(--accent-hi); margin-left: 4px; }
 .pchip.offline { opacity: 0.4; }
+/* métricas en vivo (⚔️ dps · 🪙 oleada · 💔 vidas): última chip de la columna */
+.pchip.live-chip {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  border-color: rgba(255, 213, 79, 0.25);
+}
+.pchip.live-chip .live-bad { color: var(--danger); font-weight: 800; }
 
 /* ---------- panel de ajustes de sonido (⚙) ---------- */
 #settings-panel {
@@ -378,14 +421,21 @@ html, body {
   .set-hint { display: none; }
 }
 
+/* vista previa de la próxima oleada: CENTRADA bajo la barra superior en
+   escritorio (es la información más importante del interludio); en móvil vuelve
+   abajo a la derecha (override en el bloque móvil) */
 #hud-preview {
   position: absolute;
-  top: 56px; right: 12px;
-  background: rgba(14, 18, 28, 0.85);
+  top: 54px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  text-align: center;
+  background: rgba(12, 16, 26, 0.88);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 8px 12px;
-  max-width: 300px;
+  padding: 8px 14px;
+  max-width: min(420px, 60vw);
   font-size: 0.85rem;
   pointer-events: none;
   backdrop-filter: blur(6px);
@@ -496,6 +546,17 @@ html, body {
   transition: border-color 0.1s, transform 0.06s, box-shadow 0.12s;
 }
 .tcard:active { transform: scale(0.94); }
+/* separador entre grupos de la barra (ataque · apoyo/economía · camino) */
+.tcard.group-start { margin-left: 20px; }
+.tcard.group-start::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 15%;
+  width: 1px;
+  height: 70%;
+  background: var(--border);
+}
 .tcard.selected {
   border-color: var(--accent);
   box-shadow: 0 0 14px rgba(255, 179, 0, 0.35);
@@ -551,6 +612,8 @@ html, body {
 #hud-panel .fuse-req { color: var(--fg-dim); font-size: 0.72rem; }
 #hud-panel .pstats { font-size: 0.85rem; color: var(--fg-dim); margin: 8px 0; line-height: 1.55; }
 #hud-panel .pstats .up { color: var(--ok); font-weight: 700; }
+/* valor EFECTIVO bajo un aura de Estandarte (⚑ dorado, como su anillo) */
+#hud-panel .pstats .aura { color: var(--accent-hi); font-weight: 700; }
 #hud-panel .prow { display: flex; gap: 8px; margin-top: 8px; }
 #hud-panel .prow .btn { flex: 1; font-size: 0.85rem; padding: 9px 6px; }
 .tmodes { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
@@ -599,7 +662,11 @@ html, body {
   transform: translateY(-50%);
   font-weight: 800;
   color: var(--accent-hi);
+  text-align: right;
+  font-size: 0.8rem;
+  line-height: 1.25;
 }
+.spec-title .spec-woodreq { color: var(--fg-dim); font-weight: 600; text-transform: none; letter-spacing: 0; }
 
 /* botón de ping armado */
 #btn-ping.armed {
@@ -874,15 +941,19 @@ html, body {
   #hud-panel .spec-btn { padding: 8px 9px; }
   #hud-panel .tmodes { margin-top: 6px; }
   #hud-panel .tmode { font-size: 0.7rem; padding: 8px 2px; }
-  /* mientras el panel está abierto, la barra de torres y el chat le ceden el sitio */
+  /* mientras el panel está abierto, la barra de torres, el chat y la vista previa
+     de oleada le ceden el sitio (la hoja inferior taparía la preview igualmente) */
   .panel-open #hud-towers,
   .panel-open #hud-placing,
+  .panel-open #hud-preview,
   .panel-open #hud-chat { display: none; }
   /* chat compacto: solo el botón 💬; el log aparece al abrirlo */
   #hud-chat { bottom: 86px; width: min(260px, 64vw); }
   #hud-chat .chat-log.compact { display: none; }
   #hud-chat.open .chat-log.compact { display: flex; }
-  #hud-preview { top: auto; bottom: 132px; right: 8px; max-width: 46vw; font-size: 0.75rem; }
+  #hud-preview { top: auto; bottom: 132px; left: auto; right: 8px; transform: none; text-align: left; max-width: 46vw; font-size: 0.75rem; }
+  .tcard.group-start { margin-left: 12px; }
+  .tcard.group-start::before { left: -7px; }
   #hud-placing { bottom: 86px; font-size: 0.75rem; padding: 6px 10px; }
   /* Barra de torres: UNA sola fila con scroll horizontal + snap (envolver en dos
      filas tapaba demasiado tablero). El degradado de los bordes avisa de que hay
@@ -913,9 +984,24 @@ html, body {
      fila y los chips de jugador (top:52px) los tapaban. */
   #hud-top { padding: 6px 8px; align-items: flex-start; gap: 6px; }
   .hud-group { gap: 5px; }
-  .hud-group:first-child { flex-wrap: nowrap; }
-  .stat { font-size: 0.78rem; padding: 4px 8px; }
+  /* stats (❤/oleada/🪙/🪵/👾) SIEMPRE en una línea: si en un móvil angosto no
+     caben, el grupo se desplaza de lado (con degradado de aviso) en vez de
+     empujar los botones o taparse con los chips de jugador */
+  .hud-group:first-child {
+    flex-wrap: nowrap;
+    max-width: 60vw;
+    overflow-x: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent 100%);
+  }
+  .hud-group:first-child::-webkit-scrollbar { display: none; }
+  .stat { font-size: 0.74rem; padding: 4px 7px; }
   .btn.small { padding: 6px 9px; font-size: 0.82rem; }
+  /* menos botones en pantallas chicas: el minimapa no necesita toggle (se usa
+     tocándolo directo) y la Guía 📖 vive en la pausa — ahora cualquiera puede
+     pausar, así que sigue al alcance de todos */
+  #btn-minimap, #btn-guide { display: none; }
   #hud-players { top: 46px; gap: 3px; }
   .pchip { font-size: 0.68rem; padding: 2px 7px; }
 }

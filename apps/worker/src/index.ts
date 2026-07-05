@@ -1,8 +1,9 @@
 import { RoomDO, type Env } from './room-do.js';
+import { DirectoryDO } from './directory-do.js';
 import { loadScores } from './scores.js';
 
-// El runtime necesita ver la clase del Durable Object exportada desde el módulo principal.
-export { RoomDO };
+// El runtime necesita ver las clases de los Durable Objects exportadas desde el módulo principal.
+export { RoomDO, DirectoryDO };
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // sin I/O para evitar confusiones
 
@@ -28,6 +29,14 @@ export default {
 
     if (url.pathname === '/api/highscores') return json(await loadScores(env));
     if (url.pathname === '/api/health') return json({ ok: true });
+
+    // F5 · lista de salas públicas (para la portada). Sin binding → lista vacía.
+    if (url.pathname === '/api/rooms') {
+      const ns = env.DIRECTORY;
+      if (!ns) return json([]);
+      const res = await ns.get(ns.idFromName('v1')).fetch('https://do/list');
+      return new Response(res.body, { headers: { 'content-type': 'application/json' } });
+    }
 
     if (url.pathname === '/ws') {
       if (request.headers.get('Upgrade') !== 'websocket') {

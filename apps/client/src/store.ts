@@ -70,7 +70,7 @@ export const store = {
   suggestType: null as TowerTypeId | null,
   lobby: {
     players: [] as LobbyPlayer[],
-    settings: { mapId: 'sendero', mode: 'classic', difficulty: 'normal' } as RoomSettings,
+    settings: { mapId: 'sendero', mode: 'classic', difficulty: 'normal', public: false } as RoomSettings,
     inGame: false,
   },
   game: null as GameStore | null,
@@ -95,6 +95,29 @@ if (!store.token) {
 export function saveName(name: string): void {
   store.name = name;
   localStorage.setItem('td_name', name);
+}
+
+// ---- respaldo de identidad por sala ----
+// El token vive en sessionStorage (una identidad por pestaña), pero los móviles
+// lo pierden con facilidad: pestaña descartada por memoria, o volver a entrar
+// tocando el enlace (pestaña nueva). Guardamos en localStorage el token con el
+// que se JUGÓ cada sala; al reentrar se manda como `prevToken` y el servidor
+// recupera al mismo jugador en vez de degradarlo a espectador.
+
+export function saveRoomToken(code: string): void {
+  try {
+    localStorage.setItem(`td_rt_${code.toUpperCase()}`, store.token);
+  } catch {
+    // localStorage lleno o bloqueado: el respaldo es best-effort
+  }
+}
+
+export function roomPrevToken(code: string): string | undefined {
+  try {
+    return localStorage.getItem(`td_rt_${code.toUpperCase()}`) ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function startGameStore(init: GameInit): GameStore {
@@ -125,4 +148,9 @@ export function pushFrame(g: GameStore, t: number, snap: Snap): void {
 export function myGold(g: GameStore): number {
   const me = g.latest?.players.find((p) => p.id === store.playerId);
   return me?.gold ?? 0;
+}
+
+export function myWood(g: GameStore): number {
+  const me = g.latest?.players.find((p) => p.id === store.playerId);
+  return me?.wood ?? 0;
 }

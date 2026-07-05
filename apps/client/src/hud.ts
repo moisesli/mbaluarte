@@ -15,14 +15,16 @@ import {
   TOWERS,
   TOWER_ORDER,
   towerTotalCost,
+  WOOD_COST_RANK2,
+  WOOD_COST_SPEC,
   type Snap,
   type TargetMode,
   type TowerLevelDef,
   type TowerTypeId,
 } from '@td/shared';
 import { net } from './net.js';
-import { myGold, store } from './store.js';
-import { countBannerTargets, ENEMY_ICONS, TOWER_ICONS } from './renderer.js';
+import { myGold, myWood, store } from './store.js';
+import { computeBannerAuras, countBannerTargets, ENEMY_ICONS, TOWER_ICONS, type ClientAura } from './renderer.js';
 import { clearSelection, setPlacing } from './input.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -42,13 +44,28 @@ function escapeHtml(s: string): string {
 
 // ---------- barra de torres ----------
 
+// Orden de PRESENTACIÓN de la barra, agrupado por rol (no toca TOWER_ORDER, que
+// es el orden compacto de los snapshots): ataque · apoyo/economía · camino.
+// Una torre nueva que no esté aquí cae en un grupo extra al final (red de seguridad).
+const BAR_GROUPS: TowerTypeId[][] = [
+  ['archer', 'cannon', 'frost', 'poison', 'tesla', 'sniper', 'mortar'],
+  ['banner', 'bank', 'alchemist'],
+  ['trap', 'boom'],
+];
+
 export function buildTowerBar(): void {
   const bar = $('hud-towers');
   bar.innerHTML = '';
-  for (const type of TOWER_ORDER) {
+  const flat = BAR_GROUPS.flat();
+  const extras = TOWER_ORDER.filter((t) => !flat.includes(t));
+  const groups = extras.length > 0 ? [...BAR_GROUPS, extras] : BAR_GROUPS;
+  for (let gi = 0; gi < groups.length; gi++)
+  for (let ti = 0; ti < groups[gi].length; ti++) {
+    const type = groups[gi][ti];
     const def = TOWERS[type];
     const card = document.createElement('button');
     card.className = 'tcard';
+    if (gi > 0 && ti === 0) card.classList.add('group-start');
     card.dataset.type = type;
     card.title = `${def.name} — ${def.desc}`;
     card.innerHTML = `
@@ -159,6 +176,7 @@ export function applySpectatorUI(): void {
   const spec = store.spectator;
   $('spectator-banner').hidden = !spec;
   $('hud-gold').hidden = spec;
+  $('hud-wood').hidden = spec;
   if (spec) {
     // un espectador nunca ve estos controles (ya se ocultan por !isHost, pero por
     // si acaso: un espectador jamás es anfitrión)
@@ -230,19 +248,31 @@ function wirePanel(): void {
   });
 }
 
-// líneas de stats de un bloque activo (con vista previa opcional del siguiente nivel)
-function statBlock(lvl: TowerLevelDef, next: TowerLevelDef | null): string[] {
+// Líneas de stats de un bloque activo (con vista previa opcional del siguiente
+// nivel). `aura`: refuerzo de Estandarte ACTIVO sobre esta torre — se muestran
+// los valores EFECTIVOS (⚑) junto a los base, para que el aura se VEA (antes el
+// panel enseñaba solo los base y parecía que el Estandarte no hacía nada).
+function statBlock(lvl: TowerLevelDef, next: TowerLevelDef | null, aura?: ClientAura): string[] {
   const stat = (label: string, cur: number | string, nxt?: number | string | null, suffix = '') => {
     const upgrade = nxt !== undefined && nxt !== null && nxt !== cur ? ` <span class="up">→ ${nxt}${suffix}</span>` : '';
     return `${label}: <b>${cur}${suffix}</b>${upgrade}`;
   };
+  const aDmg = aura && aura.dmg > 0 ? aura.dmg : 0;
+  const aHaste = aura && aura.haste > 0 ? aura.haste : 0;
   const lines: string[] = [];
   if (lvl.damage > 0) {
-    lines.push(stat('Daño', lvl.damage, next?.damage));
+    let dmgLine = stat('Daño', lvl.damage, next?.damage);
+    if (aDmg > 0) dmgLine += ` <span class="aura">⚑ ${Math.round(lvl.damage * (1 + aDmg))} con aura</span>`;
+    lines.push(dmgLine);
     if (lvl.cooldown > 0) {
       const dps = ((lvl.damage * (lvl.shots ?? 1)) / lvl.cooldown).toFixed(1);
       const nextDps = next && next.cooldown > 0 ? ((next.damage * (next.shots ?? 1)) / next.cooldown).toFixed(1) : null;
-      lines.push(stat('DPS', dps, nextDps));
+      let dpsLine = stat('DPS', dps, nextDps);
+      if (aDmg > 0 || aHaste > 0) {
+        const effDps = ((Math.round(lvl.damage * (1 + aDmg)) * (lvl.shots ?? 1)) / (lvl.cooldown / (1 + aHaste))).toFixed(1);
+        dpsLine += ` <span class="aura">⚑ ${effDps}</span>`;
+      }
+      lines.push(dpsLine);
     }
   }
   if (lvl.shots && lvl.shots > 1) lines.push(`Dispara a <b>${lvl.shots}</b> a la vez`);
@@ -260,7 +290,11 @@ function statBlock(lvl: TowerLevelDef, next: TowerLevelDef | null): string[] {
     // la Gran Bertha alcanza TODO el mapa (range 99): mostrarlo con palabras
     lines.push(stat('Alcance', lvl.range >= 90 ? 'todo el mapa' : lvl.range, next?.range));
   }
-  if (lvl.cooldown > 0) lines.push(stat('Cadencia', lvl.cooldown, next?.cooldown, 's'));
+  if (lvl.cooldown > 0) {
+    let cdLine = stat('Cadencia', lvl.cooldown, next?.cooldown, 's');
+    if (aHaste > 0) cdLine += ` <span class="aura">⚑ ${(lvl.cooldown / (1 + aHaste)).toFixed(2)}s con aura</span>`;
+    lines.push(cdLine);
+  }
   if (lvl.splash) lines.push(stat('Área', lvl.splash, next?.splash));
   if (lvl.slow) lines.push(stat('Congela al', `${Math.round(lvl.slow.factor * 100)}%`, next?.slow ? `${Math.round(next.slow.factor * 100)}%` : null));
   if (lvl.slowAura) lines.push(`Aura de hielo <b>${lvl.slowAura.radius}</b> (${Math.round(lvl.slowAura.factor * 100)}%)`);
@@ -330,13 +364,21 @@ export function refreshPanel(): void {
   const canRank2 = !fusion && specialized && level === 3 && hasRank2(type, spec);
   const r2cost = canRank2 ? rank2Cost(type, spec) : null;
 
-  const statLines = statBlock(lvl, next);
+  // aura de Estandarte activa SOBRE esta torre → el panel muestra stats efectivos
+  const auraBuff = computeBannerAuras(gs.latest).get(id);
+  const statLines = statBlock(lvl, next, auraBuff);
   // Estandarte (y fusiones con aura): cuántas torres está reforzando ahora mismo
   if (lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) {
     const n = countBannerTargets(gs.latest, id);
     statLines.push(`Reforzando <b>${n}</b> ${n === 1 ? 'torre' : 'torres'}`);
     // el Señor de la Guerra además dispara: muestra también su historial de combate
     if (lvl.alsoFires) statLines.push(`Bajas: <b>${kills}</b> · Daño total: <b>${damage.toLocaleString()}</b>`);
+  } else if (lvl.auraBounty !== undefined && lvl.auraBounty > 0) {
+    // Alquimista: el oro EXTRA acumulado demuestra si su posición está pagando
+    // (las bajas deben MORIR dentro de su anillo verde)
+    const goldGen = data[15] ?? 0;
+    statLines.push(`Oro extra generado: <b>🪙${goldGen.toLocaleString()}</b>`);
+    if (goldGen === 0) statLines.push('<span class="hint">Aún nada: los enemigos deben MORIR dentro de su anillo</span>');
   } else if (def.onPathOnly) {
     if (def.detonates) {
       // Barril explosivo: se consume al detonar (no tiene cargas que contar)
@@ -420,16 +462,17 @@ export function refreshPanel(): void {
       // Trampa de púas: no se mejora ni especializa; solo se puede vender.
       actions = `<div class="prow"><button id="panel-sell" class="btn ghost">💸 Vender ${sellValue}</button></div>`;
     } else if (canSpecialize) {
+      const wood = myWood(gs);
       actions = `
-        <div class="spec-title">Elige especialización</div>
+        <div class="spec-title">Elige especialización <span class="spec-woodreq">(cuesta 🪵${WOOD_COST_SPEC} de madera)</span></div>
         <div class="spec-choices">
           ${def.specs
             .map(
               (sp, i) => `
-            <button class="spec-btn" data-spec="${i}" ${gold < sp.cost ? 'disabled' : ''}>
+            <button class="spec-btn" data-spec="${i}" ${gold < sp.cost || wood < WOOD_COST_SPEC ? 'disabled' : ''}>
               <span class="spec-name">${sp.name}</span>
               <span class="spec-desc">${sp.desc}</span>
-              <span class="spec-cost">🪙${sp.cost}</span>
+              <span class="spec-cost">🪙${sp.cost}<br>🪵${WOOD_COST_SPEC}</span>
             </button>`,
             )
             .join('')}
@@ -438,13 +481,14 @@ export function refreshPanel(): void {
     } else if (canRank2 && r2cost !== null) {
       // Rango II: mejora identidad de la especialización (reutiliza el comando upgrade)
       const r2desc = def.specs[spec].rank2?.desc ?? 'Mejora de Rango II';
+      const wood = myWood(gs);
       actions = `
         <div class="spec-title">Rango II</div>
         <p class="spec-desc" style="padding:0 4px 6px">${escapeHtml(r2desc)}</p>
         ${fuseHtml}
         <div class="prow">
-          <button id="panel-upgrade" class="btn primary" ${gold < r2cost ? 'disabled' : ''}>
-            ★★ Rango II 🪙${r2cost}
+          <button id="panel-upgrade" class="btn primary" ${gold < r2cost || wood < WOOD_COST_RANK2 ? 'disabled' : ''}>
+            ★★ Rango II 🪙${r2cost} · 🪵${WOOD_COST_RANK2}
           </button>
           <button id="panel-sell" class="btn ghost">💸 ${sellValue}</button>
         </div>
@@ -488,6 +532,33 @@ export function refreshPanel(): void {
 
 let lastPanelSync = 0;
 
+// F5.2 · métricas en vivo (minimalistas): DPS propio con ventana móvil de 3 s +
+// oro ganado y vidas perdidas de la OLEADA actual (se reinician al empezar otra).
+const dpsWindow: { t: number; dmg: number }[] = [];
+let liveWave = -1;
+let liveGoldBase = 0;
+let liveLivesBase = 0;
+
+function liveChipHtml(snap: Snap): string {
+  const me = snap.players.find((p) => p.id === store.playerId);
+  if (!me) return ''; // espectador: sin métricas propias
+  const now = performance.now();
+  dpsWindow.push({ t: now, dmg: me.damage });
+  while (dpsWindow.length > 1 && now - dpsWindow[0].t > 3000) dpsWindow.shift();
+  if (snap.wave !== liveWave) {
+    liveWave = snap.wave;
+    liveGoldBase = me.goldEarned;
+    liveLivesBase = snap.lives;
+  }
+  const span = (now - dpsWindow[0].t) / 1000;
+  const dps = span > 0.4 ? Math.max(0, Math.round((me.damage - dpsWindow[0].dmg) / span)) : 0;
+  const goldWave = me.goldEarned - liveGoldBase;
+  const livesLost = Math.max(0, liveLivesBase - snap.lives);
+  const parts = [`⚔️ ${dps}/s`, `🪙 +${goldWave}`];
+  if (livesLost > 0) parts.push(`<span class="live-bad">💔 −${livesLost}</span>`);
+  return `<div class="pchip live-chip" title="Tu daño por segundo · oro ganado esta oleada · vidas perdidas esta oleada">${parts.join(' · ')}</div>`;
+}
+
 export function onTick(snap: Snap): void {
   const gs = store.game;
   if (!gs) return;
@@ -524,6 +595,7 @@ export function onTick(snap: Snap): void {
   $('hud-wave').textContent =
     snap.totalWaves > 0 ? `Oleada ${snap.wave}/${snap.totalWaves}` : `Oleada ${snap.wave} ∞`;
   $('hud-gold').textContent = `🪙 ${myGold(gs)}`;
+  $('hud-wood').textContent = `🪵 ${myWood(gs)}`;
 
   // botón de llamar oleada, con el bonus de oro que ganarías ahora mismo
   // (los espectadores no llaman oleadas: nunca lo ven)
@@ -536,17 +608,18 @@ export function onTick(snap: Snap): void {
     btn.hidden = true;
   }
 
-  // chips de jugadores
+  // chips de jugadores + métricas en vivo propias (última "chip" de la columna)
   const chips = $('hud-players');
-  chips.innerHTML = snap.players
-    .map((p) => {
-      const info = gs.init.players.find((ip) => ip.id === p.id);
-      return `<div class="pchip ${p.connected ? '' : 'offline'}">
+  chips.innerHTML =
+    snap.players
+      .map((p) => {
+        const info = gs.init.players.find((ip) => ip.id === p.id);
+        return `<div class="pchip ${p.connected ? '' : 'offline'}">
         <span class="player-dot" style="background:${info?.color};color:${info?.color}"></span>
         <span>${escapeHtml(info?.name ?? p.id)}</span><span class="pgold">🪙${p.gold}</span>
       </div>`;
-    })
-    .join('');
+      })
+      .join('') + liveChipHtml(snap);
 
   // vista previa de la próxima oleada
   const preview = $('hud-preview');

@@ -170,6 +170,8 @@ function buildFusions(): void {
       <b>pegadas</b> (también en diagonal), cuyos tipos formen una receta. Toca una de las dos y pulsa
       <b>⚗ Fusionar</b> en su panel: la fusión es <b>gratis</b>, consume ambas torres y se queda en la celda
       de la torre desde la que fusionas. Una fusión ya no se mejora ni se especializa (solo se vende).</p>
+      <p class="edesc">🪵 <b>Madera</b>: tu orco leñador la tala solo, sin construir nada. Especializar (★)
+      cuesta madera además de oro, y el Rango II (★★) también — el oro compra torres; la madera, poder.</p>
       <p class="edesc">💡 El panel de cada torre te recuerda con qué se combina.</p>
     </div>
     <div class="fusion-list">${cards}</div>`;

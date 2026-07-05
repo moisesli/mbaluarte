@@ -25,33 +25,35 @@
 //       · tension (overlay, pocas vidas) → tinte disonante encima de lo que suene.
 //
 // `Math.random` aquí es legítimo: es SOLO cliente/audio, no la simulación.
-import { getMusicBus, onAudioUnlock } from './audio.js';
+import { getMusicBus, getReverbSend, onAudioUnlock } from './audio.js';
 
 // ---------- teoría musical ----------
-// Tonalidad: La menor natural (aeólico) — cálido y melancólico pero acogedor.
-// Progresión de 4 acordes que loopea bien: Am – F – C – G  (i – VI – III – VII).
-// Cada acorde: [grados de la escala en semitonos desde A2] para bajo/pad/arp.
+// F6 · Rediseño "Celeste" (Lena Raine): la calidez no viene de tríadas planas
+// sino de acordes EXTENDIDOS (add9/maj7) con voicings abiertos, un piano-pluck
+// soñador, campanitas FM y MUCHA reverberación. Tonalidad: La menor.
+// Progresión: Am9 – Fmaj7 – Cadd9 – Gadd9  (i9 – VImaj7 – IIIadd9 – VIIadd9).
 const A2 = 45; // MIDI de A2 (nuestra referencia grave)
 function midi(n: number): number {
   return 440 * Math.pow(2, (n - 69) / 12);
 }
 
-// Acorde = { raíz (nota MIDI del bajo), notas del pad (tríada), notas del arp }.
+// Acorde = { raíz (bajo), notas del pad (voicing extendido), notas del arp,
+// pool de la melodía de campanas (pentatónica del acorde, aguda) }.
 interface Chord {
   root: number; // bajo
-  pad: number[]; // tríada para el pad (octava media)
+  pad: number[]; // voicing del pad (octava media, con 7ª/9ª)
   arp: number[]; // notas del arpegio (más agudo)
+  lead: number[]; // pool para la campana melódica (más agudo aún)
 }
-// A menor: A B C D E F G. Construimos tríadas diatónicas.
 const CHORDS: Chord[] = [
-  // Am (i): A C E
-  { root: A2, pad: [A2 + 12, A2 + 15, A2 + 19], arp: [A2 + 24, A2 + 27, A2 + 31, A2 + 27] },
-  // F (VI): F A C
-  { root: A2 - 4, pad: [A2 + 8, A2 + 12, A2 + 15], arp: [A2 + 20, A2 + 24, A2 + 27, A2 + 24] },
-  // C (III): C E G
-  { root: A2 + 3, pad: [A2 + 15, A2 + 19, A2 + 22], arp: [A2 + 27, A2 + 31, A2 + 34, A2 + 31] },
-  // G (VII): G B D
-  { root: A2 - 2, pad: [A2 + 10, A2 + 14, A2 + 17], arp: [A2 + 22, A2 + 26, A2 + 29, A2 + 26] },
+  // Am9: A C E B — la 9ª (B) es el "suspiro" Celeste
+  { root: A2, pad: [A2 + 12, A2 + 15, A2 + 19, A2 + 26], arp: [A2 + 24, A2 + 27, A2 + 31, A2 + 26], lead: [A2 + 36, A2 + 38, A2 + 31, A2 + 43] },
+  // Fmaj7: F A C E — flotante, sin resolver
+  { root: A2 - 4, pad: [A2 + 8, A2 + 12, A2 + 15, A2 + 19], arp: [A2 + 20, A2 + 24, A2 + 27, A2 + 31], lead: [A2 + 32, A2 + 36, A2 + 31, A2 + 39] },
+  // Cadd9: C E G D
+  { root: A2 + 3, pad: [A2 + 15, A2 + 19, A2 + 22, A2 + 26], arp: [A2 + 27, A2 + 31, A2 + 34, A2 + 26], lead: [A2 + 38, A2 + 39, A2 + 34, A2 + 43] },
+  // Gadd9: G B D A
+  { root: A2 - 2, pad: [A2 + 10, A2 + 14, A2 + 17, A2 + 21], arp: [A2 + 22, A2 + 26, A2 + 29, A2 + 33], lead: [A2 + 34, A2 + 36, A2 + 33, A2 + 41] },
 ];
 
 // Patrón de arpegio (índices dentro de chord.arp) por posición dentro del compás
@@ -80,6 +82,7 @@ interface Layers {
   bass: GainNode;
   perc: GainNode;
   tens: GainNode;
+  lead: GainNode; // F6 · campana melódica (la "voz" soñadora)
 }
 let layers: Layers | null = null;
 let chorusIn: GainNode | null = null; // entrada del chorus; las capas se conectan aquí
@@ -92,7 +95,8 @@ const LOOKAHEAD_MS = 25;
 const SCHEDULE_AHEAD = 0.12; // s por delante
 
 // tempo por estado (BPM). Se lee la corchea = 60/BPM/2.
-const TEMPO: Record<MusicState, number> = { calm: 84, wave: 104, boss: 112 };
+// calm más soñador (76), combate con pulso pero sin apuro (100/114).
+const TEMPO: Record<MusicState, number> = { calm: 76, wave: 100, boss: 114 };
 
 const cur: Inputs = { state: 'calm', tension: false, horde: false };
 
@@ -103,8 +107,10 @@ function targetLevels(i: Inputs): Record<keyof Layers, number> {
     pad: i.state === 'boss' ? 0.55 : 0.75,
     arp: i.state === 'boss' ? 0.45 : i.state === 'wave' ? 0.6 : 0.7,
     bass: combat ? (i.state === 'boss' ? 0.9 : 0.75) : i.horde ? 0.5 : 0.0,
-    perc: i.state === 'boss' ? 1.0 : i.state === 'wave' ? 0.7 : i.horde ? 0.4 : 0.0,
+    perc: i.state === 'boss' ? 1.0 : i.state === 'wave' ? 0.65 : i.horde ? 0.4 : 0.0,
     tens: i.tension ? (i.state === 'boss' ? 0.5 : 0.4) : 0.0,
+    // la campana canta en la calma, susurra en combate y calla ante el jefe
+    lead: i.state === 'calm' ? 0.65 : i.state === 'wave' ? 0.4 : 0.2,
   };
 }
 
@@ -149,6 +155,16 @@ function buildGraph(ac: AudioContext, out: GainNode): void {
   echo.connect(echoLp).connect(echoFb).connect(echo); // feedback
   echoLp.connect(echoWet).connect(out);
 
+  // F6 · envío generoso a la REVERB GLOBAL: el "aire" Celeste. La percusión y el
+  // bajo van casi secos (los manda chorusIn igual, pero la porción es del bus
+  // completo y queda equilibrada por el nivel del envío).
+  const rev = getReverbSend();
+  if (rev) {
+    const toRev = ac.createGain();
+    toRev.gain.value = 0.34;
+    chorusIn.connect(toRev).connect(rev);
+  }
+
   // capas: cada una parte en 0 y se sube por crossfade según el estado.
   const mk = (): GainNode => {
     const g = ac.createGain();
@@ -156,7 +172,7 @@ function buildGraph(ac: AudioContext, out: GainNode): void {
     g.connect(chorusIn!);
     return g;
   };
-  layers = { pad: mk(), arp: mk(), bass: mk(), perc: mk(), tens: mk() };
+  layers = { pad: mk(), arp: mk(), bass: mk(), perc: mk(), tens: mk(), lead: mk() };
 }
 
 // ---------- crossfade de capas ----------
@@ -179,8 +195,9 @@ function playPad(ac: AudioContext, notes: number[], t0: number, dur: number): vo
   for (const n of notes) {
     const f = midi(n);
     for (const [type, det, vol] of [
-      ['triangle', -4, 0.09],
-      ['sine', 5, 0.06],
+      ['triangle', -4, 0.075],
+      ['sine', 5, 0.05],
+      ['sine', 1203, 0.016], // brillo: octava arriba, apenas audible (shimmer)
     ] as [OscillatorType, number, number][]) {
       const osc = ac.createOscillator();
       osc.type = type;
@@ -198,31 +215,66 @@ function playPad(ac: AudioContext, notes: number[], t0: number, dur: number): vo
   }
 }
 
-// Arpegio/pluck: triangle con envolvente corta y brillante; un toque de vibrato
-// natural por el detune aleatorio pequeño. Melódico.
+// F6 · Piano-pluck soñador: fundamental + armónicos 2/3 débiles con decay largo
+// (suena a piano eléctrico de ensueño, no a "beep"). El detune mínimo y la
+// velocidad humanizada le quitan lo robótico; la cola larga se funde en la reverb.
 function playArp(ac: AudioContext, note: number, t0: number, dur: number, vel: number): void {
   if (!layers) return;
-  const osc = ac.createOscillator();
-  osc.type = 'triangle';
-  osc.frequency.value = midi(note);
-  osc.detune.value = (Math.random() * 2 - 1) * 6;
-  // un poco de brillo con un segundo armónico débil
-  const osc2 = ac.createOscillator();
-  osc2.type = 'sine';
-  osc2.frequency.value = midi(note + 12);
+  const f = midi(note);
+  const master = ac.createGain();
+  const peak = 0.15 * vel * (0.9 + Math.random() * 0.2); // velocidad humana
+  master.gain.setValueAtTime(0.0001, t0);
+  master.gain.exponentialRampToValueAtTime(peak, t0 + 0.008); // golpe suave
+  master.gain.exponentialRampToValueAtTime(peak * 0.35, t0 + dur * 0.5);
+  master.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * 1.5); // cola larga
+  master.connect(layers.arp);
+  const HARMONICS: [number, number, OscillatorType][] = [
+    [1, 1.0, 'sine'],
+    [2, 0.32, 'sine'],
+    [3, 0.1, 'triangle'],
+  ];
+  for (const [mult, vol, type] of HARMONICS) {
+    const osc = ac.createOscillator();
+    osc.type = type;
+    osc.frequency.value = f * mult;
+    osc.detune.value = (Math.random() * 2 - 1) * 4;
+    const g = ac.createGain();
+    g.gain.value = vol;
+    // los armónicos altos mueren antes (como en un piano de verdad)
+    if (mult > 1) {
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + dur * (mult === 2 ? 0.7 : 0.35));
+    }
+    osc.connect(g).connect(master);
+    osc.start(t0);
+    osc.stop(t0 + dur * 1.5 + 0.05);
+  }
+}
+
+// F6 · Campana FM (la "voz" Celeste): portadora sine + modulador a razón 2 con
+// índice pequeño que decae — vidrio cálido con cola larguísima hacia la reverb.
+function playLead(ac: AudioContext, note: number, t0: number, dur: number): void {
+  if (!layers) return;
+  const f = midi(note);
+  const carrier = ac.createOscillator();
+  carrier.type = 'sine';
+  carrier.frequency.value = f;
+  const mod = ac.createOscillator();
+  mod.type = 'sine';
+  mod.frequency.value = f * 2;
+  const modGain = ac.createGain();
+  modGain.gain.setValueAtTime(f * 0.9, t0); // índice FM inicial (brillo del golpe)
+  modGain.gain.exponentialRampToValueAtTime(f * 0.05, t0 + dur * 0.6); // se apaga a puro cristal
+  mod.connect(modGain).connect(carrier.frequency);
   const g = ac.createGain();
-  const peak = 0.16 * vel;
   g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(peak, t0 + 0.012);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * 0.95);
-  const g2 = ac.createGain();
-  g2.gain.value = 0.3;
-  osc.connect(g).connect(layers.arp);
-  osc2.connect(g2).connect(g);
-  osc.start(t0);
-  osc2.start(t0);
-  osc.stop(t0 + dur + 0.05);
-  osc2.stop(t0 + dur + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.09, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  carrier.connect(g).connect(layers.lead);
+  carrier.start(t0);
+  mod.start(t0);
+  carrier.stop(t0 + dur + 0.05);
+  mod.stop(t0 + dur + 0.05);
 }
 
 // Bajo: onda sine/triangle grave y redonda con envolvente media.
@@ -254,15 +306,16 @@ function playKick(ac: AudioContext, t0: number, vol: number): void {
   if (!layers) return;
   const osc = ac.createOscillator();
   osc.type = 'sine';
-  osc.frequency.setValueAtTime(150, t0);
-  osc.frequency.exponentialRampToValueAtTime(48, t0 + 0.12);
+  // más redondo y menos "click": arranque más grave y caída más lenta
+  osc.frequency.setValueAtTime(120, t0);
+  osc.frequency.exponentialRampToValueAtTime(44, t0 + 0.14);
   const g = ac.createGain();
   g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.005);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
   osc.connect(g).connect(layers.perc);
   osc.start(t0);
-  osc.stop(t0 + 0.2);
+  osc.stop(t0 + 0.24);
 }
 function playHat(ac: AudioContext, t0: number, vol: number): void {
   if (!layers) return;
@@ -272,15 +325,39 @@ function playHat(ac: AudioContext, t0: number, vol: number): void {
   for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
   const src = ac.createBufferSource();
   src.buffer = buf;
-  const hp = ac.createBiquadFilter();
-  hp.type = 'highpass';
-  hp.frequency.value = 6000;
+  // banda en vez de highpass puro: hat más oscuro y suave (menos "tss" digital)
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 8000;
+  bp.Q.value = 0.9;
   const g = ac.createGain();
   g.gain.setValueAtTime(vol, t0);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.04);
-  src.connect(hp).connect(g).connect(layers.perc);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.045);
+  src.connect(bp).connect(g).connect(layers.perc);
   src.start(t0);
   src.stop(t0 + 0.06);
+}
+// F6 · Shaker: ruido en banda media con decay más largo que el hat — el vaivén
+// suave que mueve el combate sin ponerse marcial.
+function playShaker(ac: AudioContext, t0: number, vol: number): void {
+  if (!layers) return;
+  const len = Math.floor(ac.sampleRate * 0.09);
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 4200;
+  bp.Q.value = 1.2;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+  src.connect(bp).connect(g).connect(layers.perc);
+  src.start(t0);
+  src.stop(t0 + 0.1);
 }
 
 // Drone de tensión: dos sines con intervalo disonante (segunda menor) y tremolo,
@@ -335,19 +412,31 @@ function scheduleStep(s: number, t0: number): void {
     playBass(ctx, cur.state === 'boss' ? chord.root + 7 : chord.root, t0, eDur * 3.5);
   }
 
-  // ARPEGIO: cada corchea, con dinámica (acentos en 0 y 4).
-  const arpNote = chord.arp[ARP_PATTERN[posInBar]];
+  // ARPEGIO: cada corchea, con dinámica (acentos en 0 y 4), timing humanizado
+  // (±8 ms) y un VIAJE DE OCTAVA: cada 2 de 4 compases el arpegio sube una
+  // octava — la sensación de "ascenso" tan Celeste.
+  const lift = barIndex % 4 >= 2 ? 12 : 0;
+  const arpNote = chord.arp[ARP_PATTERN[posInBar]] + lift;
   const accent = posInBar === 0 || posInBar === 4 ? 1 : 0.7;
+  const tHuman = t0 + (Math.random() - 0.5) * 0.016;
   // en calma suena todo el arpegio; en combate/boss se ralea un poco para dejar
   // espacio a la percusión (más punchy).
   const arpOn = cur.state === 'calm' ? true : posInBar % 2 === 0 || Math.random() > 0.4;
-  if (arpOn) playArp(ctx, arpNote, t0, eDur * 1.6, accent);
+  if (arpOn) playArp(ctx, arpNote, tHuman, eDur * 1.6, accent);
 
-  // PERCUSIÓN: bombo en 0 y 4; hats en las corcheas impares. En boss, bombo más
-  // denso (también en 2 y 6) para telegrafiar la amenaza.
+  // CAMPANA melódica (F6): una nota larga del pool del acorde, en las corcheas
+  // 2 o 6, no siempre (frases con silencio = respiración). Más presente en calma.
+  if ((posInBar === 2 || posInBar === 6) && Math.random() < (cur.state === 'calm' ? 0.55 : 0.3)) {
+    const leadNote = chord.lead[Math.floor(Math.random() * chord.lead.length)];
+    playLead(ctx, leadNote, t0, eDur * 6);
+  }
+
+  // PERCUSIÓN: bombo en 0 y 4; hats en las corcheas impares; shaker en 3 y 7
+  // durante el combate. En boss, bombo más denso (también en 2 y 6).
   const kickBeats = cur.state === 'boss' ? [0, 2, 4, 6] : [0, 4];
   if (kickBeats.includes(posInBar)) playKick(ctx, t0, cur.state === 'boss' ? 0.9 : 0.7);
-  if (posInBar % 2 === 1) playHat(ctx, t0, cur.state === 'boss' ? 0.06 : 0.045);
+  if (posInBar % 2 === 1) playHat(ctx, t0, cur.state === 'boss' ? 0.055 : 0.04);
+  if ((posInBar === 3 || posInBar === 7) && cur.state !== 'calm') playShaker(ctx, t0, 0.05);
 }
 
 function schedulerTick(): void {
@@ -482,6 +571,7 @@ function updateDebug(): void {
           bass: round3(layers.bass.gain.value),
           perc: round3(layers.perc.gain.value),
           tens: round3(layers.tens.gain.value),
+          lead: round3(layers.lead.gain.value),
         }
       : null,
   };

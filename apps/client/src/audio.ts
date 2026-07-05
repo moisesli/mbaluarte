@@ -18,6 +18,7 @@ let master: GainNode | null = null; // volumen global (lo mueve el mute)
 let limiter: DynamicsCompressorNode | null = null; // evita clipping en oleadas densas
 let sfxGain: GainNode | null = null; // volumen de efectos
 let musicGain: GainNode | null = null; // volumen de música (preparado para F3.1)
+let reverbSend: GainNode | null = null; // envío a la reverb global (F6)
 const lastPlayed = new Map<string, number>();
 
 // ---------- límite de voces simultáneas ----------
@@ -90,12 +91,47 @@ function ensureCtx(): AudioContext | null {
       musicGain.connect(master);
       master.connect(limiter);
       limiter.connect(ctx.destination);
+
+      // F6 · REVERB GLOBAL (sabor Celeste): convolver con impulso sintético.
+      // `reverbSend` es la entrada del envío: la música manda una porción
+      // generosa (ver music.ts) y los SFX un chorrito fijo — espacio e
+      // inmersión sin lavar el punch de los disparos.
+      reverbSend = ctx.createGain();
+      reverbSend.gain.value = 1;
+      const reverb = ctx.createConvolver();
+      reverb.buffer = makeImpulse(ctx, 2.6, 2.4);
+      const reverbOut = ctx.createGain();
+      reverbOut.gain.value = 0.9;
+      reverbSend.connect(reverb).connect(reverbOut).connect(master);
+      const sfxToRev = ctx.createGain();
+      sfxToRev.gain.value = 0.12;
+      sfxGain.connect(sfxToRev).connect(reverbSend);
     } catch {
       return null;
     }
   }
   if (ctx.state === 'suspended') void ctx.resume();
   return ctx;
+}
+
+// Impulso de reverberación sintético: ruido estéreo con decaimiento exponencial
+// (dur en segundos; `decay` mayor = cola que muere antes). Suena a sala grande
+// y suave — el "aire" de los juegos 2D atmosféricos.
+function makeImpulse(ac: AudioContext, dur: number, decay: number): AudioBuffer {
+  const len = Math.floor(ac.sampleRate * dur);
+  const buf = ac.createBuffer(2, len, ac.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < len; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+  }
+  return buf;
+}
+
+// Entrada del envío de reverb global (null si el audio aún no existe).
+export function getReverbSend(): GainNode | null {
+  return reverbSend;
 }
 
 // Ganancia base para no saturar el limiter: los volúmenes de usuario (0..1) se

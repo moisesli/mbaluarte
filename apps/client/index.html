@@ -189,6 +189,9 @@
           <input id="set-music" type="range" min="0" max="100" step="1" />
           <span id="set-music-val" class="set-val">60%</span>
         </label>
+        <!-- abandonar la partida: accesible a TODOS (jugadores no-anfitriones y
+             espectadores) desde ⚙ durante la partida, no solo desde la pausa -->
+        <button id="btn-abandon-settings" class="btn danger small">🚪 Abandonar partida</button>
       </div>
 
       <!-- mercado global de madera (se abre tocando el chip 🪵 de la barra) -->
@@ -264,6 +267,7 @@
           <p id="pause-by"></p>
           <button id="btn-resume" class="btn primary" hidden>Reanudar</button>
           <button id="btn-bestiary-pause" class="btn ghost small">📖 Guía</button>
+          <button id="btn-abandon-pause" class="btn danger small">🚪 Abandonar partida</button>
         </div>
       </div>
 

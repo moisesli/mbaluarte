@@ -228,6 +228,12 @@ async function main(): Promise<void> {
   ana.ws.close();
   beto2.ws.close();
 
+  // 9.5 · ABANDONO explícito: un jugador manda `leave` a mitad de partida.
+  //   (a) el resto ve el aviso de sistema «💨 X abandonó la partida»
+  //   (b) el que se fue NO puede reconectar con su token (entra de espectador)
+  //   (c) la partida SIGUE para el resto (y sus torres quedan en el tablero)
+  await abandonScenario();
+
   // 10. Repetición (replay): partida corta que TERMINA (sin defensa) e incluye la
   //     reconexión de Beto. Al recibir game_over con `replay`, reconstruimos con el
   //     motor puro y comparamos el estado final con el de la partida real (leído de
@@ -240,6 +246,91 @@ async function main(): Promise<void> {
   }
   console.log('\n🎉 Test end-to-end OK');
   process.exit(0);
+}
+
+// Escenario dedicado: ABANDONO explícito (mensaje `leave`) a mitad de partida.
+// Verifica el aviso al resto, la invalidación del token (vuelve de espectador) y
+// que la partida continúa con las torres del que se fue intactas.
+async function abandonScenario(): Promise<void> {
+  console.log('\n— Abandono explícito (leave) —');
+  const dora = new TestClient('Dora', wsUrl({ create: true }));
+  await dora.open();
+  dora.send({
+    type: 'create_room',
+    name: 'Dora',
+    token: 'token-abandon-dora',
+    settings: { mapId: 'sendero', mode: 'classic', difficulty: 'normal' },
+  });
+  const dj = await dora.waitFor('room_joined');
+  await dora.waitFor('lobby_state');
+
+  const emo = new TestClient('Emo', wsUrl({ code: dj.code }));
+  await emo.open();
+  emo.send({ type: 'join_room', name: 'Emo', token: 'token-abandon-emo', code: dj.code });
+  await emo.waitFor('room_joined');
+  await dora.waitFor('lobby_state');
+
+  emo.send({ type: 'set_ready', ready: true });
+  for (;;) {
+    const lb = await dora.waitFor('lobby_state');
+    if (lb.players.find((p) => !p.isHost)?.ready === true) break;
+  }
+
+  dora.send({ type: 'start_game' });
+  await dora.waitFor('countdown');
+  const initD = await dora.waitFor('game_started', 6000);
+  await emo.waitFor('game_started', 6000);
+
+  // Emo coloca una torre: debe QUEDARSE en el tablero tras abandonar
+  const map = getMap(initD.init.mapId);
+  const ctx = makePlacementContext(map);
+  let cell: [number, number] | null = null;
+  outer: for (let cy = 0; cy < map.gridH; cy++) {
+    for (let cx = 0; cx < map.gridW; cx++) {
+      if (placementError(map, ctx, [], cx, cy) === null) {
+        cell = [cx, cy];
+        break outer;
+      }
+    }
+  }
+  emo.send({ type: 'cmd', cmd: { kind: 'place', towerType: 'archer', cx: cell![0], cy: cell![1] } });
+  await sleep(500);
+  const towersBefore = dora.ticks[dora.ticks.length - 1]?.snap.towers.length ?? 0;
+  assert(towersBefore >= 1, `la torre del que se irá está en el tablero (${towersBefore})`);
+
+  // Emo ABANDONA la partida
+  emo.send({ type: 'leave' });
+
+  // (a) el resto ve el aviso de sistema «💨 Emo abandonó la partida»
+  const bye = await dora.waitFor('chat');
+  assert(
+    bye.from === '' && /abandon/i.test(bye.text) && bye.text.includes('Emo'),
+    `todos ven el aviso «💨 Emo abandonó la partida» (text="${bye.text}")`,
+  );
+
+  // (c) la partida SIGUE para el resto: siguen llegando ticks…
+  const ticksAtLeave = dora.ticks.length;
+  await sleep(1500);
+  assert(dora.ticks.length > ticksAtLeave + 5, `la partida sigue para el resto (+${dora.ticks.length - ticksAtLeave} ticks)`);
+  // …y las torres del que abandonó QUEDAN en el tablero (no se retiran)
+  const towersAfter = dora.ticks[dora.ticks.length - 1].snap.towers.length;
+  assert(towersAfter >= towersBefore, `las torres del que abandonó quedan (${towersAfter} >= ${towersBefore})`);
+  // el que abandonó cuenta como DESCONECTADO (el escalado por conectados se ajusta)
+  const emoSnap = dora.ticks[dora.ticks.length - 1].snap.players.find((p) => p.id !== initD.init.youAre);
+  assert(emoSnap?.connected === false, 'el que abandonó cuenta como desconectado permanente');
+
+  // (b) Emo intenta volver con su MISMO token → entra de ESPECTADOR, no de jugador
+  await sleep(200);
+  const emo2 = new TestClient('Emo', wsUrl({ code: dj.code }));
+  await emo2.open();
+  emo2.send({ type: 'join_room', name: 'Emo', token: 'token-abandon-emo', code: dj.code });
+  const emo2Joined = await emo2.waitFor('room_joined');
+  assert(emo2Joined.spectator === true, 'el que abandonó NO reconecta como jugador: vuelve de espectador');
+
+  dora.ws.close();
+  emo.ws.close();
+  emo2.ws.close();
+  await sleep(200);
 }
 
 // Escenario dedicado: una partida clásica en difícil donde NADIE defiende, así los

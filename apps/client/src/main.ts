@@ -515,6 +515,27 @@ function wireNet(): void {
   };
 }
 
+// Abandonar la partida (o dejar de mirarla como espectador) y volver a la
+// portada, dejando el estado local limpio igual que un game over / expulsión:
+// avisamos al servidor con `leave` (marca abandono permanente e invalida el
+// token) y CORTAMOS la reconexión automática (net.disconnect) — sin esto, el
+// watchdog nos reconectaría como espectador al instante.
+function leaveMatch(): void {
+  net.send({ type: 'leave' });
+  net.disconnect();
+  store.roomCode = '';
+  store.game = null;
+  stopMusic();
+  hideCountdown();
+  hideEnd();
+  $('overlay-pause').hidden = true;
+  $('overlay-reconnect').hidden = true;
+  $('settings-panel').hidden = true;
+  $('screen-game').classList.remove('paused');
+  history.replaceState(null, '', location.pathname);
+  switchScreen('home');
+}
+
 // ---------- botones del HUD ----------
 
 function wireHudButtons(): void {
@@ -601,6 +622,19 @@ function wireHudButtons(): void {
   document.addEventListener('click', () => {
     if (!panel.hidden) closePanel();
   });
+
+  // 🚪 Abandonar partida: desde la pausa Y desde ⚙ (para los que no pueden abrir
+  // la pausa: no-anfitriones en Node, espectadores). Con confirmación para no
+  // salir por accidente. Cierra el panel de ajustes si estaba abierto.
+  const wireAbandon = (id: string) =>
+    $(id).addEventListener('click', (e) => {
+      e.stopPropagation();
+      closePanel();
+      if (!confirm('¿Seguro que quieres ABANDONAR la partida? Tus torres se quedan, pero no podrás volver a jugar esta partida.')) return;
+      leaveMatch();
+    });
+  wireAbandon('btn-abandon-pause');
+  wireAbandon('btn-abandon-settings');
 
   sfxRange.addEventListener('input', () => {
     setSfxVolume(Number(sfxRange.value) / 100);

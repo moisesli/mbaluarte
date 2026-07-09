@@ -42,6 +42,12 @@ interface RoomPlayer {
   ws: WebSocket | null;
   isHost: boolean;
   ready: boolean; // ¿marcó «Listo»? El anfitrión está siempre listo.
+  // ABANDONO voluntario a mitad de partida: el slot se queda (sus torres siguen
+  // disparando y cuenta como desconectado para el escalado), pero su token de
+  // reconexión queda invalidado — NUNCA se reclama (ni por token, ni por prevToken,
+  // ni por nombre) para volver a jugar; si vuelve con el enlace, entra de
+  // espectador. Ver el flujo en addPlayer.
+  abandoned?: boolean;
 }
 
 // Espectador: entra con la partida en curso. Ve la partida y puede guiar (chat
@@ -203,7 +209,9 @@ export class RoomDO {
     if (this.banned.has(token) || (prevToken && this.banned.has(prevToken))) {
       return { kind: 'error', msg: 'El anfitrión te expulsó de esta sala' };
     }
-    const existing = this.players.find((p) => p.token === token);
+    // un slot ABANDONADO nunca se reclama por token: quien se fue voluntariamente
+    // no vuelve a jugar esta partida (cae al camino de espectador más abajo).
+    const existing = this.players.find((p) => p.token === token && !p.abandoned);
     if (existing) {
       // reconexión de un jugador que ya jugaba (por token): sigue siendo jugador
       existing.ws?.close();
@@ -226,11 +234,13 @@ export class RoomDO {
     // reconecta por la vía normal. Va ANTES del rescate de espectador: un antiguo
     // jugador siempre vuelve como jugador.
     {
+      // los slots ABANDONADOS quedan fuera de ambos rescates: quien se fue a
+      // propósito no se recupera ni por su respaldo (prevToken) ni por su nombre.
       const wanted = (name || '').slice(0, 16).trim().toLowerCase();
       const reclaim =
-        (prevToken ? this.players.find((p) => !p.ws && p.token === prevToken) : undefined) ??
+        (prevToken ? this.players.find((p) => !p.ws && p.token === prevToken && !p.abandoned) : undefined) ??
         (this.game && !this.game.over && wanted
-          ? this.players.find((p) => !p.ws && p.name.trim().toLowerCase() === wanted)
+          ? this.players.find((p) => !p.ws && !p.abandoned && p.name.trim().toLowerCase() === wanted)
           : undefined);
       if (reclaim) {
         reclaim.ws = ws;
@@ -877,6 +887,19 @@ export class RoomDO {
         ws.close();
         break;
 
+      // ABANDONO explícito. Con partida en curso: marca al jugador como
+      // desconectado PERMANENTE (sus torres se quedan) e invalida su token de
+      // reconexión (`abandoned`), avisa al resto y cierra el socket — la
+      // desconexión (host, sala vacía, loop, unlist, replay conn=false) la
+      // resuelve dropSocket. En el lobby es un simple cierre, como `leave_room`.
+      case 'leave':
+        if (this.game && !this.game.over) {
+          player.abandoned = true;
+          this.systemMsg(`💨 ${player.name} abandonó la partida`);
+        }
+        ws.close();
+        break;
+
       case 'ping':
         this.send(player, { type: 'pong', t: msg.t });
         // los pings de keepalive (cada 5 s por cliente) hacen de latido del
@@ -904,6 +927,10 @@ export class RoomDO {
       case 'ping':
         this.sendTo(spec.ws, { type: 'pong', t: msg.t });
         this.checkIdle();
+        break;
+      // un espectador que se va: cierre limpio del socket (dropSocket lo quita)
+      case 'leave':
+        spec.ws.close();
         break;
       // cmd, start_game, pause, resume, set_speed, set_settings, leave_room: ignorados
     }

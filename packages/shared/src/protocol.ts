@@ -246,6 +246,13 @@ export type ClientMsg =
   // era `prevToken` en vez de degradarlo a espectador.
   | { type: 'join_room'; name: string; token: string; code: string; prevToken?: string }
   | { type: 'leave_room' }
+  // ABANDONO explícito de la partida (salir a mitad de juego). En el lobby / como
+  // espectador se comporta como `leave_room` (cierra el socket). DURANTE la partida
+  // marca al jugador como desconectado PERMANENTE: sus torres quedan en el tablero,
+  // su token de reconexión queda invalidado (si vuelve, entra de espectador) y el
+  // resto ve el aviso «💨 X abandonó la partida». Sin payload (el jugador se deduce
+  // del socket, igual que `leave_room`/`pause`/`resume`).
+  | { type: 'leave' }
   | { type: 'set_settings'; settings: RoomSettings }
   // el anfitrión expulsa a un jugador de la sala (solo en el lobby)
   | { type: 'kick_player'; playerId: string }

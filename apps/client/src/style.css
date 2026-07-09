@@ -85,6 +85,8 @@ html, body {
 .btn.big { width: 100%; padding: 14px; font-size: 1.1rem; margin-top: 14px; }
 .btn.small { padding: 7px 12px; font-size: 0.9rem; }
 .btn.ghost { background: rgba(34, 44, 68, 0.6); border-color: var(--border); }
+/* acción destructiva/de salida (abandonar partida): rojo tenue con borde */
+.btn.danger { background: rgba(239, 83, 80, 0.14); border-color: rgba(239, 83, 80, 0.55); color: var(--danger); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; transform: none; box-shadow: none; }
 
 .field { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; }

@@ -552,41 +552,14 @@ html, body {
 .stat.warn { color: var(--accent-hi); border-color: rgba(255, 213, 79, 0.5); }
 @keyframes pulse { 50% { opacity: 0.55; } }
 
-#hud-players {
-  position: absolute;
-  top: 56px; left: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  pointer-events: none;
-}
-.pchip {
-  display: flex; align-items: center; gap: 6px;
-  background: rgba(12, 16, 26, 0.7);
-  border: 1px solid rgba(44, 56, 84, 0.55);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 0.8rem;
-}
-.pchip .player-dot { width: 9px; height: 9px; }
-.pchip .pgold { color: var(--accent-hi); margin-left: 4px; }
-.pchip.offline { opacity: 0.4; }
-/* métricas en vivo (⚔️ dps · 🪙 oleada · 💔 vidas): última chip de la columna */
-.pchip.live-chip {
-  color: var(--fg-dim);
-  font-variant-numeric: tabular-nums;
-  border-color: rgba(255, 213, 79, 0.25);
-}
-.pchip.live-chip .live-bad { color: var(--danger); font-weight: 800; }
-
 /* ---------- tabla de jugadores en vivo (F7.1) ---------- */
-/* panel flotante compacto (se abre con 📊); NO tapa el mapa y se cierra al tocar
-   fuera o con ✕. Centrado arriba para no pisar ni los chips (izq) ni los botones (der). */
+/* REEMPLAZA a los antiguos chips de jugadores: vive fija en la esquina superior
+   izquierda (abierta por defecto en escritorio), 📊 la alterna. Tocar el mapa NO
+   la cierra (es un componente persistente del HUD). */
 #scoreboard-panel {
   position: absolute;
   top: 52px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 12px;
   z-index: 31;
   width: 340px;
   max-width: calc(100vw - 24px);
@@ -613,6 +586,17 @@ html, body {
 #scoreboard-body .sb-dmg { color: var(--accent-hi); }
 #scoreboard-body .sb-kills { color: #f48fb1; }
 #scoreboard-body .btn.sb-give { padding: 1px 8px; font-size: 0.9rem; line-height: 1.4; }
+/* pie de métricas en vivo propias (⚔️ dps · 🪙 oleada · 💔 vidas): heredero del
+   antiguo chip ⚔ de la esquina, ahora dentro de la tabla */
+.sb-live {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+.sb-live .live-bad { color: var(--danger); font-weight: 800; }
 
 /* mini-formulario de regalo (🎁): aparece bajo la tabla al elegir un aliado */
 #scoreboard-give:not(:empty) { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
@@ -1403,15 +1387,14 @@ html, body {
      tocándolo directo) y la Guía 📖 vive en la pausa — ahora cualquiera puede
      pausar, así que sigue al alcance de todos */
   #btn-minimap, #btn-guide { display: none; }
-  #hud-players { top: 46px; gap: 3px; }
-  .pchip { font-size: 0.68rem; padding: 2px 7px; }
+  #scoreboard-panel { top: 46px; }
 }
 
 /* pantallas muy bajas (móvil apaisado): compactar todo lo posible */
 @media (max-height: 500px) {
   #hud-top { padding: 4px 8px; }
   .stat { font-size: 0.75rem; padding: 3px 8px; }
-  #hud-players { top: 40px; }
+  #scoreboard-panel { top: 40px; }
   #hud-towers { padding: 6px 8px; padding-bottom: max(6px, env(safe-area-inset-bottom)); }
   .tcard { width: 58px; padding: 4px 3px 3px; }
   .tcard .ticon { font-size: 1.15rem; line-height: 1.3rem; }

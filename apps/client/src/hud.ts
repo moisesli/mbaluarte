@@ -771,7 +771,7 @@ let liveWave = -1;
 let liveGoldBase = 0;
 let liveLivesBase = 0;
 
-function liveChipHtml(snap: Snap): string {
+function liveStatsHtml(snap: Snap): string {
   const me = snap.players.find((p) => p.id === store.playerId);
   if (!me) return ''; // espectador: sin métricas propias
   const now = performance.now();
@@ -788,7 +788,7 @@ function liveChipHtml(snap: Snap): string {
   const livesLost = Math.max(0, liveLivesBase - snap.lives);
   const parts = [`⚔️ ${dps}/s`, `🪙 +${goldWave}`];
   if (livesLost > 0) parts.push(`<span class="live-bad">💔 −${livesLost}</span>`);
-  return `<div class="pchip live-chip" title="Tu daño por segundo · oro ganado esta oleada · vidas perdidas esta oleada">${parts.join(' · ')}</div>`;
+  return `<div class="sb-live" title="Tu daño por segundo · oro ganado esta oleada · vidas perdidas esta oleada">${parts.join(' · ')}</div>`;
 }
 
 export function onTick(snap: Snap): void {
@@ -845,18 +845,8 @@ export function onTick(snap: Snap): void {
     btn.hidden = true;
   }
 
-  // chips de jugadores + métricas en vivo propias (última "chip" de la columna)
-  const chips = $('hud-players');
-  chips.innerHTML =
-    snap.players
-      .map((p) => {
-        const info = gs.init.players.find((ip) => ip.id === p.id);
-        return `<div class="pchip ${p.connected ? '' : 'offline'}">
-        <span class="player-dot" style="background:${info?.color};color:${info?.color}"></span>
-        <span>${escapeHtml(info?.name ?? p.id)}</span><span class="pgold">🪙${p.gold}</span>
-      </div>`;
-      })
-      .join('') + liveChipHtml(snap);
+  // (los chips de jugadores de la esquina fueron REEMPLAZADOS por la tabla 📊,
+  //  que ahora vive fija en esa esquina; ver renderScoreboard/syncScoreboard)
 
   // vista previa de la próxima oleada
   const preview = $('hud-preview');
@@ -1142,13 +1132,15 @@ export function renderScoreboard(): void {
       </tr>`;
     })
     .join('');
+  // pie con las métricas en vivo propias (antes vivían en el chip ⚔ de la esquina,
+  // que esta tabla reemplaza): dps · oro de la oleada · vidas perdidas de la oleada
   $('scoreboard-body').innerHTML = `<table>
     <thead><tr>
       <th class="sb-name">Jugador</th><th>🪙</th><th>🪵</th>
       <th title="Daño total de la partida">⚔️</th><th title="Bajas totales">💀</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
-  </table>`;
+  </table>${liveStatsHtml(snap)}`;
 }
 
 // dibuja (o limpia) el mini-formulario de regalo según `giveTarget`. Solo se llama
@@ -1212,8 +1204,12 @@ function submitGive(): void {
 export function initScoreboard(): void {
   const panel = $('scoreboard-panel');
   const btn = $('btn-scoreboard');
-  const open = localStorage.getItem('td_scoreboard') === '1';
-  panel.hidden = !open; // colapsada por defecto
+  // La tabla REEMPLAZA a los chips de jugadores de la esquina: en escritorio nace
+  // ABIERTA (es el marcador titular); en móvil, cerrada (espacio). El usuario manda
+  // después: su última elección queda en localStorage.
+  const stored = localStorage.getItem('td_scoreboard');
+  const open = stored === null ? window.innerWidth > 700 : stored === '1';
+  panel.hidden = !open;
   btn.setAttribute('aria-expanded', String(open));
 
   const setOpen = (v: boolean): void => {
@@ -1238,10 +1234,16 @@ export function initScoreboard(): void {
     e.stopPropagation();
     setOpen(false);
   });
-  // clic dentro no cierra; un toque fuera sí (mismo patrón que el mercado)
+  // clic dentro no cierra. A diferencia del mercado/tienda, la tabla es un
+  // componente PERSISTENTE del HUD (reemplaza a los chips): tocar el mapa NO la
+  // cierra — solo 📊, ✕… salvo que el formulario de regalo esté abierto, que sí
+  // se cancela al tocar fuera (comportamiento de formulario).
   panel.addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', () => {
-    if (!panel.hidden) setOpen(false);
+    if (!panel.hidden && giveTarget) {
+      giveTarget = null;
+      renderGiveForm();
+    }
   });
 
   // delegación de acciones dentro del panel (la tabla se re-renderiza a menudo)

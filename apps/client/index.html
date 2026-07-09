@@ -210,8 +210,9 @@
         </div>
       </div>
 
-      <!-- tabla de jugadores en vivo (F7.1): daño/bajas de la partida + regalar (🎁).
-           Panel flotante compacto que NO tapa el mapa; se abre con 📊. -->
+      <!-- tabla de jugadores en vivo (F7.1): oro/madera/daño/bajas + regalar (🎁).
+           REEMPLAZA a los antiguos chips de jugadores: vive fija en la esquina
+           superior izquierda (abierta por defecto en escritorio; 📊 la alterna). -->
       <div id="scoreboard-panel" hidden role="dialog" aria-label="Tabla de jugadores">
         <div class="sb-head">
           <h4>📊 Jugadores</h4>
@@ -233,7 +234,6 @@
 
       <div id="spectator-banner" hidden>👁 Estás mirando — entrarás en la próxima partida</div>
 
-      <div id="hud-players"></div>
       <div id="hud-preview" hidden>
         <span class="preview-label">Próxima oleada</span>
         <span id="hud-preview-tags"></span>

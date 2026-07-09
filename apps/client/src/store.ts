@@ -18,6 +18,10 @@ export interface SnapFrame {
 
 export type Selection =
   | { kind: 'tower'; id: number }
+  // Lote 4 · GRUPO de torres propias idénticas (mismo tipo+nivel+spec+fusión),
+  // seleccionado con doble click/tap sobre una torre propia. `ids` en orden
+  // estable (ascendente); el HUD lo poda cada refresco si alguna desaparece.
+  | { kind: 'towers'; ids: number[] }
   | { kind: 'placing'; towerType: TowerTypeId };
 
 // Premovimiento (estilo ajedrez / Hikaru en chess.com): una acción encolada que
@@ -38,6 +42,9 @@ export interface GameStore {
   pendingPlace: { cx: number; cy: number } | null;
   // premovimientos encolados (se disparan solos al alcanzar el coste). Ver Premove.
   premoves: Premove[];
+  // Lote 4 · modo FOCUS armado (botón 🎯 / tecla F): el siguiente tap sobre un
+  // ENEMIGO manda `focus` por cada torre seleccionada; tap en vacío o ESC cancela.
+  focusArmed: boolean;
   speed: number;
   paused: boolean;
   pausedBy: string;
@@ -139,6 +146,7 @@ export function startGameStore(init: GameInit): GameStore {
     hoverCell: null,
     pendingPlace: null,
     premoves: [],
+    focusArmed: false,
     speed: 1,
     paused: false,
     pausedBy: '',

@@ -12,7 +12,7 @@ import type {
 import type { AffixId } from '../types.js';
 import { ENEMIES } from '../balance/enemies.js';
 import { TOWERS, towerTargetsAir } from '../balance/towers.js';
-import { fusionOf, statsOf } from '../balance/fusions.js';
+import { fusionOf, statsOf, towerFires } from '../balance/fusions.js';
 import { generateWave, waveBountyMult, waveHpMult } from '../balance/waves.js';
 import {
   BLESSED_BOUNTY_MULT,
@@ -327,6 +327,35 @@ function pickTarget(
 ): EnemyState | null {
   const tx = tower.cx + 0.5;
   const ty = tower.cy + 0.5;
+
+  // Lote 4 · FOCUS: si la torre tiene un enemigo enfocado, ese enemigo MANDA
+  // sobre el targetMode… con matices (todos deterministas, solo leen el estado):
+  // - muerto/escapado (ya no está en state.enemies o hp<=0) → se LIMPIA el focus
+  //   y la torre vuelve a su targetMode normal;
+  // - vivo pero FUERA de rango (o aún no targeteable: invisible sin detectar,
+  //   aire/tierra que esta torre no alcanza, minRange del mortero) → la torre
+  //   ataca normal MIENTRAS TANTO y CONSERVA el focus para cuando vuelva a
+  //   entrar en alcance (decisión de UX: perder el focus por un hueco de
+  //   cobertura obligaría a re-enfocarlo a mano);
+  // - el multidisparo pasa `exclude` con los blancos ya tomados: si el enfocado
+  //   ya recibió el primer disparo, los extra se eligen por targetMode normal.
+  // El primer salto del Tesla usa este mismo pickTarget → respeta el focus.
+  if (tower.focusId > 0) {
+    const f = state.enemies.find((e) => e.id === tower.focusId);
+    if (!f || f.hp <= 0) {
+      tower.focusId = 0; // murió o escapó: volver al automático
+    } else if (!exclude || !exclude.has(f.id)) {
+      const fdef = ENEMIES[f.type];
+      const targetable =
+        !(f.invisible && !f.detected) && (fdef.flying ? canAir : canGround);
+      if (targetable) {
+        const d = dist(tx, ty, f.x, f.y);
+        if (d <= def.range && (!def.minRange || d >= def.minRange)) return f;
+      }
+      // vivo pero fuera de alcance / no visible: seguir con el targetMode normal
+    }
+  }
+
   let best: EnemyState | null = null;
   let bestScore = 0;
   for (const e of state.enemies) {
@@ -379,22 +408,8 @@ function isBanner(lvl: { auraDamage?: number; auraHaste?: number }): boolean {
   return lvl.auraDamage !== undefined || lvl.auraHaste !== undefined;
 }
 
-// ¿Esta torre DISPARA? No disparan: la mina, la Escarcha Eterna, el Estandarte,
-// el Alquimista ni las torres de camino (Trampa/Barril). EXCEPCIÓN: el Señor de
-// la Guerra (`alsoFires`) tiene aura Y ADEMÁS dispara. La usan fireTower y el
-// Zapador (aturdir una torre que no dispara no hace nada, así que las ignora).
-function towerFires(tower: TowerState): boolean {
-  const lvl = statsOf(tower);
-  if (lvl.alsoFires) return true;
-  return !(
-    lvl.incomePerWave ||
-    lvl.slowAura ||
-    isBanner(lvl) ||
-    lvl.auraBounty !== undefined ||
-    TOWERS[tower.type].onPathOnly ||
-    TOWERS[tower.type].detects // Lote 3 · el Sentry no dispara, solo detecta
-  );
-}
+// ¿Esta torre DISPARA? — ahora vive en balance/fusions.ts (Lote 4: la comparten
+// fireTower, el Zapador, la validación de focus/halt en commands.ts y el cliente).
 
 // Calcula, por cada torre buffeada, el MEJOR aura de daño y de cadencia de todos
 // los Estandartes que la cubren (de CUALQUIER dueño, co-op). No se apila: se toma
@@ -1043,6 +1058,10 @@ function stepTowers(state: GameState, ctx: SimContext, events: GameEvent[], aura
   for (const tower of state.towers) {
     // torre ATURDIDA (Zapador / Behemot): no dispara mientras dure el aturdimiento.
     if (tower.stunnedUntil > state.tick) continue;
+    // Lote 4 · torre DETENIDA (comando halt): no dispara hasta que la reanuden.
+    // Mismo gate que el aturdimiento: tampoco consume cooldown (al reanudar,
+    // retoma el enfriamiento donde lo dejó — coherente con stunned).
+    if (tower.halted) continue;
     if (tower.cooldownLeft > 0) {
       tower.cooldownLeft -= 1;
       continue;

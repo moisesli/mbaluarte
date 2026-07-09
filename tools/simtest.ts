@@ -70,7 +70,7 @@ function mkTower(type: TowerTypeId, over: Partial<TowerState> = {}): TowerState 
   return {
     id: 2000, type, cx: 5, cy: 1, level: 3, spec: -1, owner: 'p1',
     cooldownLeft: 0, targetMode: 'first', invested: 100, kills: 0, damage: 0, stunnedUntil: 0,
-    charges: 0, growthBonus: 0, goldGen: 0, fusion: -1,
+    charges: 0, growthBonus: 0, goldGen: 0, fusion: -1, focusId: 0, halted: false,
     ...over,
   };
 }
@@ -516,7 +516,7 @@ console.log('— Regresión: las crías de spawnOnDeath sobreviven a un golpe de
   const cannon: TowerState = {
     id: 2000, type: 'cannon', cx: 5, cy: 1, level: 3, spec: -1, owner: 'p1',
     cooldownLeft: 0, targetMode: 'first', invested: 440, kills: 0, damage: 0, stunnedUntil: 0,
-    charges: 0, growthBonus: 0, goldGen: 0, fusion: -1,
+    charges: 0, growthBonus: 0, goldGen: 0, fusion: -1, focusId: 0, halted: false,
   };
   st.towers.push(cannon);
 
@@ -558,14 +558,14 @@ console.log('— Estandarte: refuerza el daño de las torres cercanas (sin apila
     const archer: TowerState = {
       id: 2000, type: 'archer', cx: 5, cy: 1, level: 1, spec: -1, owner: 'p1',
       cooldownLeft: 0, targetMode: 'first', invested: 50, kills: 0, damage: 0, stunnedUntil: 0,
-      charges: 0, growthBonus: 0, goldGen: 0, fusion: -1,
+      charges: 0, growthBonus: 0, goldGen: 0, fusion: -1, focusId: 0, halted: false,
     };
     st.towers.push(archer);
     for (let i = 0; i < banners; i++) {
       st.towers.push({
         id: 3000 + i, type: 'banner', cx: 6 + i, cy: 1, level: 1, spec: -1, owner: 'p1',
         cooldownLeft: 0, targetMode: 'first', invested: 90, kills: 0, damage: 0, stunnedUntil: 0,
-        charges: 0, growthBonus: 0, goldGen: 0, fusion: -1,
+        charges: 0, growthBonus: 0, goldGen: 0, fusion: -1, focusId: 0, halted: false,
       });
     }
     // un tick: el arquero está listo y dispara; leemos el proyectil emitido
@@ -2002,6 +2002,179 @@ console.log('— Lote 3 · determinismo con oleada invisible + Sentry —');
     ]);
   }
   assert(hashInv() === hashInv(), 'la sim con oleada invisible + Sentry es determinista');
+}
+
+console.log('— Lote 4 · FOCUS: la torre ataca al enemigo enfocado, no al que dicta first —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 2600, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 9000; st.wave = 5; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  // francotirador (snipe instantáneo, perfora armadura): el daño llega el mismo tick
+  const sniper = mkTower('sniper', { id: 9001, cx: 5, cy: 1, level: 3, invested: 635 });
+  st.towers.push(sniper);
+  // dos brutos quietos en rango: front va PRIMERO (travelled 10) — el modo 'first'
+  // lo elegiría; rear va detrás (travelled 1) y es el que ENFOCAMOS.
+  const front = mkEnemy('brute', { id: 9002, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5, travelled: 10 });
+  const rear = mkEnemy('brute', { id: 9003, hp: 100000, maxHp: 100000, speedMult: 0, x: 7.5, y: 2.5, travelled: 1 });
+  st.enemies.push(front, rear);
+
+  // sin focus: dispara al 'first' (front)
+  stepGame(st, simCtx, []);
+  assert(front.hp < 100000 && rear.hp === 100000, `sin focus, el francotirador respeta 'first' (front −${(100000 - front.hp).toFixed(0)})`);
+
+  // con focus en rear: el siguiente disparo va al ENFOCADO aunque first dicte front
+  const frontHp1 = front.hp;
+  const ev1 = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'focus', towerId: 9001, enemyId: 9003 } }]);
+  assert(!ev1.some((e) => e.e === 'reject') && sniper.focusId === 9003, 'el comando focus se acepta y queda en la torre');
+  for (let i = 0; i < TICK_RATE * 3; i++) stepGame(st, simCtx, []);
+  assert(rear.hp < 100000, `con focus, ataca al ENFOCADO y no al 'first' (rear −${(100000 - rear.hp).toFixed(0)})`);
+  assert(front.hp === frontHp1, 'el first (front) deja de recibir disparos mientras dura el focus');
+
+  // FUERA DE RANGO: el enfocado se aleja (queda vivo) → la torre ataca normal
+  // MIENTRAS TANTO y CONSERVA el focus (comportamiento documentado en pickTarget)
+  rear.x = 25.5; // range 7.5: fuera de alcance
+  const frontHp2 = front.hp;
+  for (let i = 0; i < TICK_RATE * 3; i++) stepGame(st, simCtx, []);
+  assert(front.hp < frontHp2, 'con el enfocado fuera de rango, la torre ataca NORMAL mientras tanto');
+  assert(sniper.focusId === 9003, 'y CONSERVA el focus para cuando vuelva a entrar en rango');
+
+  // al MORIR el enfocado: focusId se limpia y vuelve al targetMode normal.
+  // La limpieza es perezosa (ocurre en el SIGUIENTE intento de apuntar): hay que
+  // esperar hasta dos cooldowns del francotirador (2.8 s) — el bucle da margen.
+  rear.x = 7.5; // vuelve a rango
+  rear.hp = 1; // el próximo disparo lo mata
+  for (let i = 0; i < TICK_RATE * 8 && sniper.focusId !== 0; i++) stepGame(st, simCtx, []);
+  assert(sniper.focusId === 0, 'al morir el enfocado, el focus se LIMPIA solo (focusId=0)');
+  const frontHp3 = front.hp;
+  for (let i = 0; i < TICK_RATE * 3; i++) stepGame(st, simCtx, []);
+  assert(front.hp < frontHp3, 'y la torre vuelve a su targetMode normal (first)');
+
+  // enemyId: 0 = quitar el focus a mano
+  stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'focus', towerId: 9001, enemyId: 9002 } }]);
+  assert(sniper.focusId === 9002, 'focus re-armado sobre front');
+  stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'focus', towerId: 9001, enemyId: 0 } }]);
+  assert(sniper.focusId === 0, 'focus con enemyId=0 vuelve al automático');
+}
+
+console.log('— Lote 4 · FOCUS vs invisibles: no se enfoca lo que no se ve —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 2601, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 9100; st.wave = 12; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const sniper = mkTower('sniper', { id: 9101, cx: 5, cy: 1, level: 3, invested: 635 });
+  st.towers.push(sniper);
+  const hidden = mkEnemy('brute', { id: 9102, hp: 100000, maxHp: 100000, invisible: true, speedMult: 0, x: 5.5, y: 2.5 });
+  st.enemies.push(hidden);
+
+  // (a) el comando se RECHAZA (no puedes ver a ese enemigo)
+  const ev = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'focus', towerId: 9101, enemyId: 9102 } }]);
+  assert(
+    ev.some((e) => e.e === 'reject' && e.reason.includes('ver')) && sniper.focusId === 0,
+    'focus sobre un invisible NO detectado se RECHAZA (focusId sigue en 0)',
+  );
+  // (b) defensa en profundidad: aun con focusId forzado a mano, pickTarget lo ignora
+  sniper.focusId = 9102;
+  for (let i = 0; i < TICK_RATE * 3; i++) stepGame(st, simCtx, []);
+  assert(hidden.hp === 100000, 'aun con focusId forzado, la torre NO dispara a un invisible no detectado');
+}
+
+console.log('— Lote 4 · HALT: una torre detenida no dispara; al reanudar vuelve —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 2602, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 9200; st.wave = 3; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const sniper = mkTower('sniper', { id: 9201, cx: 5, cy: 1, level: 3, invested: 635 });
+  st.towers.push(sniper);
+  const brute = mkEnemy('brute', { id: 9202, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5 });
+  st.enemies.push(brute);
+
+  // detenida ANTES de disparar: comandos van primero en el tick → jamás dispara
+  const evH = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'halt', towerId: 9201, on: true } }]);
+  assert(!evH.some((e) => e.e === 'reject') && sniper.halted, 'el comando halt(on) se acepta');
+  for (let i = 0; i < TICK_RATE * 4; i++) stepGame(st, simCtx, []);
+  assert(brute.hp === 100000, `una torre DETENIDA no dispara (hp intacto tras 4 s)`);
+
+  // reanudar: vuelve a disparar
+  stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'halt', towerId: 9201, on: false } }]);
+  assert(!sniper.halted, 'el comando halt(off) reanuda');
+  for (let i = 0; i < TICK_RATE * 4; i++) stepGame(st, simCtx, []);
+  assert(brute.hp < 100000, `al REANUDAR vuelve a disparar (−${(100000 - brute.hp).toFixed(0)})`);
+}
+
+console.log('— Lote 4 · focus/halt rechazan a quien no es dueño y a torres que no disparan —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 2603, [
+    { id: 'p1', name: 'A', color: '#fff' },
+    { id: 'p2', name: 'B', color: '#000' },
+  ]);
+  st.nextId = 9300; st.wave = 3; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const sniper = mkTower('sniper', { id: 9301, cx: 5, cy: 1, level: 3, owner: 'p1' });
+  st.towers.push(sniper);
+  // torres que NO disparan, de p1: estandarte, alquimista, sentry y trampa
+  st.towers.push(mkTower('banner', { id: 9302, cx: 6, cy: 1, level: 1 }));
+  st.towers.push(mkTower('alchemist', { id: 9303, cx: 7, cy: 1, level: 1 }));
+  st.towers.push(mkTower('sentry', { id: 9304, cx: 8, cy: 1, level: 1 }));
+  st.towers.push(mkTower('trap', { id: 9305, cx: 5, cy: 2, level: 1, charges: 20 }));
+  const brute = mkEnemy('brute', { id: 9306, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5 });
+  st.enemies.push(brute);
+
+  // (a) p2 intenta controlar la torre de p1 → rechazado, sin efecto
+  const evOwner = stepGame(st, simCtx, [
+    { playerId: 'p2', cmd: { kind: 'focus', towerId: 9301, enemyId: 9306 } },
+    { playerId: 'p2', cmd: { kind: 'halt', towerId: 9301, on: true } },
+  ]);
+  const ownerRejects = evOwner.filter((e) => e.e === 'reject' && e.reason.includes('dueño'));
+  assert(ownerRejects.length === 2, `focus y halt de un NO-dueño se rechazan (${ownerRejects.length}/2 rejects)`);
+  assert(sniper.focusId === 0 && !sniper.halted, 'la torre ajena queda intacta (sin focus, sin halt)');
+
+  // (b) focus/halt sobre torres que NO disparan → rechazados
+  const evFires = stepGame(st, simCtx, [
+    { playerId: 'p1', cmd: { kind: 'focus', towerId: 9302, enemyId: 9306 } }, // estandarte
+    { playerId: 'p1', cmd: { kind: 'halt', towerId: 9303, on: true } }, // alquimista
+    { playerId: 'p1', cmd: { kind: 'halt', towerId: 9304, on: true } }, // sentry
+    { playerId: 'p1', cmd: { kind: 'focus', towerId: 9305, enemyId: 9306 } }, // trampa
+  ]);
+  const firesRejects = evFires.filter((e) => e.e === 'reject' && e.reason.includes('no dispara'));
+  assert(firesRejects.length === 4, `focus/halt sobre estandarte/alquimista/sentry/trampa se rechazan (${firesRejects.length}/4)`);
+  assert(st.towers.every((t) => t.focusId === 0 && !t.halted), 'ninguna torre de apoyo quedó con focus/halt');
+}
+
+console.log('— Lote 4 · determinismo con focus + halt en plena oleada —');
+{
+  // Corre una escena real (oleada 6 generada por la sim) y aplica focus/halt/
+  // reanudar en ticks fijos; el id del enfocado se ELIGE del estado (primer
+  // enemigo vivo), igual en ambas corridas. Estado final → hash idéntico.
+  function hashCtl(): string {
+    const map = getMap('sendero');
+    const simCtx = makeSimContext(map, makePlacementContext(map));
+    const st = createGame('sendero', 'classic', 'normal', 2604, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 9400; st.wave = 5; st.waveState = 'interlude'; st.interludeLeft = 2 * TICK_RATE;
+    st.towers.push(mkTower('sniper', { id: 9401, cx: 5, cy: 1, level: 3 }));
+    st.towers.push(mkTower('cannon', { id: 9402, cx: 6, cy: 1, level: 3 }));
+    st.towers.push(mkTower('archer', { id: 9403, cx: 7, cy: 1, level: 3 }));
+    for (let i = 0; i < TICK_RATE * 30; i++) {
+      const cmds: PlayerCommand[] = [];
+      if (i === TICK_RATE * 5 && st.enemies.length > 0) {
+        cmds.push({ playerId: 'p1', cmd: { kind: 'focus', towerId: 9401, enemyId: st.enemies[0].id } });
+      }
+      if (i === TICK_RATE * 6) cmds.push({ playerId: 'p1', cmd: { kind: 'halt', towerId: 9402, on: true } });
+      if (i === TICK_RATE * 12) cmds.push({ playerId: 'p1', cmd: { kind: 'halt', towerId: 9402, on: false } });
+      if (i === TICK_RATE * 14) cmds.push({ playerId: 'p1', cmd: { kind: 'focus', towerId: 9401, enemyId: 0 } });
+      stepGame(st, simCtx, cmds);
+    }
+    return JSON.stringify([
+      st.tick, st.rng, st.nextId, st.wave, st.lives,
+      st.enemies.map((e) => [e.id, Math.round(e.x * 100), Math.round(e.hp)]),
+      st.towers.map((t) => [t.id, t.focusId, t.halted, t.kills, Math.round(t.damage)]),
+      Math.round(st.players[0].gold),
+    ]);
+  }
+  assert(hashCtl() === hashCtl(), 'la sim con focus+halt es DETERMINISTA (mismo hash en dos corridas)');
 }
 
 console.log('— Determinismo: misma semilla + mismos comandos → mismo estado —');

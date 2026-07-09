@@ -16,6 +16,7 @@ import {
   TICK_RATE,
   TOWERS,
   TOWER_ORDER,
+  towerFires,
   towerLevel,
   towerTotalCost,
   ORC_RATES,
@@ -25,13 +26,14 @@ import {
   WOOD_LOT,
   WOOD_SELL_SPREAD,
   type Snap,
+  type SnapTower,
   type TargetMode,
   type TowerDef,
   type TowerLevelDef,
   type TowerTypeId,
 } from '@td/shared';
 import { net } from './net.js';
-import { myGold, myWood, store, type Premove } from './store.js';
+import { myGold, myWood, store, type GameStore, type Premove } from './store.js';
 import { computeBannerAuras, countBannerTargets, ENEMY_ICONS, getPlacementCtx, TOWER_ICONS, type ClientAura } from './renderer.js';
 import { clearSelection, setPlacing } from './input.js';
 
@@ -368,8 +370,8 @@ function wirePanel(): void {
   window.addEventListener('pointercancel', releasePanel);
   $('hud-panel').addEventListener('click', (e) => {
     const gs = store.game;
-    if (!gs || gs.selection?.kind !== 'tower') return;
-    const towerId = gs.selection.id;
+    const sel = gs?.selection;
+    if (!gs || !sel || (sel.kind !== 'tower' && sel.kind !== 'towers')) return;
     const target = e.target as HTMLElement;
     // el botón ✕ cierra el panel y deselecciona (imprescindible en móvil, donde
     // el panel es una hoja inferior y "tocar fuera" no siempre es obvio)
@@ -377,10 +379,44 @@ function wirePanel(): void {
       clearSelection();
       return;
     }
+
+    // ---- acciones comunes a torre y GRUPO (Lote 4) ----
+    // ⏹/▶ stop-reanudar, 🎯 armar focus, ✕ volver al automático. Aplican a todas
+    // las torres controlables de la selección (mías y que disparan).
+    if (target.closest('#panel-halt')) {
+      toggleHaltSelection();
+      return;
+    }
+    if (target.closest('#panel-focus')) {
+      armFocus();
+      return;
+    }
+    if (target.closest('#panel-unfocus')) {
+      clearFocusSelection();
+      return;
+    }
+    const mode = target.closest<HTMLElement>('.tmode')?.dataset.mode;
+
+    // ---- GRUPO (Lote 4): mejorar todas + modo de objetivo en grupo ----
+    if (sel.kind === 'towers') {
+      const gUpgrade = target.closest<HTMLButtonElement>('#gpanel-upgrade');
+      if (gUpgrade && !gUpgrade.disabled) {
+        groupUpgradeAll();
+        return;
+      }
+      if (mode) {
+        for (const id of sel.ids) {
+          net.send({ type: 'cmd', cmd: { kind: 'target', towerId: id, mode: mode as TargetMode } });
+        }
+      }
+      return;
+    }
+
+    // ---- torre individual (flujo clásico) ----
+    const towerId = sel.id;
     const upgrade = target.closest<HTMLButtonElement>('#panel-upgrade');
     const sell = target.closest<HTMLButtonElement>('#panel-sell');
     const specBtn = target.closest<HTMLButtonElement>('.spec-btn');
-    const mode = target.closest<HTMLElement>('.tmode')?.dataset.mode;
     const fuseBtn = target.closest<HTMLButtonElement>('.fuse-btn');
     if (upgrade && !upgrade.disabled) {
       // botón de mejora en modo premovimiento (sin oro suficiente): encola/cancela
@@ -406,6 +442,117 @@ function wirePanel(): void {
       net.send({ type: 'cmd', cmd: { kind: 'target', towerId, mode: mode as TargetMode } });
     }
   });
+}
+
+// ---------- Lote 4 · control avanzado (stop / focus) sobre la selección ----------
+
+// Tuplas de la selección actual (torre única o grupo) presentes en el snapshot.
+function selectedTuples(gs: GameStore): SnapTower[] {
+  const snap = gs.latest;
+  const sel = gs.selection;
+  if (!snap || !sel) return [];
+  const ids = sel.kind === 'tower' ? [sel.id] : sel.kind === 'towers' ? sel.ids : [];
+  const out: SnapTower[] = [];
+  for (const id of ids) {
+    const t = snap.towers.find((tt) => tt[0] === id);
+    if (t) out.push(t);
+  }
+  return out;
+}
+
+// ¿La torre de esta tupla DISPARA? (mismo criterio que la sim: comparte towerFires)
+function tupleFires(t: SnapTower): boolean {
+  return towerFires({ type: TOWER_ORDER[t[1]], level: t[4], spec: t[9] ?? -1, fusion: t[13] ?? -1 });
+}
+
+// Ids de las torres CONTROLABLES de la selección: MÍAS y que DISPARAN (stop y
+// focus no significan nada en auras/economía; la sim los rechazaría igual).
+// La usan los botones del panel, las hotkeys X/F y el tap del modo focus.
+export function controllableSelectedIds(): number[] {
+  const gs = store.game;
+  if (!gs || store.spectator || store.replay) return [];
+  return selectedTuples(gs)
+    .filter((t) => gs.init.players[t[5]]?.id === store.playerId && tupleFires(t))
+    .map((t) => t[0]);
+}
+
+// ⏹/▶ (botón del panel y tecla X): si ALGUNA torre controlable de la selección
+// está detenida → reanuda TODAS; si no, las detiene todas. Así el botón "mixto"
+// siempre converge al estado que pide su etiqueta.
+export function toggleHaltSelection(): void {
+  const gs = store.game;
+  const snap = gs?.latest;
+  if (!gs || !snap) return;
+  const ids = controllableSelectedIds();
+  if (ids.length === 0) return;
+  const byId = new Map(snap.towers.map((t) => [t[0], t]));
+  const anyHalted = ids.some((id) => ((byId.get(id)?.[17] ?? 0) as number) === 1);
+  for (const id of ids) net.send({ type: 'cmd', cmd: { kind: 'halt', towerId: id, on: !anyHalted } });
+  toast(
+    anyHalted
+      ? ids.length > 1
+        ? '▶ Torres reanudadas'
+        : '▶ Torre reanudada'
+      : ids.length > 1
+        ? '⏹ Torres detenidas'
+        : '⏹ Torre detenida',
+    'info',
+  );
+  refreshPanel();
+}
+
+// 🎯 (botón del panel y tecla F): arma/desarma el modo focus — el siguiente tap
+// sobre un enemigo manda `focus` por cada torre seleccionada (ver input.ts).
+export function armFocus(): void {
+  const gs = store.game;
+  if (!gs) return;
+  if (controllableSelectedIds().length === 0) return;
+  gs.focusArmed = !gs.focusArmed;
+  if (gs.focusArmed) toast('🎯 Toca un enemigo para fijar el objetivo (ESC cancela)', 'info');
+  refreshPanel();
+}
+
+// ✕ del estado "Atacando: …": quita el focus (vuelta al targetMode automático)
+// de todas las torres de la selección que tuvieran uno.
+export function clearFocusSelection(): void {
+  const gs = store.game;
+  const snap = gs?.latest;
+  if (!gs || !snap) return;
+  const byId = new Map(snap.towers.map((t) => [t[0], t]));
+  const ids = controllableSelectedIds().filter((id) => ((byId.get(id)?.[18] ?? 0) as number) > 0);
+  if (ids.length === 0) return;
+  for (const id of ids) net.send({ type: 'cmd', cmd: { kind: 'focus', towerId: id, enemyId: 0 } });
+  toast('🎯 Objetivo liberado: vuelven al modo automático', 'info');
+  refreshPanel();
+}
+
+// ⬆ Mejorar todas (grupo): manda un `upgrade` por torre EN ORDEN ESTABLE por id,
+// descontando un presupuesto local (oro Y madera — el Rango II cuesta ambas); si
+// no alcanza para todas, mejora las que alcancen y el toast lo resume. El server
+// valida cada comando igualmente.
+function groupUpgradeAll(): void {
+  const gs = store.game;
+  const snap = gs?.latest;
+  if (!gs || !snap || gs.selection?.kind !== 'towers') return;
+  let gold = myGold(gs);
+  let wood = myWood(gs);
+  const ids = [...gs.selection.ids].sort((a, b) => a - b);
+  let upgradable = 0;
+  let sent = 0;
+  for (const id of ids) {
+    const cost = premoveUpgradeCost(snap, id);
+    if (!cost) continue; // al máximo / requiere especializar: no cuenta
+    upgradable += 1;
+    if (gold >= cost.gold && wood >= cost.wood) {
+      net.send({ type: 'cmd', cmd: { kind: 'upgrade', towerId: id } });
+      gold -= cost.gold;
+      wood -= cost.wood;
+      sent += 1;
+    }
+  }
+  if (upgradable === 0) return;
+  if (sent === 0) toast('No te alcanzan los recursos para mejorar ninguna');
+  else toast(`⬆ Mejoradas ${sent}/${upgradable}`, 'info');
 }
 
 // Líneas de stats de un bloque activo (con vista previa opcional del siguiente
@@ -501,10 +648,12 @@ function towerAttacks(lvl: TowerLevelDef, def: TowerDef): boolean {
 
 // F6.2 · texto del contador de próximo ataque a partir de la tupla del snapshot.
 // El aturdimiento (índice 10) manda sobre el cooldown: una torre aturdida no
-// dispara. cdTicks (índice 16) son los ticks que faltan para el próximo disparo;
+// dispara. Lote 4: una torre DETENIDA (índice 17) tampoco — ⏸ manda sobre todo.
+// cdTicks (índice 16) son los ticks que faltan para el próximo disparo;
 // 0 = lista. Con el juego en PAUSA no llegan ticks, así que el valor se congela
 // solo (comportamiento correcto, sin trabajo extra).
-function cooldownText(stunned: number, cdTicks: number): string {
+function cooldownText(stunned: number, cdTicks: number, halted = 0): string {
+  if (halted) return '⏸ Detenida';
   if (stunned) return '💫 Aturdida';
   return cdTicks <= 0 ? '⚔️ listo' : `⚔️ ${(cdTicks / TICK_RATE).toFixed(1)}s`;
 }
@@ -512,25 +661,172 @@ function cooldownText(stunned: number, cdTicks: number): string {
 export function refreshPanel(): void {
   const gs = store.game;
   const panel = $('hud-panel');
-  if (!gs || gs.selection?.kind !== 'tower' || !gs.latest) {
+  const sel = gs?.selection ?? null;
+  if (!gs || !gs.latest || !sel || (sel.kind !== 'tower' && sel.kind !== 'towers')) {
     panel.hidden = true;
     $('screen-game').classList.remove('panel-open');
     return;
   }
-  const selectedId = gs.selection.id;
-  const data = gs.latest.towers.find((t) => t[0] === selectedId);
-  if (!data) {
-    // la torre ya no existe (vendida / trampa agotada / barril detonado)
+  // Lote 4: el panel tiene dos formas — torre individual y GRUPO (doble click).
+  // Ambas devuelven {html, live} y comparten la escritura anti-robo-de-clicks.
+  const built = sel.kind === 'towers' ? buildGroupPanel(gs, sel) : buildTowerPanel(gs, sel.id);
+  if (!built) {
+    // la selección ya no existe (vendida / trampa agotada / barril detonado)
     panel.hidden = true;
     $('screen-game').classList.remove('panel-open');
     gs.selection = null;
     return;
   }
+  const { html, live } = built;
+  wirePanel();
+  // ESTRUCTURA: solo reescribir si cambió de verdad (los contadores volátiles ya
+  // no entran aquí) y NUNCA con un dedo presionando el panel — reescribir
+  // destruye el botón bajo el dedo y el click se pierde.
+  const structuralChanged = html !== lastPanelHtml;
+  if (structuralChanged && !panelHeld) {
+    lastPanelHtml = html;
+    panel.innerHTML = html;
+  }
+  // VOLÁTILES: actualizar por textContent (no destruye nada, no roba clicks)
+  if (!structuralChanged || !panelHeld) {
+    for (const [k, v] of Object.entries(live)) {
+      const el = panel.querySelector<HTMLElement>(`[data-lv="${k}"]`);
+      if (el && el.textContent !== v) el.textContent = v;
+    }
+  }
+  panel.hidden = false;
+  // en móvil el panel es una hoja inferior que SUSTITUYE a la barra de torres
+  $('screen-game').classList.add('panel-open');
+}
+
+// Lote 4 · panel de GRUPO: cabecera "N× torre" + acciones en lote (mejorar todas,
+// modo de objetivo, ⏹/▶, 🎯). SIN vender (evita ventas masivas accidentales:
+// véndese de una en una, como siempre). null = el grupo entero desapareció.
+function buildGroupPanel(
+  gs: GameStore,
+  sel: { kind: 'towers'; ids: number[] },
+): { html: string; live: Record<string, string> } | null {
+  const snap = gs.latest!;
+  const byId = new Map(snap.towers.map((t) => [t[0], t]));
+  const tuples = sel.ids.map((id) => byId.get(id)).filter((t): t is SnapTower => t !== undefined);
+  if (tuples.length === 0) return null;
+  // poda: torres del grupo vendidas/consumidas desde la selección
+  if (tuples.length !== sel.ids.length) sel.ids = tuples.map((t) => t[0]);
+  // el grupo colapsó a una: panel individual completo (más útil que un grupo de 1)
+  if (tuples.length === 1) {
+    gs.selection = { kind: 'tower', id: tuples[0][0] };
+    return buildTowerPanel(gs, tuples[0][0]);
+  }
+  const head = tuples[0];
+  const type = TOWER_ORDER[head[1]];
+  const def = TOWERS[type];
+  const level = head[4];
+  const spec = head[9] ?? -1;
+  const fusion = fusionByIndex(head[13] ?? -1);
+  const lvl = fusion ? fusion.stats : activeStats(type, level, spec);
+  const projKind = fusion ? fusion.projectileKind : def.projectileKind;
+  const n = tuples.length;
+  const fires = tupleFires(head);
+
+  const name = fusion
+    ? `${fusion.icon} ${fusion.name}`
+    : spec >= 0
+      ? `${TOWER_ICONS[type]} ${def.specs[spec].name}`
+      : `${TOWER_ICONS[type]} ${def.name}`;
+  const levelTag = fusion
+    ? '⚗ Fusión'
+    : level >= 4
+      ? '★★ Rango II'
+      : spec >= 0
+        ? '★ Élite'
+        : `Nv. ${level}${level >= 3 ? ' (máx)' : ''}`;
+
+  // agregados volátiles del grupo (cambian cada tick: van por data-lv, no al html)
+  const live: Record<string, string> = {
+    kills: String(tuples.reduce((acc, t) => acc + t[7], 0)),
+    damage: tuples.reduce((acc, t) => acc + t[8], 0).toLocaleString(),
+  };
+  const statLines = [
+    `Grupo de <b>${n}</b> torres idénticas (doble click)`,
+    'Bajas: <b data-lv="kills"></b> · Daño total: <b data-lv="damage"></b>',
+  ];
+
+  // ⬆ Mejorar todas: coste TOTAL real, sumado por torre (oro Y madera — p. ej. el
+  // Rango II cuesta ambas). El grupo nace idéntico, así que el unitario es uniforme;
+  // si una mejora parcial lo mezcló, la suma por torre sigue siendo exacta.
+  let upBtn = '';
+  {
+    let totalGold = 0;
+    let totalWood = 0;
+    let count = 0;
+    let minGold = Infinity;
+    let minWood = Infinity;
+    for (const t of tuples) {
+      const cost = premoveUpgradeCost(snap, t[0]);
+      if (!cost) continue;
+      totalGold += cost.gold;
+      totalWood += cost.wood;
+      count += 1;
+      if (cost.gold < minGold) {
+        minGold = cost.gold;
+        minWood = cost.wood;
+      }
+    }
+    if (count > 0) {
+      // desactivado solo si no alcanza NI para una (si alcanza para algunas,
+      // el click mejora esas y el toast resume "Mejoradas X/N")
+      const affordOne = myGold(gs) >= minGold && myWood(gs) >= minWood;
+      const woodTxt = totalWood > 0 ? ` · 🪵${totalWood}` : '';
+      upBtn = `<div class="prow"><button id="gpanel-upgrade" class="btn primary"${affordOne ? '' : ' disabled'}>⬆ Mejorar todas (${count}) 🪙${totalGold}${woodTxt}</button></div>`;
+    } else if (!fusion && spec < 0 && level >= 3 && !def.onPathOnly && !def.detects) {
+      statLines.push('<span class="hint">Al máximo: especialízalas de una en una (la rama se elige por torre)</span>');
+    }
+  }
+
+  // ⏹/▶ + 🎯, solo si el grupo DISPARA (auras/economía no se detienen ni apuntan)
+  let controls = '';
+  if (fires) {
+    const anyHalted = tuples.some((t) => (t[17] ?? 0) === 1);
+    const anyFocus = tuples.some((t) => (t[18] ?? 0) > 0);
+    const armed = gs.focusArmed;
+    controls = `
+      <div class="prow">
+        <button id="panel-halt" class="btn ghost">${anyHalted ? '▶ Reanudar todas' : '⏹ Detener todas'}</button>
+        <button id="panel-focus" class="btn ghost${armed ? ' armed' : ''}">${armed ? '🎯 Toca un enemigo…' : '🎯 Atacar objetivo…'}</button>
+      </div>
+      ${anyFocus ? '<div class="focus-line">🎯 Objetivo fijado <button id="panel-unfocus" class="btn small ghost">✕ automático</button></div>' : ''}`;
+  }
+
+  const html = `
+    <h3><span>${n}× ${name}</span><span class="lvl">${levelTag}</span><button id="panel-close" aria-label="Cerrar">✕</button></h3>
+    <div class="pstats">${statLines.join('<br>')}</div>
+    ${upBtn}
+    ${controls}
+    ${fires ? targetModesHtml(projKind, lvl, modeIdx4(tuples)) : ''}
+    <p class="hint" style="padding:4px 4px 0">💸 Vender no está disponible en grupo: véndelas de una en una</p>
+  `;
+  return { html, live };
+}
+
+// modo de objetivo del grupo: el común si TODAS coinciden; −1 (ninguno resaltado)
+// si está mezclado — pulsar uno lo unifica.
+function modeIdx4(tuples: SnapTower[]): number {
+  const first = tuples[0][6];
+  return tuples.every((t) => t[6] === first) ? first : -1;
+}
+
+// panel clásico de UNA torre: html + valores volátiles. null = ya no existe.
+function buildTowerPanel(gs: GameStore, selectedId: number): { html: string; live: Record<string, string> } | null {
+  const data = gs.latest!.towers.find((t) => t[0] === selectedId);
+  if (!data) return null;
   const [id, typeIdx, , , level, ownerIdx, modeIdx, kills, damage] = data;
+  const snap = gs.latest!;
   const spec = data[9] ?? -1;
   const stunned = data[10] ?? 0; // F6.2 · aturdida: no dispara (manda sobre el cooldown)
   const charges = data[11] ?? 0;
   const cdTicks = data[16] ?? 0; // F6.2 · ticks hasta el próximo disparo (0 = lista)
+  const halted = data[17] ?? 0; // Lote 4 · detenida por su dueño (⏸)
+  const focusId = data[18] ?? 0; // Lote 4 · enemigo enfocado (0 = automático)
   // F4.3: índice de fusión e inversión total (para el valor de venta de fusiones)
   const fusionIdx = data[13] ?? -1;
   const invested = data[14] ?? 0;
@@ -554,14 +850,14 @@ export function refreshPanel(): void {
   const r2cost = canRank2 ? rank2Cost(type, spec) : null;
 
   // aura de Estandarte activa SOBRE esta torre → el panel muestra stats efectivos
-  const auraBuff = computeBannerAuras(gs.latest).get(id);
+  const auraBuff = computeBannerAuras(snap).get(id);
   const statLines = statBlock(lvl, next, auraBuff);
   // F6.2 · contador de PRÓXIMO ATAQUE, solo para torres que disparan (las de apoyo
   // y las de camino no lo muestran). Va en un span con id estable para poder
   // refrescarlo en CADA tick desde onTick (a 15/s) sin re-renderizar el panel
   // entero (que solo se rehace 4/s). Ver la actualización directa en onTick.
   if (towerAttacks(lvl, def)) {
-    statLines.push(`Próximo disparo: <span id="panel-cd" class="pcd">${cooldownText(stunned, cdTicks)}</span>`);
+    statLines.push(`Próximo disparo: <span id="panel-cd" class="pcd">${cooldownText(stunned, cdTicks, halted)}</span>`);
   }
   // Valores VOLÁTILES (cambian cada tick en combate: bajas/daño/cargas/oro…):
   // van en spans estables `data-lv` y se actualizan por textContent, FUERA del
@@ -573,7 +869,7 @@ export function refreshPanel(): void {
   live.damage = damage.toLocaleString();
   // Estandarte (y fusiones con aura): cuántas torres está reforzando ahora mismo
   if (lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) {
-    const n = countBannerTargets(gs.latest, id);
+    const n = countBannerTargets(snap, id);
     live.targets = `${n} ${n === 1 ? 'torre' : 'torres'}`;
     statLines.push('Reforzando <b data-lv="targets"></b>');
     // el Señor de la Guerra además dispara: muestra también su historial de combate
@@ -640,7 +936,7 @@ export function refreshPanel(): void {
   if (isMine && !fusion && specialized) {
     const seen = new Set<string>();
     const btns: string[] = [];
-    for (const other of gs.latest.towers) {
+    for (const other of snap.towers) {
       if (other[0] === id) continue;
       if ((other[9] ?? -1) < 0 || (other[13] ?? -1) >= 0) continue; // especializada y sin fusionar
       if (other[5] !== ownerIdx) continue; // mismo dueño
@@ -659,6 +955,26 @@ export function refreshPanel(): void {
     }
   }
 
+  // Lote 4 · fila de CONTROL (⏹/▶ stop + 🎯 focus) para torres propias que
+  // DISPARAN, con el estado "Atacando a…" y su ✕ (vuelta al automático). Las
+  // torres de apoyo/economía no la muestran (no disparan; la sim lo rechaza).
+  let controlRow = '';
+  if (isMine && tupleFires(data)) {
+    let focusLine = '';
+    if (focusId > 0) {
+      const fe = snap.enemies.find((e) => e[0] === focusId);
+      const ficon = fe ? ENEMY_ICONS[ENEMY_ORDER[fe[1]]] : '';
+      const fname = fe ? ENEMIES[ENEMY_ORDER[fe[1]]].name : 'objetivo fuera de vista';
+      focusLine = `<div class="focus-line">🎯 Atacando: ${ficon} ${fname} <button id="panel-unfocus" class="btn small ghost">✕ automático</button></div>`;
+    }
+    const armed = gs.focusArmed;
+    controlRow = `
+      <div class="prow">
+        <button id="panel-halt" class="btn ghost">${halted ? '▶ Reanudar <span class="khint">[X]</span>' : '⏹ Detener <span class="khint">[X]</span>'}</button>
+        <button id="panel-focus" class="btn ghost${armed ? ' armed' : ''}">${armed ? '🎯 Toca un enemigo…' : '🎯 Objetivo <span class="khint">[F]</span>'}</button>
+      </div>${focusLine}`;
+  }
+
   // acciones del dueño
   let actions = '';
   if (isMine) {
@@ -667,7 +983,8 @@ export function refreshPanel(): void {
       actions = `
         <p class="spec-desc" style="padding:0 4px 6px">${fusion.desc}</p>
         <div class="prow"><button id="panel-sell" class="btn ghost">💸 Vender ${sellValue}</button></div>
-        ${targetModesHtml(projKind, lvl, modeIdx)}`;
+        ${targetModesHtml(projKind, lvl, modeIdx)}
+        ${controlRow}`;
     } else if (def.onPathOnly || def.detects) {
       // Trampa/Barril y Sentry: no se mejoran ni especializan; solo se pueden vender.
       actions = `<div class="prow"><button id="panel-sell" class="btn ghost">💸 Vender ${sellValue}</button></div>`;
@@ -692,7 +1009,8 @@ export function refreshPanel(): void {
             )
             .join('')}
         </div>
-        <div class="prow"><button id="panel-sell" class="btn ghost">💸 Vender ${sellValue}</button></div>`;
+        <div class="prow"><button id="panel-sell" class="btn ghost">💸 Vender ${sellValue}</button></div>
+        ${controlRow}`;
     } else if (canRank2 && r2cost !== null) {
       // Rango II: mejora identidad de la especialización (reutiliza el comando upgrade)
       const r2desc = def.specs[spec].rank2?.desc ?? 'Mejora de Rango II';
@@ -709,7 +1027,8 @@ export function refreshPanel(): void {
           ${r2btn}
           <button id="panel-sell" class="btn ghost">💸 ${sellValue}</button>
         </div>
-        ${targetModesHtml(projKind, lvl, modeIdx)}`;
+        ${targetModesHtml(projKind, lvl, modeIdx)}
+        ${controlRow}`;
     } else {
       const nextCost = next?.cost ?? null;
       const maxedLabel = isRank2 ? 'Máximo (Rango II)' : 'Máximo';
@@ -727,7 +1046,8 @@ export function refreshPanel(): void {
           ${upBtn}
           <button id="panel-sell" class="btn ghost">💸 ${sellValue}</button>
         </div>
-        ${targetModesHtml(projKind, lvl, modeIdx)}`;
+        ${targetModesHtml(projKind, lvl, modeIdx)}
+        ${controlRow}`;
     }
   } else {
     actions = `<p class="hint">Torre de ${escapeHtml(owner?.name ?? 'otro jugador')}</p>`;
@@ -738,26 +1058,7 @@ export function refreshPanel(): void {
     <div class="pstats">${statLines.join('<br>')}</div>
     ${actions}
   `;
-  wirePanel();
-  // ESTRUCTURA: solo reescribir si cambió de verdad (los contadores volátiles ya
-  // no entran aquí) y NUNCA con un dedo presionando el panel — reescribir
-  // destruye el botón bajo el dedo y el click se pierde.
-  const structuralChanged = html !== lastPanelHtml;
-  if (structuralChanged && !panelHeld) {
-    lastPanelHtml = html;
-    panel.innerHTML = html;
-  }
-  // VOLÁTILES: actualizar por textContent (no destruye nada, no roba clicks)
-  if (!structuralChanged || !panelHeld) {
-    for (const [k, v] of Object.entries(live)) {
-      const el = panel.querySelector<HTMLElement>(`[data-lv="${k}"]`);
-      if (el && el.textContent !== v) el.textContent = v;
-    }
-  }
-  panel.hidden = false;
-  // en móvil el panel es una hoja inferior que SUSTITUYE a la barra de torres
-  $('screen-game').classList.add('panel-open');
-  void id;
+  return { html, live };
 }
 
 // ---------- barra superior y jugadores ----------
@@ -879,9 +1180,9 @@ export function onTick(snap: Snap): void {
   syncMarket(snap);
   processPremoves(snap); // dispara los premovimientos cuyo coste ya se alcanzó
 
-  // refrescar el panel de torre (máx 4 veces por segundo para no perder clicks)
+  // refrescar el panel de torre o de GRUPO (máx 4 veces por segundo para no perder clicks)
   const now = performance.now();
-  if (gs.selection?.kind === 'tower' && now - lastPanelSync > 250) {
+  if ((gs.selection?.kind === 'tower' || gs.selection?.kind === 'towers') && now - lastPanelSync > 250) {
     lastPanelSync = now;
     refreshPanel();
   }
@@ -902,7 +1203,7 @@ export function onTick(snap: Snap): void {
     if (cdEl) {
       const t = snap.towers.find((tt) => tt[0] === sel.id);
       if (t) {
-        const txt = cooldownText(t[10] ?? 0, t[16] ?? 0);
+        const txt = cooldownText(t[10] ?? 0, t[16] ?? 0, t[17] ?? 0);
         if (cdEl.textContent !== txt) cdEl.textContent = txt;
       }
     }

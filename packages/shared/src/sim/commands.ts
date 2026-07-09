@@ -1,6 +1,6 @@
 import type { GameEvent, GameState, MapDef, PlayerCommand } from '../types.js';
 import { TOWERS, towerLevel, hasRank2, rank2Cost } from '../balance/towers.js';
-import { FUSION_ORDER, findFusion } from '../balance/fusions.js';
+import { FUSION_ORDER, findFusion, towerFires } from '../balance/fusions.js';
 import {
   CALL_WAVE_GOLD_PER_SEC,
   ORC_RATES,
@@ -74,6 +74,8 @@ export function applyCommands(
           growthBonus: 0,
           goldGen: 0,
           fusion: -1,
+          focusId: 0,
+          halted: false,
         });
         events.push({ e: 'place', x: cmd.cx + 0.5, y: cmd.cy + 0.5, towerType: cmd.towerType });
         break;
@@ -221,6 +223,57 @@ export function applyCommands(
         break;
       }
 
+      // Lote 4 · FOCUS: la torre ataca a ESE enemigo (enemyId 0 = quitar el focus).
+      // Validación completa aquí (el comando llega del cliente sin confiar): dueño,
+      // torre que DISPARA (estandarte/mina/alquimista/sentry/trampas no apuntan) y
+      // enemigo existente Y visible (un invisible no detectado no se puede enfocar:
+      // no lo ves — coherente con el hit-test del cliente y con pickTarget).
+      case 'focus': {
+        const tower = state.towers.find((t) => t.id === cmd.towerId);
+        if (!tower) break;
+        if (tower.owner !== playerId) {
+          reject(events, playerId, 'Solo el dueño puede dar órdenes a esta torre');
+          break;
+        }
+        if (!towerFires(tower)) {
+          reject(events, playerId, 'Esta torre no dispara');
+          break;
+        }
+        if (cmd.enemyId === 0) {
+          tower.focusId = 0; // volver al targetMode automático
+          break;
+        }
+        const enemy = state.enemies.find((e) => e.id === cmd.enemyId && e.hp > 0);
+        if (!enemy) {
+          reject(events, playerId, 'Ese enemigo ya no está');
+          break;
+        }
+        if (enemy.invisible && !enemy.detected) {
+          reject(events, playerId, 'No puedes ver a ese enemigo');
+          break;
+        }
+        tower.focusId = enemy.id;
+        break;
+      }
+
+      // Lote 4 · STOP/REANUDAR: on=true la torre deja de disparar; on=false vuelve.
+      // Misma validación que focus (solo torres que disparan: las auras/economía
+      // no disparan, así que "detenerlas" no significa nada).
+      case 'halt': {
+        const tower = state.towers.find((t) => t.id === cmd.towerId);
+        if (!tower) break;
+        if (tower.owner !== playerId) {
+          reject(events, playerId, 'Solo el dueño puede dar órdenes a esta torre');
+          break;
+        }
+        if (!towerFires(tower)) {
+          reject(events, playerId, 'Esta torre no dispara');
+          break;
+        }
+        tower.halted = cmd.on === true;
+        break;
+      }
+
       // F4.3 · Fusión: dos torres ESPECIALIZADAS, ADYACENTES (Chebyshev 1), del
       // MISMO dueño, cuyos tipos formen una receta. Consume ambas y deja UNA torre
       // fusionada en la celda de `keepId` (la otra celda queda libre). Gratis: el
@@ -270,6 +323,11 @@ export function applyCommands(
         keep.cooldownLeft = 0;
         keep.charges = 0;
         keep.growthBonus = 0;
+        // Lote 4: la fusión es una torre "nueva" — se limpian focus y stop. Crítico
+        // para el Corazón de Invierno (aura pura, no dispara): un `halted` heredado
+        // sería imposible de quitar (halt solo acepta torres que disparan).
+        keep.focusId = 0;
+        keep.halted = false;
         state.towers = state.towers.filter((t) => t.id !== other.id);
         events.push({ e: 'fuse', x: keep.cx + 0.5, y: keep.cy + 0.5, fusion: recipe.id, name: recipe.name });
         break;

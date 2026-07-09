@@ -1365,7 +1365,19 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
   const auras = computeBannerAuras(snap);
   const s = view.scale;
   const t = now / 1000;
-  const selected = gs.selection?.kind === 'tower' ? gs.selection.id : -1;
+  // Lote 4 · la selección puede ser UNA torre o un GRUPO (doble click): todas
+  // llevan el glow. Con grupos grandes el círculo de alcance se pinta TENUE
+  // (solo contorno) para no embarrar el tablero con N discos superpuestos.
+  const selSet = new Set<number>();
+  if (gs.selection?.kind === 'tower') selSet.add(gs.selection.id);
+  else if (gs.selection?.kind === 'towers') for (const sid of gs.selection.ids) selSet.add(sid);
+  const faintRange = selSet.size > 3;
+  // posiciones interpoladas por id (vínculo 🎯 de las torres con focus seleccionadas)
+  let interpById: Map<number, InterpResult['enemies'][number]> | null = null;
+  if (selSet.size > 0 && interp) {
+    interpById = new Map();
+    for (const e of interp.enemies) interpById.set(e.id, e);
+  }
   const alive = new Set<number>();
 
   for (const tw of snap.towers) {
@@ -1393,7 +1405,7 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
 
     // aura pasiva (Escarcha Eterna): solo visible con la torre SELECCIONADA
     // (como el círculo de alcance de las demás torres)
-    if (lvl.slowAura && id === selected) {
+    if (lvl.slowAura && selSet.has(id)) {
       const pulse = 0.5 + Math.sin(t * 2.4) * 0.12;
       g.fillStyle = `rgba(79,195,247,${0.07 + pulse * 0.05})`;
       g.strokeStyle = `rgba(129,212,250,${0.4 + pulse * 0.2})`;
@@ -1406,7 +1418,7 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
 
     // aura del Alquimista: anillo verde en el suelo (como el dorado del Estandarte).
     // solo visible con la torre SELECCIONADA.
-    if (lvl.auraBounty !== undefined && lvl.auraBounty > 0 && id === selected) {
+    if (lvl.auraBounty !== undefined && lvl.auraBounty > 0 && selSet.has(id)) {
       const pulse = 0.5 + Math.sin(t * 2.4) * 0.12;
       g.fillStyle = `rgba(76,175,80,${0.05 + pulse * 0.05})`;
       g.strokeStyle = `rgba(129,199,132,${0.4 + pulse * 0.2})`;
@@ -1421,7 +1433,7 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
 
     // aura del Estandarte: anillo cálido en el suelo, solo visible con la torre
     // SELECCIONADA. El tono vira a celeste si el aura es de celeridad (hastebanner).
-    if ((lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) && id === selected) {
+    if ((lvl.auraDamage !== undefined || lvl.auraHaste !== undefined) && selSet.has(id)) {
       const pulse = 0.5 + Math.sin(t * 2.4) * 0.12;
       const haste = (lvl.auraHaste ?? 0) > 0;
       const fill = haste ? `rgba(79,195,247,${0.05 + pulse * 0.05})` : `rgba(255,202,40,${0.05 + pulse * 0.05})`;
@@ -1457,7 +1469,7 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
 
     // Lote 3 · Sentry: radio de DETECCIÓN (azul, discontinuo) solo al SELECCIONARLO,
     // como las auras. Reemplaza el círculo de alcance dorado genérico para el Sentry.
-    if (TOWERS[type].detects && id === selected) {
+    if (TOWERS[type].detects && selSet.has(id)) {
       const pulse = 0.5 + Math.sin(t * 2.4) * 0.12;
       g.fillStyle = `rgba(41,182,246,${0.05 + pulse * 0.05})`;
       g.strokeStyle = `rgba(129,212,250,${0.45 + pulse * 0.25})`;
@@ -1471,20 +1483,58 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
     }
 
     // rango de la torre seleccionada (la Gran Bertha alcanza TODO el mapa:
-    // se omite el círculo, que taparía el mapa entero; el Sentry usa su propio anillo)
-    if (id === selected && lvl.range < 90 && !TOWERS[type].detects) {
+    // se omite el círculo, que taparía el mapa entero; el Sentry usa su propio anillo).
+    // Lote 4 · en un GRUPO grande (>3) el círculo va TENUE y sin relleno: se sigue
+    // leyendo la cobertura sin apilar N discos blancos encima del tablero.
+    if (selSet.has(id) && lvl.range < 90 && !TOWERS[type].detects) {
       const pulse = 0.5 + Math.sin(t * 4) * 0.08;
-      g.fillStyle = 'rgba(255,255,255,0.07)';
-      g.strokeStyle = `rgba(255,213,79,${pulse})`;
+      g.strokeStyle = faintRange ? 'rgba(255,213,79,0.22)' : `rgba(255,213,79,${pulse})`;
       g.lineWidth = 1.5;
       g.beginPath();
       g.arc(toX(cx + 0.5), toY(cy + 0.5), lvl.range * s, 0, Math.PI * 2);
-      g.fill();
+      if (!faintRange) {
+        g.fillStyle = 'rgba(255,255,255,0.07)';
+        g.fill();
+      }
       g.stroke();
-      if (lvl.minRange) {
+      if (lvl.minRange && !faintRange) {
         g.strokeStyle = 'rgba(240,100,100,0.45)';
         g.beginPath();
         g.arc(toX(cx + 0.5), toY(cy + 0.5), lvl.minRange * s, 0, Math.PI * 2);
+        g.stroke();
+      }
+    }
+
+    // Lote 4 · vínculo de FOCUS: torre SELECCIONADA con objetivo fijado → línea
+    // punteada sutil hasta la posición interpolada del enemigo + retícula pequeña.
+    const focusId = tw[18] ?? 0;
+    if (selSet.has(id) && focusId > 0 && interpById) {
+      const fe = interpById.get(focusId);
+      if (fe) {
+        const ex = toX(fe.x);
+        const ey = toY(fe.y);
+        const pulse = 0.45 + Math.sin(t * 5 + id) * 0.2;
+        g.strokeStyle = `rgba(255,110,90,${pulse})`;
+        g.lineWidth = Math.max(1, s * 0.04);
+        g.setLineDash([s * 0.22, s * 0.16]);
+        g.beginPath();
+        g.moveTo(toX(cx + 0.5), toY(cy + 0.5));
+        g.lineTo(ex, ey);
+        g.stroke();
+        g.setLineDash([]);
+        // retícula sobre el enemigo enfocado
+        g.beginPath();
+        g.arc(ex, ey, s * 0.32, 0, Math.PI * 2);
+        g.stroke();
+        g.beginPath();
+        g.moveTo(ex - s * 0.44, ey);
+        g.lineTo(ex - s * 0.24, ey);
+        g.moveTo(ex + s * 0.24, ey);
+        g.lineTo(ex + s * 0.44, ey);
+        g.moveTo(ex, ey - s * 0.44);
+        g.lineTo(ex, ey - s * 0.24);
+        g.moveTo(ex, ey + s * 0.24);
+        g.lineTo(ex, ey + s * 0.44);
         g.stroke();
       }
     }
@@ -1514,7 +1564,7 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
       g.fill();
       g.stroke();
       g.restore();
-      if (id === selected) {
+      if (selSet.has(id)) {
         g.shadowColor = 'rgba(255,213,79,0.85)';
         g.shadowBlur = s * 0.28;
       }
@@ -1522,7 +1572,7 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
       g.drawImage(sprite, -w / 2 - rx, s * 0.5 - h - ry, w, h);
       g.shadowBlur = 0;
     } else {
-      drawTowerArt(type, s, level, t, anim, owner?.color ?? '#888', id === selected, spec, fusionIdx);
+      drawTowerArt(type, s, level, t, anim, owner?.color ?? '#888', selSet.has(id), spec, fusionIdx);
     }
     // Trampa de púas: contador de cargas restantes + barra de desgaste bajo la placa.
     const charges = tw[11] ?? 0;
@@ -1546,6 +1596,31 @@ function drawTowers(gs: GameStore, interp: InterpResult | null, now: number, dt:
       g.lineWidth = 3;
       g.strokeText(String(charges), 0, -s * 0.3);
       g.fillText(String(charges), 0, -s * 0.3);
+    }
+    // Lote 4 · DETENIDA (⏸ por su dueño): badge de pausa flotando sobre la torre
+    // + tinte gris suave, visible para TODOS (comunica por qué no dispara).
+    const halted = (tw[17] ?? 0) === 1;
+    if (halted) {
+      g.fillStyle = 'rgba(90,100,120,0.30)';
+      g.beginPath();
+      g.arc(0, 0, s * 0.4, 0, Math.PI * 2);
+      g.fill();
+      const bob = Math.sin(t * 2 + id) * s * 0.03;
+      const by = -s * 0.58 + bob;
+      const br = s * 0.17;
+      g.fillStyle = 'rgba(8,12,20,0.85)';
+      g.beginPath();
+      g.arc(0, by, br, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = 'rgba(255,213,79,0.9)';
+      g.lineWidth = Math.max(1, s * 0.03);
+      g.stroke();
+      // las dos barras del ⏸
+      g.fillStyle = '#ffd54f';
+      const bw = br * 0.26;
+      const bh = br * 0.95;
+      g.fillRect(-bw * 1.4, by - bh / 2, bw, bh);
+      g.fillRect(bw * 0.4, by - bh / 2, bw, bh);
     }
     // ATURDIDA (Zapador / Behemot): estrellitas girando sobre la torre + tinte gris
     const stunned = (tw[10] ?? 0) === 1;

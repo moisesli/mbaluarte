@@ -260,6 +260,15 @@ export interface TowerState {
   // fusionada conserva su `type` (el de la celda elegida) SOLO para arte/compat: todo
   // su comportamiento sale de la def de la fusión (level=3, spec=−1, sin más mejoras).
   fusion: number;
+  // --- Lote 4 · control avanzado ---
+  // FOCUS: id del enemigo al que esta torre debe atacar (0 = sin focus, targetMode
+  // normal). Si el enfocado muere/escapa, la sim lo limpia y vuelve al targetMode.
+  // Si está VIVO pero fuera de rango, la torre dispara normal mientras tanto y
+  // CONSERVA el focus para cuando vuelva a entrar en alcance (ver pickTarget).
+  focusId: number;
+  // STOP: una torre `halted` NO dispara (mismo gate que el aturdimiento). Solo
+  // aplica a torres que disparan; las auras/economía no son halteables.
+  halted: boolean;
 }
 
 export interface ProjectileState {
@@ -387,7 +396,13 @@ export type Command =
   | { kind: 'give'; to: string; gold: number; wood: number }
   // F4.3 · fusionar dos torres especializadas adyacentes con receta. `keepId` es la
   // torre cuya CELDA se conserva (debe ser towerId u otherId); la otra queda libre.
-  | { kind: 'fuse'; towerId: number; otherId: number; keepId: number };
+  | { kind: 'fuse'; towerId: number; otherId: number; keepId: number }
+  // Lote 4 · FOCUS: la torre ataca a ESE enemigo (enemyId 0 = quitar el focus y
+  // volver al targetMode automático). Solo torres que DISPARAN, del dueño.
+  | { kind: 'focus'; towerId: number; enemyId: number }
+  // Lote 4 · STOP/REANUDAR: on=true detiene la torre (no dispara), on=false la
+  // reanuda. Solo torres que DISPARAN, del dueño.
+  | { kind: 'halt'; towerId: number; on: boolean };
 
 export interface PlayerCommand {
   playerId: string;

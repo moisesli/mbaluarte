@@ -970,6 +970,25 @@ html, body {
   animation: pulse 0.8s infinite;
 }
 
+/* Lote 4 · control avanzado: botón 🎯 armado (esperando el tap sobre un enemigo),
+   línea "Atacando a…" y pista de hotkey [X]/[F] dentro de los botones */
+#hud-panel .btn.armed {
+  background: var(--accent);
+  color: #221800;
+  animation: pulse 0.8s infinite;
+}
+#hud-panel .focus-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+}
+#hud-panel .focus-line .btn { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 8px; }
+#hud-panel .khint { font-size: 0.68rem; color: var(--fg-dim); font-weight: 600; }
+#hud-panel .btn.armed .khint { color: inherit; }
+
 /* botón de minimapa desactivado */
 #btn-minimap.off {
   opacity: 0.4;

@@ -1,5 +1,5 @@
 import type { FusionId, TowerLevelDef, TowerSpecDef, TowerTypeId } from '../types.js';
-import { activeStats } from './towers.js';
+import { activeStats, TOWERS } from './towers.js';
 
 // ---------- F4.3 · Fusión de torres — 6 recetas curadas estilo Element TD ----------
 //
@@ -223,4 +223,29 @@ export function statsOf(t: {
 }): TowerLevelDef | TowerSpecDef {
   const f = fusionByIndex(t.fusion);
   return f ? f.stats : activeStats(t.type, t.level, t.spec);
+}
+
+// ¿Esta torre DISPARA? No disparan: la mina (incomePerWave), la Escarcha Eterna
+// (slowAura), el Estandarte (auraDamage/auraHaste), el Alquimista (auraBounty),
+// las torres de camino (Trampa/Barril) ni el Sentry (detects). EXCEPCIÓN: el
+// Señor de la Guerra (`alsoFires`) tiene aura Y ADEMÁS dispara. Vive aquí (y no
+// en sim/step.ts) para que sim/commands.ts pueda validar focus/halt (Lote 4) sin
+// crear un ciclo de imports step ⇄ commands. La sim y el cliente la comparten.
+export function towerFires(t: {
+  type: TowerTypeId;
+  level: number;
+  spec: number;
+  fusion: number;
+}): boolean {
+  const lvl = statsOf(t);
+  if (lvl.alsoFires) return true;
+  return !(
+    lvl.incomePerWave ||
+    lvl.slowAura ||
+    lvl.auraDamage !== undefined ||
+    lvl.auraHaste !== undefined ||
+    lvl.auraBounty !== undefined ||
+    TOWERS[t.type].onPathOnly ||
+    TOWERS[t.type].detects
+  );
 }

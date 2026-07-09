@@ -200,7 +200,7 @@ for (const wave of [8, 15, 25]) {
   st.towers.push({
     id: 9000, type: 'boom', cx: 8, cy: 2, level: 1, spec: -1, owner: 'p1',
     cooldownLeft: 0, targetMode: 'first', invested: 90, kills: 0, damage: 0,
-    stunnedUntil: 0, charges: 1, growthBonus: 0, goldGen: 0, fusion: -1,
+    stunnedUntil: 0, charges: 1, growthBonus: 0, goldGen: 0, fusion: -1, focusId: 0, halted: false,
   });
   let bounty = 0, kills = 0;
   for (let i = 0; i < TICK_RATE * 60 && st.towers.length > 0; i++) {

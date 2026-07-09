@@ -150,6 +150,7 @@ export const PLAYER_COLORS = [
 ];
 
 // 14: ráfaga completa del multidisparo · 15: oro de ASISTENCIA (el mayor dañador
-// con ≥35% del maxHp cobra un extra si no dio el golpe final)
-export const BALANCE_VERSION = 15;
+// con ≥35% del maxHp cobra un extra si no dio el golpe final) · 16 (issue #7): 5
+// recetas de fusión nuevas (toxicstorm/shredder/siegeeye/alchemyvault/icelance)
+export const BALANCE_VERSION = 16;
 export const PROTOCOL_VERSION = 1;

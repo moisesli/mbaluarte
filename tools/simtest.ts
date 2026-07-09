@@ -19,6 +19,7 @@ import {
   rank2Cost,
   replayTo,
   stepGame,
+  towerFires,
   towerLevel,
   ASSIST_MIN_DMG_FRAC,
   ASSIST_SHARE,
@@ -157,6 +158,11 @@ function botCommands(
     // F4.3 · FUSIONAR (máx. una por tick): dos torres propias ESPECIALIZADAS,
     // adyacentes (Chebyshev 1) y con receta → fuse (se queda en la celda de la 1ª).
     // Las dos torres implicadas se excluyen del resto de órdenes de este tick.
+    // issue #7: el bot solo fusiona su PROYECTO deliberado (frost+poison → Plaga
+    // Glacial). Con 11 recetas, fusionar CUALQUIER par adyacente hacía que el bot
+    // se auto-mutilara (2 torres → 1) sin parar y perdiera el clásico. Limitarlo a
+    // la receta del proyecto restaura su juego de siempre y lo hace robusto ante
+    // futuras recetas. Las recetas NUEVAS se cubren con pruebas DIRIGIDas más abajo.
     const fusedIds = new Set<number>();
     const fusable = state.towers.filter((t) => t.owner === player.id && t.spec >= 0 && t.fusion < 0);
     outer: for (let i = 0; i < fusable.length; i++) {
@@ -164,7 +170,7 @@ function botCommands(
         const A = fusable[i];
         const B = fusable[j];
         if (Math.max(Math.abs(A.cx - B.cx), Math.abs(A.cy - B.cy)) !== 1) continue;
-        if (!findFusion(A.type, B.type)) continue;
+        if (findFusion(A.type, B.type)?.id !== 'glacialplague') continue;
         cmds.push({ playerId: player.id, cmd: { kind: 'fuse', towerId: A.id, otherId: B.id, keepId: A.id } });
         fusedIds.add(A.id);
         fusedIds.add(B.id);
@@ -172,8 +178,8 @@ function botCommands(
       }
     }
 
-    // ids de torres que forman PAR de receta con una vecina propia (para priorizar
-    // su progreso hacia la especialización y así habilitar la fusión)
+    // ids de torres que forman el PAR del proyecto (frost+poison) con una vecina
+    // propia (para priorizar su progreso hacia la especialización y así fusionarlas)
     const pairable = new Set<number>();
     {
       const myTowers = state.towers.filter((t) => t.owner === player.id && t.fusion < 0);
@@ -182,7 +188,7 @@ function botCommands(
           const A = myTowers[i];
           const B = myTowers[j];
           if (Math.max(Math.abs(A.cx - B.cx), Math.abs(A.cy - B.cy)) !== 1) continue;
-          if (!findFusion(A.type, B.type)) continue;
+          if (findFusion(A.type, B.type)?.id !== 'glacialplague') continue;
           pairable.add(A.id);
           pairable.add(B.id);
         }
@@ -1731,10 +1737,11 @@ console.log('— F4.3 · Fusión: rechazos (adyacencia, spec, receta, dueño, ke
   }, { towerId: 4112, otherId: 4113, keepId: 4112 });
   assert(r.some((x) => x.includes('especializadas')), `rechaza torres SIN especializar (${r[0] ?? 'sin reject'})`);
 
-  // tipos sin receta (arquero + cañón)
+  // tipos sin receta (arquero + tesla — NO forman ninguna de las 11 recetas;
+  // OJO: arquero+cañón ahora ES el Fragmentador, así que ya no sirve de "sin receta")
   r = tryFuse((st) => {
     st.towers.push(mkTower('archer', { id: 4114, cx: 5, cy: 1, spec: 0 }));
-    st.towers.push(mkTower('cannon', { id: 4115, cx: 6, cy: 1, spec: 0 }));
+    st.towers.push(mkTower('tesla', { id: 4115, cx: 6, cy: 1, spec: 0 }));
   }, { towerId: 4114, otherId: 4115, keepId: 4114 });
   assert(r.some((x) => x.includes('receta')), `rechaza tipos SIN receta (${r[0] ?? 'sin reject'})`);
 
@@ -1904,6 +1911,143 @@ console.log('— F4.3 · Corazón de Invierno: aura DOBLE (congela enemigos + ac
   assert(archer.cooldownLeft === fastCd && fastCd < baseCd, `la torre vecina dispara MÁS RÁPIDO (cooldown ${archer.cooldownLeft} == ${fastCd} < ${baseCd})`);
   // el propio Corazón no dispara (es torre de aura)
   assert(st.projectiles.every((p) => p.towerId !== 4700), 'el Corazón de Invierno no dispara');
+}
+
+console.log('— issue #7 · Tempestad Tóxica: fuse VÁLIDO (tesla+veneno) y la cadena ENVENENA cada salto —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const cands = buildCellCandidates('sendero');
+  const cellA = cands.find((a) =>
+    cands.some((b) => (a[0] !== b[0] || a[1] !== b[1]) && Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) === 1),
+  )!;
+  const cellB = cands.find(
+    (b) => (b[0] !== cellA[0] || b[1] !== cellA[1]) && Math.max(Math.abs(cellA[0] - b[0]), Math.abs(cellA[1] - b[1])) === 1,
+  )!;
+
+  // (a) comando fuse VÁLIDO: tesla + veneno especializados adyacentes → Tempestad Tóxica
+  {
+    const st = createGame('sendero', 'endless', 'normal', 820, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    st.towers.push(mkTower('tesla', { id: 4800, cx: cellA[0], cy: cellA[1], spec: 0, invested: 540 }));
+    st.towers.push(mkTower('poison', { id: 4801, cx: cellB[0], cy: cellB[1], spec: 1, invested: 470 }));
+    const ev = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'fuse', towerId: 4800, otherId: 4801, keepId: 4800 } }]);
+    const fused = st.towers.find((t) => t.id === 4800);
+    assert(
+      st.towers.length === 1 && fused?.fusion === FUSION_ORDER.indexOf('toxicstorm'),
+      `el comando fuse tesla+veneno crea la Tempestad Tóxica (fusion=${fused?.fusion})`,
+    );
+    assert(fused!.invested === 540 + 470, `invested = suma de ingredientes (${fused!.invested} == 1010)`);
+    assert(ev.some((e) => e.e === 'fuse' && e.name === FUSIONS.toxicstorm.name), 'emite el evento fuse con el nombre de la Tempestad Tóxica');
+  }
+
+  // (b) la cadena ENVENENA a VARIOS enemigos; el inmune recibe el rayo −70% y NADA de veneno
+  {
+    const st = createGame('sendero', 'endless', 'normal', 821, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    st.towers.push(mkFused('tesla', 'toxicstorm', { id: 4810, cx: 5, cy: 1 }));
+    const e1 = mkEnemy('brute', { id: 4811, hp: 1e6, maxHp: 1e6, speedMult: 0, x: 5.5, y: 2.5 });
+    const e2 = mkEnemy('brute', { id: 4812, hp: 1e6, maxHp: 1e6, speedMult: 0, x: 6.2, y: 2.7 });
+    const im = mkEnemy('brute', { id: 4813, hp: 1e6, maxHp: 1e6, speedMult: 0, x: 5.0, y: 3.0, spellImmune: true });
+    st.enemies.push(e1, e2, im);
+    stepGame(st, simCtx, []); // un disparo instantáneo (cadena)
+    assert(e1.poisonDps > 0 && e2.poisonDps > 0, `la cadena ENVENENA a varios (dps ${e1.poisonDps}/${e2.poisonDps})`);
+    assert(im.poisonDps === 0 && im.hp < 1e6, `el inmune recibe el rayo pero SIN veneno (−${(1e6 - im.hp).toFixed(0)}, dps ${im.poisonDps})`);
+  }
+}
+
+console.log('— issue #7 · Ojo de Asedio: alcanza de MAPA COMPLETO y REMATA por vida ACTUAL (executeCurrent) —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const dmg = FUSIONS.siegeeye.stats.damage; // 640
+  const wps0 = makeSimContext(getMap('sendero'), makePlacementContext(getMap('sendero'))).waypoints[0];
+  let farIdx = 1;
+  let farDist = 0;
+  for (let i = 0; i < wps0.length; i++) {
+    const d = Math.hypot(wps0[i].x - 5.5, wps0[i].y - 1.5);
+    if (d > farDist) { farDist = d; farIdx = i; }
+  }
+  assert(farDist > 8, `el waypoint objetivo está lejísimos (${farDist.toFixed(1)} celdas, más allá de toda torre normal)`);
+
+  // (a) malherido (hp 1000) al OTRO LADO del mapa: el golpe de 640 arranca ≥60% de
+  // su vida ACTUAL → lo REMATA de un solo disparo instantáneo (executeCurrent + range 99).
+  {
+    const st = createGame('sendero', 'endless', 'normal', 822, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    st.towers.push(mkFused('sniper', 'siegeeye', { id: 4820, cx: 5, cy: 1 }));
+    const weak = mkEnemy('brute', { id: 4821, hp: 1000, maxHp: 6000, speedMult: 0, x: wps0[farIdx].x, y: wps0[farIdx].y, wpIdx: Math.max(1, farIdx) });
+    st.enemies.push(weak);
+    stepGame(st, simCtx, []); // un disparo
+    assert(weak.hp <= 0, `REMATA de un disparo al malherido lejano (640 ≥ 60% de 1000)`);
+  }
+
+  // (b) sano (hp 6000): el mismo golpe NO llega al 60% de su vida ACTUAL → solo lo HIERE.
+  {
+    const st = createGame('sendero', 'endless', 'normal', 823, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    st.towers.push(mkFused('sniper', 'siegeeye', { id: 4822, cx: 5, cy: 1 }));
+    const healthy = mkEnemy('brute', { id: 4823, hp: 6000, maxHp: 6000, speedMult: 0, x: 5.5, y: 3.5 });
+    st.enemies.push(healthy);
+    stepGame(st, simCtx, []); // un disparo (perfora armadura → daño pleno)
+    assert(healthy.hp === 6000 - dmg, `al SANO solo lo hiere, no lo remata (hp ${Math.round(healthy.hp)} == ${6000 - dmg})`);
+  }
+}
+
+console.log('— issue #7 · Bóveda Alquímica: fuse VÁLIDO (mina+alquimista), no dispara y su aura paga +55% —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 824, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+  const cands = buildCellCandidates('sendero');
+  const cA = cands.find((a) =>
+    cands.some((b) => (a[0] !== b[0] || a[1] !== b[1]) && Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) === 1),
+  )!;
+  const cB = cands.find(
+    (b) => (b[0] !== cA[0] || b[1] !== cA[1]) && Math.max(Math.abs(cA[0] - b[0]), Math.abs(cA[1] - b[1])) === 1,
+  )!;
+  st.towers.push(mkTower('bank', { id: 4830, cx: cA[0], cy: cA[1], spec: 0, invested: 420 }));
+  st.towers.push(mkTower('alchemist', { id: 4831, cx: cB[0], cy: cB[1], spec: 0, invested: 340 }));
+  const ev = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'fuse', towerId: 4830, otherId: 4831, keepId: 4830 } }]);
+  const vault = st.towers.find((t) => t.id === 4830)!;
+  assert(
+    st.towers.length === 1 && vault.fusion === FUSION_ORDER.indexOf('alchemyvault'),
+    `mina+alquimista → Bóveda Alquímica (fusion=${vault.fusion})`,
+  );
+  assert(ev.some((e) => e.e === 'fuse' && e.name === FUSIONS.alchemyvault.name), 'emite el evento fuse de la Bóveda Alquímica');
+  assert(!towerFires(vault), 'la Bóveda Alquímica NO dispara (es de apoyo)');
+
+  // su aura de botín (+55%): un arquero remata un goblin encima de la Bóveda y cobra el botín aumentado.
+  const gob = mkEnemy('goblin', { id: 4832, hp: 5, maxHp: 60, speedMult: 0, x: vault.cx + 0.5, y: vault.cy + 0.5, wpIdx: 1 });
+  st.enemies.push(gob);
+  st.towers.push(mkTower('archer', { id: 4833, cx: vault.cx, cy: vault.cy + 1, level: 3, spec: -1 }));
+  const g0 = st.players[0].gold;
+  for (let i = 0; i < TICK_RATE * 3 && st.enemies.some((e) => e.id === 4832); i++) stepGame(st, simCtx, []);
+  const paid = st.players[0].gold - g0;
+  assert(
+    paid === Math.round(ENEMIES.goblin.bounty * 1.55),
+    `una baja en el aura de la Bóveda paga +55% (${paid} == ${Math.round(ENEMIES.goblin.bounty * 1.55)})`,
+  );
+}
+
+console.log('— issue #7 · determinismo con las recetas nuevas (Tempestad/Fragmentador/Lanza de Hielo) —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  function hashNew(): string {
+    const st = createGame('sendero', 'endless', 'normal', 823, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    st.towers.push(mkFused('tesla', 'toxicstorm', { id: 4900, cx: 5, cy: 1 }));
+    st.towers.push(mkFused('archer', 'shredder', { id: 4901, cx: 7, cy: 1 }));
+    st.towers.push(mkFused('frost', 'icelance', { id: 4902, cx: 9, cy: 1 }));
+    for (let k = 0; k < 6; k++) {
+      st.enemies.push(mkEnemy('brute', { id: 5000 + k, hp: 4000, maxHp: 4000, x: 5.5 + k * 0.5, y: 2.5, wpIdx: 1 }));
+    }
+    for (let i = 0; i < TICK_RATE * 15; i++) stepGame(st, simCtx, []);
+    return JSON.stringify([st.tick, st.rng, st.nextId, st.enemies.map((e) => Math.round(e.hp)), st.players[0].gold]);
+  }
+  assert(hashNew() === hashNew(), 'la sim con Tempestad Tóxica/Fragmentador/Lanza de Hielo es determinista');
 }
 
 console.log('— F7.1 · Transferencia de recursos a un aliado: fondos exactos, rechazos y determinismo —');

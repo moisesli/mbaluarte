@@ -1273,6 +1273,24 @@ html, body {
   background: rgba(255, 179, 0, 0.14);
   min-width: 9.5rem;
 }
+/* ---------- guía: pestaña de TORRES ---------- */
+.tower-card .ticon-wrap { display: inline-flex; align-items: center; justify-content: center; width: 1.8rem; height: 1.8rem; }
+.tower-card .ticon-wrap .tsprite2 { display: none; width: 1.8rem; height: 1.8rem; object-fit: contain; }
+.tower-card .ticon-wrap .eicon { font-size: 1.6rem; line-height: 1; }
+.tcosts { font-size: 0.76rem; color: var(--fg-dim); margin: 2px 0 6px; }
+.tcosts .tdim, .tfuse.tdim, .edesc.tdim { color: var(--fg-dim); opacity: 0.75; }
+.tspec-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 6px; }
+.tspec {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.tspec-head { font-size: 0.82rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.tspec .edesc { margin: 3px 0; font-size: 0.76rem; }
+.tspec-cost { font-size: 0.72rem; font-weight: 700; color: var(--accent-hi); white-space: nowrap; }
+.tspec-r2 { font-size: 0.74rem; color: var(--fg-dim); border-top: 1px dashed var(--border); padding-top: 4px; margin-top: 2px; }
+.tfuse { font-size: 0.76rem; line-height: 1.4; margin-top: 6px; color: var(--fg); }
 
 @media (max-width: 700px) {
   .overlay-card.bestiary-card { padding: 18px 14px; }

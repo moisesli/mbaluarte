@@ -51,7 +51,13 @@ export type FusionId =
   | 'bigbertha' // Cañón + Mortero — obús de mapa completo, cooldown enorme
   | 'warlord' // Arquero + Estandarte — dispara Y buffea como estandarte
   | 'philostone' // Veneno + Alquimista — sus bajas por veneno pagan botín doble
-  | 'winterheart'; // Hielo + Estandarte — aura doble: ralentiza enemigos y acelera torres
+  | 'winterheart' // Hielo + Estandarte — aura doble: ralentiza enemigos y acelera torres
+  // issue #7 — nuevas recetas (al FINAL del orden de snapshot)
+  | 'toxicstorm' // Tesla + Veneno — cadena eléctrica que ENVENENA a cada enemigo que salta
+  | 'shredder' // Arquero + Cañón — autocañón de metralla: ráfaga de obuses ligeros en área
+  | 'siegeeye' // Francotirador + Mortero — ojo de asedio: dispara de mapa completo y REMATA
+  | 'alchemyvault' // Mina + Alquimista — bóveda: renta por oleada Y aura de botín
+  | 'icelance'; // Hielo + Francotirador — lanza gélida de largo alcance que casi congela
 
 // Afijos de enemigos élite. Cada uno modifica el estado del enemigo (ver step.ts).
 export type AffixId =

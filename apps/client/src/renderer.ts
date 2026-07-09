@@ -2467,6 +2467,168 @@ function drawFusionArt(
       void ownerColor;
       break;
     }
+
+    // ---------- issue #7 · arte de las 5 recetas nuevas ----------
+    case 'toxicstorm': {
+      // bobina Tesla con núcleo palpitante y arcos VERDES tóxicos irradiando
+      g.fillStyle = '#33421f';
+      roundRect(g, -s * 0.16, -s * 0.02, s * 0.32, s * 0.2, s * 0.05);
+      g.fill();
+      const core = 0.6 + Math.sin(t * 6) * 0.4;
+      g.fillStyle = `rgba(174,213,129,${0.5 + core * 0.5})`;
+      g.beginPath();
+      g.arc(0, -s * 0.08, s * 0.12 * grow, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = `rgba(124,179,66,${core})`;
+      g.lineWidth = Math.max(1, s * 0.03);
+      g.stroke();
+      g.strokeStyle = `rgba(197,225,165,${0.5 + Math.sin(t * 20) * 0.4})`;
+      g.lineWidth = Math.max(1, s * 0.025);
+      for (let k = 0; k < 4; k++) {
+        const base = t * 1.2 + (k * Math.PI * 2) / 4;
+        g.beginPath();
+        g.moveTo(Math.cos(base) * s * 0.12, -s * 0.08 + Math.sin(base) * s * 0.12);
+        for (let j = 1; j <= 3; j++) {
+          const rr = s * (0.12 + j * 0.1);
+          const jit = (j % 2 === 0 ? 1 : -1) * s * 0.05;
+          g.lineTo(Math.cos(base) * rr - Math.sin(base) * jit, -s * 0.08 + Math.sin(base) * rr + Math.cos(base) * jit);
+        }
+        g.stroke();
+      }
+      break;
+    }
+    case 'shredder': {
+      // autocañón de metralla: tres cañones cortos en abanico con bocas naranjas
+      g.save();
+      g.rotate(a);
+      g.translate(-rec, 0);
+      g.fillStyle = '#3e2723';
+      roundRect(g, -s * 0.12, -s * 0.13, s * 0.2, s * 0.26, s * 0.05);
+      g.fill();
+      g.strokeStyle = '#8d6e63';
+      g.lineWidth = Math.max(1.5, s * 0.05);
+      g.lineCap = 'round';
+      for (const off of [-0.11, 0, 0.11]) {
+        g.beginPath();
+        g.moveTo(s * 0.02, s * off);
+        g.lineTo(s * 0.34 * grow, s * off);
+        g.stroke();
+      }
+      g.fillStyle = '#ff8f00';
+      for (const off of [-0.11, 0, 0.11]) {
+        g.beginPath();
+        g.arc(s * 0.34 * grow, s * off, s * 0.04, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.restore();
+      break;
+    }
+    case 'siegeeye': {
+      // cañón largo de precisión + retícula de "ojo" que todo lo ve
+      g.save();
+      g.rotate(a);
+      g.translate(-rec, 0);
+      g.fillStyle = '#263238';
+      roundRect(g, -s * 0.1, -s * 0.055, s * 0.55 * grow, s * 0.11, s * 0.04);
+      g.fill();
+      g.strokeStyle = '#607d8b';
+      g.lineWidth = Math.max(1, s * 0.025);
+      g.stroke();
+      g.fillStyle = '#10161a';
+      g.beginPath();
+      g.arc(s * 0.45 * grow, 0, s * 0.05, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+      // retícula fija sobre la torre (no rota con el cañón)
+      g.strokeStyle = '#cfd8dc';
+      g.lineWidth = Math.max(1, s * 0.025);
+      g.beginPath();
+      g.arc(0, -s * 0.02, s * 0.14 * grow, 0, Math.PI * 2);
+      g.stroke();
+      const iris = 0.5 + Math.sin(t * 2) * 0.5;
+      g.fillStyle = `rgba(144,164,174,${0.6 + iris * 0.4})`;
+      g.beginPath();
+      g.arc(0, -s * 0.02, s * 0.05, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = 'rgba(255,255,255,0.6)';
+      g.lineWidth = Math.max(1, s * 0.015);
+      g.beginPath();
+      g.moveTo(-s * 0.14, -s * 0.02);
+      g.lineTo(s * 0.14, -s * 0.02);
+      g.moveTo(0, -s * 0.16);
+      g.lineTo(0, s * 0.12);
+      g.stroke();
+      break;
+    }
+    case 'alchemyvault': {
+      // cofre/bóveda dorada con matraz alquímico y monedas subiendo (no dispara)
+      g.fillStyle = '#5d4037';
+      roundRect(g, -s * 0.22, -s * 0.02, s * 0.44, s * 0.24, s * 0.05);
+      g.fill();
+      g.fillStyle = '#ffd54f';
+      roundRect(g, -s * 0.22, -s * 0.02, s * 0.44, s * 0.08, s * 0.03);
+      g.fill();
+      g.fillStyle = '#8d6e63';
+      g.beginPath();
+      g.arc(0, s * 0.07, s * 0.04, 0, Math.PI * 2);
+      g.fill();
+      // matraz burbujeante encima de la tapa
+      g.strokeStyle = '#a5d6a7';
+      g.fillStyle = 'rgba(129,199,132,0.4)';
+      g.lineWidth = Math.max(1, s * 0.025);
+      g.beginPath();
+      g.moveTo(-s * 0.05, -s * 0.2 * grow);
+      g.lineTo(-s * 0.05, -s * 0.08);
+      g.lineTo(-s * 0.12, -s * 0.02);
+      g.lineTo(s * 0.12, -s * 0.02);
+      g.lineTo(s * 0.05, -s * 0.08);
+      g.lineTo(s * 0.05, -s * 0.2 * grow);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      for (let i = 0; i < 3; i++) {
+        const ph = (t * (0.6 + i * 0.2) + i * 0.4) % 1;
+        g.fillStyle = `rgba(255,213,79,${1 - ph})`;
+        g.beginPath();
+        g.arc((i - 1) * s * 0.13, -s * 0.22 * grow - ph * s * 0.2, s * 0.035, 0, Math.PI * 2);
+        g.fill();
+      }
+      break;
+    }
+    case 'icelance': {
+      // lanza de cristal helado larga con punta gélida + copos (dispara)
+      g.save();
+      g.rotate(a);
+      g.translate(-rec, 0);
+      g.fillStyle = 'rgba(77,208,225,0.85)';
+      g.strokeStyle = '#e0f7fa';
+      g.lineWidth = Math.max(1, s * 0.02);
+      g.beginPath();
+      g.moveTo(-s * 0.1, -s * 0.05);
+      g.lineTo(s * 0.34 * grow, -s * 0.03);
+      g.lineTo(s * 0.48 * grow, 0);
+      g.lineTo(s * 0.34 * grow, s * 0.03);
+      g.lineTo(-s * 0.1, s * 0.05);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      g.strokeStyle = 'rgba(255,255,255,0.8)';
+      g.lineWidth = Math.max(1, s * 0.015);
+      g.beginPath();
+      g.moveTo(0, 0);
+      g.lineTo(s * 0.4 * grow, 0);
+      g.stroke();
+      g.restore();
+      g.fillStyle = '#b3e5fc';
+      g.font = `${Math.max(6, s * 0.13)}px serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      for (let i = 0; i < 2; i++) {
+        const ang = t * 1.6 + i * Math.PI;
+        g.fillText('❄', Math.cos(ang) * s * 0.3, Math.sin(ang) * s * 0.18 - s * 0.14);
+      }
+      break;
+    }
   }
 }
 

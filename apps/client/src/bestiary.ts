@@ -13,8 +13,10 @@ import {
   FUSIONS,
   TOWER_ORDER,
   TOWERS,
+  WOOD_COST_RANK2,
+  WOOD_COST_SPEC,
 } from '@td/shared';
-import type { EnemyDef, EnemyTypeId } from '@td/shared';
+import type { EnemyDef, EnemyTypeId, TowerDef, TowerLevelDef, TowerTypeId } from '@td/shared';
 import { ENEMY_ICONS, TOWER_ICONS } from './renderer.js';
 import {
   CONTROL_ACTIONS,
@@ -345,6 +347,124 @@ function startCapture(action: KeymapAction, btn: HTMLElement): void {
   document.addEventListener('keydown', onCaptureKey, true);
 }
 
+// ---------- pestaña 4: TORRES ----------
+// Una tarjeta por torre de TOWER_ORDER (incluye Trampa/Barril/Sentry). TODO se
+// deriva de los datos REALES de TOWERS y FUSIONS: rasgos, costes, especializaciones,
+// Rango II y con qué se fusiona. Cero hardcode que pueda desincronizarse.
+
+// ¿Algún nivel o especialización (incl. Rango II) de la torre cumple el predicado?
+function anyStat(def: TowerDef, pred: (l: TowerLevelDef) => boolean): boolean {
+  if (def.levels.some(pred)) return true;
+  for (const s of def.specs) {
+    if (pred(s)) return true;
+    if (s.rank2 && pred({ ...s, ...s.rank2 } as TowerLevelDef)) return true;
+  }
+  return false;
+}
+
+// Rasgos derivados de los CAMPOS reales del TowerDef (nunca se desincronizan).
+function towerTraits(def: TowerDef): Trait[] {
+  const t: Trait[] = [];
+  if (def.detects) t.push({ icon: '👁', label: 'Detector', cls: 'immune' });
+  if (def.onPathOnly) t.push({ icon: '🛣', label: 'Sobre el camino' });
+  if (def.targetsAir) t.push({ icon: '🦅', label: 'Anti-aire', cls: 'air' });
+  else if (def.targetsGround && !def.onPathOnly && !def.detects) t.push({ icon: '🚶', label: 'Solo tierra' });
+  if (anyStat(def, (l) => (l.splash ?? 0) > 0)) t.push({ icon: '💥', label: 'Área' });
+  if (anyStat(def, (l) => !!l.slow || !!l.slowAura)) t.push({ icon: '❄', label: 'Ralentiza', cls: 'immune' });
+  if (anyStat(def, (l) => !!l.poison)) t.push({ icon: '☠', label: 'Veneno' });
+  if (anyStat(def, (l) => !!l.chain)) t.push({ icon: '⚡', label: 'Cadena' });
+  if (anyStat(def, (l) => (l.shots ?? 1) > 1)) t.push({ icon: '🎯', label: 'Multidisparo' });
+  if (anyStat(def, (l) => !!l.pierceArmor)) t.push({ icon: '🗡', label: 'Perfora armadura' });
+  if (anyStat(def, (l) => (l.auraDamage ?? 0) > 0)) t.push({ icon: '🚩', label: 'Aura de daño' });
+  if (anyStat(def, (l) => (l.auraHaste ?? 0) > 0)) t.push({ icon: '🚩', label: 'Aura de cadencia' });
+  if (anyStat(def, (l) => (l.auraBounty ?? 0) > 0)) t.push({ icon: '⚗', label: 'Aura de oro' });
+  if (anyStat(def, (l) => (l.incomePerWave ?? 0) > 0)) t.push({ icon: '💰', label: 'Economía' });
+  return t;
+}
+
+// Las torres de camino (Trampa/Barril) y el Sentry no se mejoran ni especializan.
+function isSimpleTower(def: TowerDef): boolean {
+  return def.onPathOnly === true || def.detects === true;
+}
+
+function buildTowers(): void {
+  const cards = TOWER_ORDER.map((type) => {
+    const def = TOWERS[type];
+    const chips = towerTraits(def)
+      .map((tr) => `<span class="etrait ${tr.cls ?? ''}">${tr.icon} ${tr.label}</span>`)
+      .join('');
+
+    // costes por nivel (incrementales). Las torres simples tienen un único coste.
+    const costLine = isSimpleTower(def)
+      ? `<div class="tcosts">🪙 ${def.levels[0].cost} <span class="tdim">· no se mejora</span></div>`
+      : `<div class="tcosts">🪙 Niveles: ${def.levels.map((l) => l.cost).join(' → ')}</div>`;
+
+    // especializaciones (★) + Rango II (★★), con coste en 🪙 y 🪵
+    let specHtml: string;
+    if (isSimpleTower(def)) {
+      specHtml = `<div class="tspec"><p class="edesc tdim">No se mejora ni especializa.</p></div>`;
+    } else {
+      specHtml = def.specs
+        .map((s) => {
+          const r2 = s.rank2
+            ? `<div class="tspec-r2">★★ ${s.rank2.desc ?? `${s.name} II`} <span class="tspec-cost">🪙 ${s.rank2.cost} · 🪵 ${WOOD_COST_RANK2}</span></div>`
+            : '';
+          return `<div class="tspec">
+            <div class="tspec-head">★ <b>${s.name}</b> <span class="tspec-cost">🪙 ${s.cost} · 🪵 ${WOOD_COST_SPEC}</span></div>
+            <p class="edesc">${s.desc}</p>
+            ${r2}
+          </div>`;
+        })
+        .join('');
+    }
+
+    // con qué se fusiona (derivado de FUSIONS)
+    const recipes = FUSION_ORDER.map((fid) => FUSIONS[fid]).filter((f) => f.ingredients.includes(type));
+    const fuseHtml =
+      recipes.length > 0
+        ? `<div class="tfuse">⚗ <b>Fusiona con:</b> ${recipes
+            .map((f) => {
+              const other = f.ingredients[0] === type ? f.ingredients[1] : f.ingredients[0];
+              return `${TOWER_ICONS[other]} ${TOWERS[other].name} → <b style="color:${f.color}">${f.icon} ${f.name}</b>`;
+            })
+            .join(' · ')}</div>`
+        : `<div class="tfuse tdim">⚗ No se fusiona.</div>`;
+
+    // icono: sprite real si existe, con FALLBACK al emoji (igual que la barra de torres)
+    return `<div class="enemy-card tower-card">
+      <div class="ecard-head">
+        <span class="ticon-wrap"><img class="tsprite2" alt="" src="/sprites/tower_${type}_l1.png" /><span class="eicon">${TOWER_ICONS[type]}</span></span>
+        <span class="ename">${def.name}</span>
+      </div>
+      <div class="etraits">${chips}</div>
+      <p class="edesc">${def.desc}</p>
+      ${costLine}
+      <div class="tspec-list">${specHtml}</div>
+      ${fuseHtml}
+    </div>`;
+  }).join('');
+
+  $('guide-towers').innerHTML = `
+    <div class="guide-intro">
+      <h3>🏰 Torres</h3>
+      <p class="edesc">Toda torre sube a <b>nivel 3</b> y ahí elige una de <b>dos ★ especializaciones</b>
+      (cuestan 🪙 oro y 🪵 madera). Cada especialización puede subir una vez más al <b>★★ Rango II</b>.
+      Dos torres ★ especializadas y pegadas del mismo dueño pueden <b>⚗ fusionarse</b> (ver la pestaña Fusiones).</p>
+    </div>
+    <div class="bestiary-grid">${cards}</div>`;
+
+  // sprite real con fallback al emoji (mismo truco que buildTowerBar en hud.ts):
+  // si el PNG carga, mostramos el sprite y ocultamos el emoji; si falta (404), lo quitamos.
+  for (const img of Array.from(document.querySelectorAll<HTMLImageElement>('#guide-towers .tsprite2'))) {
+    const emo = img.nextElementSibling as HTMLElement | null;
+    img.addEventListener('load', () => {
+      img.style.display = 'inline-block';
+      if (emo) emo.style.display = 'none';
+    });
+    img.addEventListener('error', () => img.remove());
+  }
+}
+
 // ---------- construcción + pestañas ----------
 
 let built = false;
@@ -354,12 +474,14 @@ function build(): void {
   buildEnemies();
   buildElites();
   buildFusions();
+  buildTowers();
   renderShortcuts();
 }
 
 const TABS: [string, string][] = [
   ['guide-tab-enemies', 'bestiary-grid'],
   ['guide-tab-elites', 'guide-elites'],
+  ['guide-tab-towers', 'guide-towers'],
   ['guide-tab-fusions', 'guide-fusions'],
   ['guide-tab-shortcuts', 'guide-shortcuts'],
 ];
@@ -372,7 +494,7 @@ function showTab(tabId: string): void {
   }
 }
 
-export function openBestiary(tab: 'enemies' | 'elites' | 'fusions' | 'shortcuts' = 'enemies'): void {
+export function openBestiary(tab: 'enemies' | 'elites' | 'towers' | 'fusions' | 'shortcuts' = 'enemies'): void {
   build();
   showTab(`guide-tab-${tab}`);
   $('overlay-bestiary').hidden = false;

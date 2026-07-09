@@ -29,6 +29,12 @@ export const FUSION_ORDER: FusionId[] = [
   'warlord',
   'philostone',
   'winterheart',
+  // issue #7 — CRECEN AL FINAL (el índice viaja en el snapshot)
+  'toxicstorm',
+  'shredder',
+  'siegeeye',
+  'alchemyvault',
+  'icelance',
 ];
 
 export interface FusionDef {
@@ -187,6 +193,150 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
       cooldown: 0,
       slowAura: { factor: 0.35, radius: 3.6 },
       auraHaste: 0.6,
+    },
+  },
+
+  // ---------- issue #7 · 5 recetas nuevas (curadas, mecánica ÚNICA con rol) ----------
+
+  // 7 · Tesla + Veneno — TEMPESTAD TÓXICA. Identidad: reparto MASIVO de veneno. El
+  // Tesla por sí solo pega a un grupo pero no deja DoT; el Veneno pega fuerte pero
+  // a UNO. La fusión traza la cadena eléctrica del Tesla y ENVENENA a cada eslabón
+  // que salta: convierte el DoT de objetivo único en una plaga de grupo. Es MAGIA:
+  // a los inmunes el rayo les entra −70% (como el Tesla) y NO reciben veneno (lo
+  // resuelve la rama beam de fireTower, coherente con applyPayload). Rol: fundir
+  // hordas enteras a fuego lento donde el Veneno puro se quedaba corto.
+  toxicstorm: {
+    id: 'toxicstorm',
+    name: 'Tempestad Tóxica',
+    desc: 'Cadena eléctrica que ENVENENA a todos los enemigos por los que salta.',
+    icon: '⚡☠',
+    color: '#aed581',
+    ingredients: ['tesla', 'poison'],
+    projectileKind: 'beam',
+    targetsAir: true,
+    targetsGround: true,
+    stats: {
+      cost: 0,
+      damage: 46,
+      range: 3.4,
+      cooldown: 1.1,
+      chain: { targets: 6, falloff: 0.82 },
+      poison: { dps: 70, duration: 4 },
+    },
+  },
+
+  // 8 · Arquero + Cañón — FRAGMENTADOR. Identidad: autocañón de metralla. El Arquero
+  // aporta CADENCIA, el Cañón aporta ÁREA: la fusión escupe una RÁFAGA de tres obuses
+  // ligeros por disparo, cada uno estalla en un radio pequeño. Rol anti-enjambre: allí
+  // donde el Cañón (lento, un pepinazo) y el Arquero (rápido, un blanco) fallan, el
+  // Fragmentador barre grupos apretados a ras de suelo. Físico (pega normal a inmunes),
+  // solo TIERRA (son obuses). Reutiliza `shots` + `splash`: sin mecánica nueva de sim.
+  shredder: {
+    id: 'shredder',
+    name: 'Fragmentador',
+    desc: 'Ráfaga de metralla: tres obuses ligeros por disparo, cada uno estalla en área. Solo tierra.',
+    icon: '🏹💣',
+    color: '#ff8f00',
+    ingredients: ['archer', 'cannon'],
+    projectileKind: 'shell',
+    targetsAir: false,
+    targetsGround: true,
+    stats: {
+      cost: 0,
+      damage: 30,
+      range: 3.1,
+      cooldown: 0.6,
+      projectileSpeed: 13,
+      splash: 0.85,
+      shots: 3,
+    },
+  },
+
+  // 9 · Francotirador + Mortero — OJO DE ASEDIO. Identidad: ejecutor de mapa completo.
+  // El Francotirador aporta PRECISIÓN (impacto instantáneo, perfora armadura), el
+  // Mortero aporta ALCANCE. La fusión ve TODO el tablero (range 99) y REMATA: si su
+  // disparo arranca ≥60% de la vida ACTUAL del objetivo, lo liquida (executeCurrent,
+  // robado del Cañón de Riel II). Es daño de precisión mágico para el remate: no
+  // ejecuta inmunes (sí les hace el daño base). Rol: cazatanques/antijefe que
+  // castiga desde cualquier rincón, complementando a la Gran Bertha (área, sin remate).
+  siegeeye: {
+    id: 'siegeeye',
+    name: 'Ojo de Asedio',
+    desc: 'Dispara desde CUALQUIER punto del mapa y REMATA a los enemigos malheridos (bajo el 60% de su vida actual). No remata a inmunes.',
+    icon: '🎯🧨',
+    color: '#90a4ae',
+    ingredients: ['sniper', 'mortar'],
+    projectileKind: 'snipe',
+    targetsAir: true,
+    targetsGround: true,
+    stats: {
+      // Un solo objetivo (sin área ni cadena): pega MUY fuerte para compensar. Debe
+      // superar al Cañón de Riel II del propio francotirador (620) — si no, fusionar
+      // saldría peor que no fusionar. La sonda lo dejaba en 26% del daño mediano con
+      // 250; con 640 sube a ~la familia (cazatanques, no limpiador de hordas).
+      cost: 0,
+      damage: 640,
+      range: 99, // todo el mapa (como la Gran Bertha)
+      cooldown: 2.5,
+      pierceArmor: true,
+      executeCurrent: 0.6,
+    },
+  },
+
+  // 10 · Mina + Alquimista — BÓVEDA ALQUÍMICA. Identidad: banco de guerra. No dispara:
+  // funde las dos fuentes de oro del juego en una sola casilla — RENTA por oleada (como
+  // la Mina) Y un aura que multiplica el botín de las bajas que ocurren a su alrededor
+  // (como el Alquimista, regla MAX, no apila). Rol: motor económico definitivo para
+  // financiar al equipo; la única fusión de la Mina y una identidad puramente monetaria.
+  // Reutiliza `incomePerWave` + `auraBounty`: el bucle de rentas y bountyMultAt ya la
+  // recogen; towerFires la excluye de disparar. La receta invita a colocarla donde MÁS
+  // se mata, no donde más se defiende.
+  alchemyvault: {
+    id: 'alchemyvault',
+    name: 'Bóveda Alquímica',
+    desc: 'No dispara: genera renta cada oleada Y su aura da +55% de oro por las bajas cercanas.',
+    icon: '💰⚗',
+    color: '#ffd54f',
+    ingredients: ['bank', 'alchemist'],
+    projectileKind: 'none',
+    targetsAir: false,
+    targetsGround: false,
+    stats: {
+      cost: 0,
+      damage: 0,
+      range: 3.8, // radio del aura de botín
+      cooldown: 0,
+      incomePerWave: 60,
+      auraBounty: 0.55,
+    },
+  },
+
+  // 11 · Hielo + Francotirador — LANZA DE HIELO. Identidad: artillería gélida de largo
+  // alcance. El Hielo aporta la CONGELACIÓN, el Francotirador el ALCANCE y la
+  // PERFORACIÓN. La fusión clava un dardo helado desde muy lejos que casi CONGELA a su
+  // objetivo (y a un pequeño racimo por el impacto) y perfora armadura. Rol: control
+  // duro a distancia — inmoviliza a un jefe o a un tanque acorazado desde el otro
+  // extremo del rango, donde la Escarcha y el Glaciar no llegan. Los inmunes ignoran el
+  // frío (sí reciben el daño). Reutiliza `slow` + `splash` + `pierceArmor` (proyectil).
+  icelance: {
+    id: 'icelance',
+    name: 'Lanza de Hielo',
+    desc: 'Dardo gélido de largo alcance que casi CONGELA a su objetivo (y a un pequeño racimo) y perfora armadura.',
+    icon: '❄🎯',
+    color: '#4dd0e1',
+    ingredients: ['frost', 'sniper'],
+    projectileKind: 'bullet',
+    targetsAir: true,
+    targetsGround: true,
+    stats: {
+      cost: 0,
+      damage: 120,
+      range: 6.0,
+      cooldown: 1.4,
+      projectileSpeed: 18,
+      splash: 1.0,
+      slow: { factor: 0.12, duration: 3.0 },
+      pierceArmor: true,
     },
   },
 };

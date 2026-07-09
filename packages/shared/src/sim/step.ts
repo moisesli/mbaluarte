@@ -573,6 +573,19 @@ function fireTower(
     for (let i = 0; i < chain.targets && current; i++) {
       hitIds.add(current.id);
       pts.push([current.x, current.y]);
+      // Tempestad Tóxica (issue #7): una cadena con `poison` ENVENENA a cada eslabón
+      // por el que salta (mismo criterio que applyPayload: es MAGIA, así que los
+      // inmunes quedan exentos). Se aplica antes del daño, como el resto del veneno,
+      // y atribuye su fuente a esta torre (poisonSrc) para el crédito de asistencia
+      // y la Piedra Filosofal. Ningún Tesla base tiene `poison`, así que esto solo
+      // se activa en la Tempestad Tóxica.
+      if (lvl.poison && !current.spellImmune) {
+        if (lvl.poison.dps >= current.poisonDps) {
+          current.poisonDps = lvl.poison.dps;
+          current.poisonSrc = tower.id;
+        }
+        current.poisonUntil = Math.max(current.poisonUntil, state.tick + Math.round(lvl.poison.duration * TICK_RATE));
+      }
       // el rayo Tesla es mágico: los inmunes reciben −70% (execute ya se ignora en damageEnemy)
       let linkDmg = current.spellImmune ? Math.max(1, Math.round(dmg * SPELL_IMMUNE_TESLA_MULT)) : dmg;
       if (ENEMIES[current.type].flying && airBonus > 1) linkDmg = Math.round(linkDmg * airBonus);

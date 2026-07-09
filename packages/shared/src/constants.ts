@@ -102,6 +102,18 @@ export const WOOD_PRICE_STEP = 1.08; // cada compra ×1.08; cada venta ÷1.08
 export const WOOD_SELL_SPREAD = 0.85; // la venta paga el 85% del precio
 export const WOOD_PRICE_REVERT = 0.05; // reversión hacia la base al fin de oleada
 
+// ---------- ORO DE ASISTENCIA (co-op) ----------
+// El matador se lleva su botín COMPLETO como siempre. ADEMÁS, si el MAYOR dañador de
+// un enemigo NO es quien dio el golpe final y le hizo suficiente daño, cobra un EXTRA
+// de "asistencia": recompensa al que hizo el trabajo sin llevarse la baja (issue #9).
+// - ASSIST_SHARE: fracción del botín FINAL que cobra el asistente (round, mín. 1). No
+//   sale del bolsillo del matador (es oro nuevo, como el botín).
+// - ASSIST_MIN_DMG_FRAC: umbral mínimo de daño acumulado (sobre el maxHp del enemigo)
+//   para que un dañador cuente como asistente — evita pagar por un roce. En solitario
+//   nunca dispara: el matador es siempre su propio mayor dañador.
+export const ASSIST_SHARE = 0.25;
+export const ASSIST_MIN_DMG_FRAC = 0.35;
+
 // oro de entrada para quien se une con la partida ya empezada
 export const midJoinGold = (wave: number) => 180 + wave * 22;
 
@@ -137,5 +149,7 @@ export const PLAYER_COLORS = [
   '#e57373', // rojo
 ];
 
-export const BALANCE_VERSION = 14; // ráfaga completa: el multidisparo repite objetivo si hay menos enemigos que disparos
+// 14: ráfaga completa del multidisparo · 15: oro de ASISTENCIA (el mayor dañador
+// con ≥35% del maxHp cobra un extra si no dio el golpe final)
+export const BALANCE_VERSION = 15;
 export const PROTOCOL_VERSION = 1;

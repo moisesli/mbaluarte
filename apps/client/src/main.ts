@@ -164,6 +164,14 @@ function processEvents(events: GameEvent[]): void {
         // el ingreso de la mina es de oleada (sin foco espacial): pan neutro.
         sfx.coin();
         break;
+      case 'assist': {
+        // ORO DE ASISTENCIA (co-op): texto discreto en el color del asistente. La
+        // moneda SOLO suena si el asistente eres TÚ (no ensuciar el audio ajeno).
+        const acolor = gs.init.players.find((p) => p.id === ev.player)?.color ?? '#ffd54f';
+        floatText(ev.x, ev.y - 0.15, `+${ev.gold} 🤝`, acolor, 12);
+        if (ev.player === store.playerId) sfx.coin();
+        break;
+      }
       case 'orc':
         if (ev.playerId === store.playerId) {
           toast(`🪓 ¡Orco leñador nivel ${ev.level}! Ahora tala +${ev.rate}🪵/s`, 'info');

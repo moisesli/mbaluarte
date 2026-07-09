@@ -224,6 +224,7 @@ console.log('\n=== Mercado de madera: ciclos de ida y vuelta (no debe ser rentab
     slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0, poisonSrc: 0, bountyMult: 1, elite: false,
     affixes: [], speedMult: 0, armorBonus: 0, regenBonus: 0, dodgeBonus: 0, slowResist: 0, radiusMult: 1,
     auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0, spellImmune: false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0,
+    dmgBy: {},
   });
   const p = st.players[0];
   p.gold = 10000; p.wood = 100;

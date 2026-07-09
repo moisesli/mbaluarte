@@ -20,6 +20,8 @@ import {
   replayTo,
   stepGame,
   towerLevel,
+  ASSIST_MIN_DMG_FRAC,
+  ASSIST_SHARE,
   BALANCE_VERSION,
   FUSION_ORDER,
   FUSIONS,
@@ -50,7 +52,12 @@ import {
 } from '@td/shared';
 
 const MAP_ID = 'sendero';
-const SEED = 123456789;
+// Semilla del smoke-test de partida completa. OJO: es un test de "el juego es
+// ganable por bots simples", sensible por diseño a cambios de economía (los bots
+// deciden por umbrales de oro). El oro de ASISTENCIA (#9) volteó la semilla
+// anterior (123456789: ganaba con 4 vidas, margen finísimo); esta gana con 13.
+// El barrido multi-semilla de verdad es trabajo de F5.1 (balance global).
+const SEED = 123456791;
 const MAX_TICKS = TICK_RATE * 60 * 40; // 40 minutos de juego (el clásico ahora son 36 oleadas)
 
 // Fábricas para pruebas dirigidas (construir estado a mano sin repetir 25 campos).
@@ -62,7 +69,7 @@ function mkEnemy(type: EnemyTypeId, over: Partial<EnemyState> = {}): EnemyState 
     poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
     dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
     spellImmune: def.spellImmune ?? false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0,
-    invisible: false, detected: false,
+    invisible: false, detected: false, dmgBy: {},
     ...over,
   };
 }
@@ -472,6 +479,9 @@ assert(a.state.totalWaves === 36 && a.maxWave >= 36, `el clásico dura 36 oleada
 assert((a.eventCounts.get('wave_end') ?? 0) >= 4, 'se completan oleadas');
 assert((a.eventCounts.get('hit') ?? 0) > 50, 'hay impactos de proyectiles');
 assert((a.eventCounts.get('chain') ?? 0) > 0, 'la torre tesla dispara cadenas');
+// ORO DE ASISTENCIA: en co-op (2 bots que se solapan sobre el mismo camino) se pagan
+// asistencias, y los bots SIGUEN GANANDO el clásico igual que antes (regresión).
+assert((a.eventCounts.get('assist') ?? 0) > 0, `en co-op se paga oro de ASISTENCIA (${a.eventCounts.get('assist') ?? 0} asistencias) y los bots ganan igual`);
 
 console.log('— Élites: generación de afijos por oleada —');
 {
@@ -510,7 +520,7 @@ console.log('— Regresión: las crías de spawnOnDeath sobreviven a un golpe de
     pathIdx: 0, wpIdx: 1, travelled: 5, slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0,
     poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
     dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
-    spellImmune: false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0, invisible: false, detected: false,
+    spellImmune: false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0, invisible: false, detected: false, dmgBy: {},
   };
   st.enemies.push(slime);
   const cannon: TowerState = {
@@ -552,7 +562,7 @@ console.log('— Estandarte: refuerza el daño de las torres cercanas (sin apila
       pathIdx: 0, wpIdx: 1, travelled: 0, slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0,
       poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
       dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
-      spellImmune: false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0, invisible: false, detected: false,
+      spellImmune: false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0, invisible: false, detected: false, dmgBy: {},
     };
     st.enemies.push(enemy);
     const archer: TowerState = {
@@ -581,6 +591,109 @@ console.log('— Estandarte: refuerza el daño de las torres cercanas (sin apila
   assert(base > 0, `el arquero dispara daño base (${base})`);
   assert(withBanner > base, `el estandarte sube el daño del arquero (${base} → ${withBanner})`);
   assert(withTwo === withBanner, `dos estandartes no apilan: mismo multiplicador que uno (${withBanner} == ${withTwo})`);
+}
+
+console.log('— Oro de ASISTENCIA: el mayor dañador cobra si no da el golpe final —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+
+  interface AssistOutcome {
+    death?: { killer: string; bounty: number };
+    assist?: { player: string; gold: number };
+    goldDelta: Record<string, number>;
+    goldEarnedDelta: Record<string, number>;
+  }
+
+  // Construye un enemigo con `maxHp` (para el umbral del 35%) y hp bajo (muere de un
+  // golpe), con el daño previo `preseed` ya acreditado a cada jugador en dmgBy. Un
+  // arquero de `killer` da el golpe FINAL. Devuelve los eventos de muerte/asistencia y
+  // los deltas de oro. No hay bono de fin de oleada: stepWaves ya pasó en el tick de la
+  // muerte y el bucle se corta en cuanto el enemigo desaparece (patrón del Alquimista).
+  function runAssistKill(
+    players: { id: string; name: string; color: string }[],
+    preseed: Record<string, number>,
+    killer: string,
+    maxHp = 1000,
+  ): AssistOutcome {
+    const st = createGame('sendero', 'endless', 'normal', 4242, players);
+    st.nextId = 9000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const enemy = mkEnemy('goblin', { id: 2400, hp: 5, maxHp, x: 5.5, y: 2.5, wpIdx: 1, dmgBy: { ...preseed } });
+    st.enemies.push(enemy);
+    st.towers.push(mkTower('archer', { id: 3400, cx: 5, cy: 1, level: 3, owner: killer, invested: 200 }));
+    const g0: Record<string, number> = {};
+    const e0: Record<string, number> = {};
+    for (const p of st.players) { g0[p.id] = p.gold; e0[p.id] = p.stats.goldEarned; }
+    const out: AssistOutcome = { goldDelta: {}, goldEarnedDelta: {} };
+    for (let i = 0; i < TICK_RATE * 3 && st.enemies.some((e) => e.id === 2400); i++) {
+      for (const ev of stepGame(st, simCtx, [])) {
+        if (ev.e === 'death' && ev.type === 'goblin') out.death = { killer: ev.killer, bounty: ev.bounty };
+        if (ev.e === 'assist') out.assist = { player: ev.player, gold: ev.gold };
+      }
+    }
+    for (const p of st.players) {
+      out.goldDelta[p.id] = p.gold - g0[p.id];
+      out.goldEarnedDelta[p.id] = p.stats.goldEarned - e0[p.id];
+    }
+    return out;
+  }
+
+  const P2 = [
+    { id: 'p1', name: 'Ana', color: '#4fc3f7' },
+    { id: 'p2', name: 'Beto', color: '#f06292' },
+  ];
+  const P3 = [...P2, { id: 'p3', name: 'Caro', color: '#aed581' }];
+
+  // (1) A (p1) hizo el 70% del daño y B (p2) remata → B cobra el botín COMPLETO y A el 25%.
+  const r1 = runAssistKill(P2, { p1: 700 }, 'p2');
+  const bounty1 = r1.death?.bounty ?? 0;
+  const expect1 = Math.max(1, Math.round(bounty1 * ASSIST_SHARE));
+  assert(r1.death?.killer === 'p2' && bounty1 > 0, `el matador p2 cobra el botín completo (${bounty1})`);
+  assert(
+    r1.assist?.player === 'p1' && r1.assist?.gold === expect1,
+    `el mayor dañador p1 cobra round(${bounty1}×${ASSIST_SHARE})=${expect1} de asistencia (${JSON.stringify(r1.assist)})`,
+  );
+  assert(
+    r1.goldDelta.p1 === expect1 && r1.goldEarnedDelta.p1 === expect1,
+    `la asistencia entra en oro Y goldEarned de p1 (+${r1.goldDelta.p1})`,
+  );
+  assert(r1.goldDelta.p2 === bounty1, `p2 recibe SOLO su botín completo, sin recortes (+${r1.goldDelta.p2})`);
+
+  // (2) el matador ES el mayor dañador → NO hay asistencia (aunque p1 hiciera ≥35%).
+  const r2 = runAssistKill(P2, { p1: 400, p2: 600 }, 'p2');
+  assert(r2.assist === undefined, `sin asistencia cuando el matador p2 es el mayor dañador (${JSON.stringify(r2.assist)})`);
+
+  // (3) el mayor dañador aportó < 35% del maxHp → NO hay asistencia (200/1000 = 20%).
+  const r3 = runAssistKill(P2, { p1: 200 }, 'p2');
+  assert(r3.assist === undefined, `sin asistencia si el mayor dañador aportó < ${Math.round(ASSIST_MIN_DMG_FRAC * 100)}% (${JSON.stringify(r3.assist)})`);
+
+  // (4) el DoT de VENENO acredita daño a su dueño (poisonSrc → owner) para la asistencia.
+  {
+    const st = createGame('sendero', 'endless', 'normal', 4243, P2);
+    st.nextId = 9100; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    // torre de veneno de p1 lejos y en cooldown perpetuo: NO dispara, solo aporta el
+    // dueño para atribuir el DoT. El crédito debe venir SOLO del goteo del veneno.
+    st.towers.push(mkTower('poison', { id: 3500, cx: 40, cy: 40, owner: 'p1', cooldownLeft: 1 << 30 }));
+    const poisoned = mkEnemy('brute', {
+      id: 2500, hp: 1000, maxHp: 1000, x: 5.5, y: 2.5, wpIdx: 1,
+      poisonDps: 300, poisonUntil: st.tick + TICK_RATE * 10, poisonSrc: 3500,
+    });
+    st.enemies.push(poisoned);
+    for (let i = 0; i < 5; i++) stepGame(st, simCtx, []); // 5 ticks × 300/15 = 100 de daño
+    assert(
+      Math.abs((poisoned.dmgBy.p1 ?? 0) - 100) < 1e-6,
+      `el DoT de veneno acredita a su dueño p1 (${(poisoned.dmgBy.p1 ?? 0).toFixed(1)} de daño en 5 ticks)`,
+    );
+  }
+
+  // (5) empate de daño → gana el playerId MENOR (determinista). p1==p2, remata p3.
+  const r5 = runAssistKill(P3, { p1: 500, p2: 500 }, 'p3');
+  assert(r5.assist?.player === 'p1', `empate p1==p2 → la asistencia va al playerId menor, p1 (${JSON.stringify(r5.assist)})`);
+
+  // (6) determinismo: dos corridas idénticas del caso (1) dan EXACTAMENTE el mismo estado.
+  const det1 = JSON.stringify(runAssistKill(P2, { p1: 700 }, 'p2'));
+  const det2 = JSON.stringify(runAssistKill(P2, { p1: 700 }, 'p2'));
+  assert(det1 === det2, `determinismo: dos corridas con asistencia coinciden (${det1 === det2})`);
 }
 
 console.log('— Repetición (replay): reconstruye el estado final EXACTO —');

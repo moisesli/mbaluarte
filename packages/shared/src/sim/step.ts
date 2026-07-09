@@ -15,6 +15,8 @@ import { TOWERS, towerTargetsAir } from '../balance/towers.js';
 import { fusionOf, statsOf, towerFires } from '../balance/fusions.js';
 import { generateWave, waveBountyMult, waveHpMult } from '../balance/waves.js';
 import {
+  ASSIST_MIN_DMG_FRAC,
+  ASSIST_SHARE,
   BLESSED_BOUNTY_MULT,
   BLESSED_BONUS_MULT,
   ELITE_BOUNTY_MULT,
@@ -109,9 +111,17 @@ function spawnEnemy(
     armorShredUntil: 0,
     invisible: false,
     detected: false,
+    dmgBy: {},
   };
   state.enemies.push(enemy);
   return enemy;
+}
+
+// Acredita `amount` de daño APLICADO al jugador `ownerId` contra este enemigo (para el
+// oro de asistencia). Se guarda por playerId, no por torre: si el dueño vende la torre
+// antes de la muerte, su crédito de daño SIGUE contando. Determinista (solo aritmética).
+function creditDamage(enemy: EnemyState, ownerId: string, amount: number): void {
+  enemy.dmgBy[ownerId] = (enemy.dmgBy[ownerId] ?? 0) + amount;
 }
 
 // Aplica SOLO el efecto de un afijo (sin tocar hp/botín/radio). Compartido por
@@ -231,6 +241,32 @@ function killEnemy(
     elite: enemy.elite,
     ...(alchExtra > 0 && killerName ? { alch: alchExtra } : {}),
   });
+  // ORO DE ASISTENCIA (co-op): el matador ya cobró su botín completo arriba. Ahora, si
+  // el MAYOR dañador acumulado NO es el matador y le hizo ≥ ASSIST_MIN_DMG_FRAC del maxHp,
+  // cobra un extra = round(botín × ASSIST_SHARE), mínimo 1. Determinista: el mayor se
+  // resuelve con desempate por playerId MENOR, independiente del orden de las claves.
+  // Solo paga si hubo matador con dueño (killerName): en solitario el matador es siempre
+  // su propio mayor dañador, así que nunca dispara. Las fugas/robos no llaman a killEnemy.
+  if (killerName) {
+    let topId = '';
+    let topDmg = -1;
+    for (const pid in enemy.dmgBy) {
+      const d = enemy.dmgBy[pid];
+      if (d > topDmg || (d === topDmg && pid < topId)) {
+        topDmg = d;
+        topId = pid;
+      }
+    }
+    if (topId && topId !== killerName && topDmg >= enemy.maxHp * ASSIST_MIN_DMG_FRAC) {
+      const assistant = state.players.find((p) => p.id === topId);
+      if (assistant) {
+        const assistGold = Math.max(1, Math.round(bounty * ASSIST_SHARE));
+        assistant.gold += assistGold;
+        assistant.stats.goldEarned += assistGold;
+        events.push({ e: 'assist', x: enemy.x, y: enemy.y, gold: assistGold, player: topId });
+      }
+    }
+  }
   const spawns: { type: EnemyTypeId; count: number }[] = [];
   if (def.spawnOnDeath) spawns.push(def.spawnOnDeath);
   // afijo explosivo: suelta larvas al morir (además de lo que ya suelte el tipo)
@@ -307,7 +343,10 @@ function damageEnemy(
   if (tower) {
     tower.damage += dmg;
     const owner = state.players.find((p) => p.id === tower.owner);
-    if (owner) owner.stats.damage += dmg;
+    if (owner) {
+      owner.stats.damage += dmg;
+      creditDamage(enemy, owner.id, dmg); // crédito para el oro de asistencia
+    }
   }
   if (enemy.hp <= 0) {
     killEnemy(state, ctx, enemy, sourceTowerId, events);
@@ -781,9 +820,13 @@ function stepEnemies(state: GameState, ctx: SimContext, events: GameEvent[]): vo
       enemy.hp -= enemy.poisonDps / TICK_RATE;
       const tower = state.towers.find((t) => t.id === enemy.poisonSrc);
       if (tower) {
-        tower.damage += enemy.poisonDps / TICK_RATE;
+        const tick = enemy.poisonDps / TICK_RATE;
+        tower.damage += tick;
         const owner = state.players.find((p) => p.id === tower.owner);
-        if (owner) owner.stats.damage += enemy.poisonDps / TICK_RATE;
+        if (owner) {
+          owner.stats.damage += tick;
+          creditDamage(enemy, owner.id, tick); // el DoT también da crédito de asistencia a su dueño
+        }
       }
       if (enemy.hp <= 0) {
         // baja por DoT: viaPoison=true (la Piedra Filosofal paga botín ×2 por estas)

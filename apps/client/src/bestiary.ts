@@ -2,7 +2,17 @@
 // recetas de fusión. Solo cliente. Las descripciones son texto curado; los RASGOS,
 // los afijos y las recetas se derivan de los datos reales de balance (@td/shared)
 // para no desincronizarse nunca de la mecánica.
-import { AFFIX_ORDER, AFFIXES, ENEMY_ORDER, ENEMIES, FUSION_ORDER, FUSIONS, TOWERS } from '@td/shared';
+import {
+  AFFIX_ORDER,
+  AFFIXES,
+  ASSIST_MIN_DMG_FRAC,
+  ASSIST_SHARE,
+  ENEMY_ORDER,
+  ENEMIES,
+  FUSION_ORDER,
+  FUSIONS,
+  TOWERS,
+} from '@td/shared';
 import type { EnemyDef, EnemyTypeId } from '@td/shared';
 import { ENEMY_ICONS, TOWER_ICONS } from './renderer.js';
 
@@ -118,6 +128,13 @@ function buildElites(): void {
       <p class="edesc">Los iconos que flotan <b>sobre el enemigo</b> en el mapa son sus afijos — esto es lo que significa cada uno:</p>
     </div>
     <div class="bestiary-grid">${affixCards}</div>
+    <div class="guide-intro">
+      <h3>🤝 Oro de asistencia (co-op)</h3>
+      <p class="edesc">Si haces <b>mucho daño</b> a un enemigo pero otro jugador se lleva la baja, no te vas
+      de vacío: el que aportó <b>al menos el ${Math.round(ASSIST_MIN_DMG_FRAC * 100)}%</b> de su vida y NO dio el golpe final
+      cobra un extra de <b>${Math.round(ASSIST_SHARE * 100)}% del botín</b> (el matador conserva el suyo completo).
+      Solo cuenta en equipo — en solitario nunca salta.</p>
+    </div>
     <div class="guide-intro">
       <h3>🌊 Oleadas especiales (mira las etiquetas de "Próxima oleada")</h3>
     </div>

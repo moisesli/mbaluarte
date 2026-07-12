@@ -922,6 +922,16 @@ html, body {
   border-radius: 4px;
   padding: 0 4px;
 }
+/* F5.1 · badge del tipo de ataque (esquina superior izquierda). No captura clics,
+   así que el toque sigue cayendo en la tarjeta. Emoji diminuto: no rompe móvil. */
+.tcard .tbadge {
+  position: absolute;
+  top: 2px; left: 4px;
+  font-size: 0.72rem;
+  line-height: 1;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+}
 
 #hud-panel {
   position: absolute;
@@ -961,6 +971,18 @@ html, body {
 #hud-panel .pstats .aura { color: var(--accent-hi); font-weight: 700; }
 /* F6.2 · contador de próximo ataque de la torre (baja en cada tick) */
 #hud-panel .pstats .pcd { color: var(--accent-hi); font-weight: 700; }
+/* F5.1 · línea de tipo de ataque + fuerte/débil vs (bajo el nombre de la torre) */
+#hud-panel .pstats .pmatrix {
+  display: block;
+  color: var(--fg);
+  background: rgba(79, 195, 247, 0.1);
+  border: 1px solid rgba(79, 195, 247, 0.25);
+  border-radius: 8px;
+  padding: 3px 7px;
+  margin-bottom: 4px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
 #hud-panel .prow { display: flex; gap: 8px; margin-top: 8px; }
 #hud-panel .prow .btn { flex: 1; font-size: 0.85rem; padding: 9px 6px; }
 .tmodes { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
@@ -1344,6 +1366,67 @@ html, body {
 .tspec-r2 { font-size: 0.74rem; color: var(--fg-dim); border-top: 1px dashed var(--border); padding-top: 4px; margin-top: 2px; }
 .tfuse { font-size: 0.76rem; line-height: 1.4; margin-top: 6px; color: var(--fg); }
 
+/* ---------- F5.1 · matriz ataque × armadura (guía + fichas) ---------- */
+/* ficha de enemigo: tipo de ARMADURA con su identidad como subtítulo */
+.earmor { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 6px 0 2px; }
+.earmor-badge {
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+.earmor-badge.armor-ligera { background: rgba(174, 213, 129, 0.16); border-color: transparent; color: #c5e1a5; }
+.earmor-badge.armor-media { background: rgba(255, 255, 255, 0.08); border-color: transparent; color: var(--fg); }
+.earmor-badge.armor-blindada { background: rgba(120, 144, 156, 0.24); border-color: transparent; color: #cfd8dc; }
+.earmor-badge.armor-colosal { background: rgba(239, 83, 80, 0.18); border-color: transparent; color: #ff8a80; }
+.earmor-id { font-size: 0.72rem; color: var(--fg-dim); line-height: 1.3; }
+
+/* ficha de torre: tipo de ATAQUE + fuerte/débil vs */
+.tmatch { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 2px 0 4px; }
+.etrait.atk { background: rgba(79, 195, 247, 0.18); color: #90caf9; border-color: transparent; font-weight: 700; }
+.tmatch-vs { font-size: 0.74rem; color: var(--fg-dim); line-height: 1.3; }
+
+/* aviso destacado (Balista de Cielo: solo aire) */
+.twarn {
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: #ffd7a6;
+  background: rgba(255, 152, 0, 0.12);
+  border: 1px solid rgba(255, 152, 0, 0.4);
+  border-radius: 8px;
+  padding: 5px 8px;
+  margin: 2px 0 6px;
+}
+
+/* tabla 4×4 de la matriz (scroll horizontal en móvil) */
+.matrix-wrap { overflow-x: auto; margin: 10px 0 4px; -webkit-overflow-scrolling: touch; }
+.matrix-table { border-collapse: collapse; width: 100%; min-width: 360px; font-size: 0.8rem; }
+.matrix-table th, .matrix-table td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: center;
+  white-space: nowrap;
+}
+.matrix-table thead th { background: rgba(255, 255, 255, 0.04); color: var(--fg-dim); font-weight: 700; }
+.matrix-table th.m-corner { text-align: left; font-size: 0.68rem; color: var(--fg-dim); font-weight: 600; }
+.matrix-table th.m-row { text-align: left; background: rgba(255, 255, 255, 0.04); color: var(--fg); }
+.matrix-table .m-ico { margin-right: 4px; }
+.matrix-table td { font-weight: 800; color: var(--fg); }
+.m-strong { background: rgba(102, 187, 106, 0.22); color: #b9f6ca !important; }
+.m-weak { background: rgba(239, 83, 80, 0.2); color: #ff8a80 !important; }
+.m-neutral { color: var(--fg-dim) !important; }
+.matrix-legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+.matrix-legend .m-chip {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
 @media (max-width: 700px) {
   .overlay-card.bestiary-card { padding: 18px 14px; }
   .bestiary-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
@@ -1351,6 +1434,8 @@ html, body {
   .guide-tabs .tab { font-size: 0.76rem; padding: 8px 4px; }
   .guide-tabs { flex-wrap: wrap; }
   .key-static { max-width: 52%; }
+  .matrix-table { font-size: 0.74rem; }
+  .matrix-table th, .matrix-table td { padding: 5px 6px; }
 }
 
 /* podio de fin de partida */

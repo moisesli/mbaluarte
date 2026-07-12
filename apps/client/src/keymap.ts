@@ -88,11 +88,21 @@ function load(): void {
       used.add(v);
     }
   }
-  // pase 2: default para lo que falte (garantiza que toda acción tenga tecla)
+  // pase 2: default para lo que falte. F5.1 · CON anticolisión: una acción NUEVA
+  // (p. ej. la Balista) puede tener un default que un keymap guardado viejo ya
+  // usa para otra cosa — sin este chequeo se pisaba en silencio el atajo del
+  // usuario (o la torre nueva quedaba inalcanzable, según el orden). Si el
+  // default está ocupado se busca la primera tecla libre [a-z0-9]; si no queda
+  // ninguna, la acción queda SIN tecla (la pestaña de Atajos la muestra vacía).
+  const POOL = 'abcdefghijklmnopqrstuvwxyz0123456789';
   for (const a of ACTION_IDS) {
     if (next[a]) continue;
-    next[a] = DEFAULTS[a];
-    used.add(DEFAULTS[a]);
+    let k = DEFAULTS[a];
+    if (used.has(k)) {
+      k = [...POOL].find((c) => !used.has(c)) ?? '';
+    }
+    next[a] = k;
+    if (k) used.add(k);
   }
   Object.assign(keys, next);
 }

@@ -2,6 +2,16 @@ export type Difficulty = 'easy' | 'normal' | 'hard';
 export type GameMode = 'classic' | 'endless' | 'horde';
 export type TargetMode = 'first' | 'last' | 'strong' | 'weak' | 'near';
 
+// ---------- F5.1 · matriz ataque × armadura ----------
+// Cada torre tiene UN tipo de ataque (identidad de rol) y cada enemigo UN tipo de
+// armadura (identidad de silueta). El daño DIRECTO de impacto/splash/cadena/ráfaga
+// se multiplica por ATTACK_MATRIX (constants.ts) ANTES de restar la armadura plana.
+// El DoT de veneno y las auras/slows NO pasan por la matriz (ya tienen su propia
+// capa de contrajuego: la inmunidad mágica). Se derivan del TIPO (no viajan en el
+// snapshot): el cliente ya tiene TOWERS/ENEMIES para pintarlos.
+export type AttackTypeId = 'fisico' | 'perforante' | 'asedio' | 'magico';
+export type ArmorTypeId = 'ligera' | 'media' | 'blindada' | 'colosal';
+
 export type TowerTypeId =
   | 'archer'
   | 'cannon'
@@ -18,7 +28,9 @@ export type TowerTypeId =
   // F4.4 — al FINAL del orden de snapshot
   | 'boom' // Barril explosivo: SOBRE el camino; detona una vez en área y desaparece
   // Lote 3 — al FINAL del orden de snapshot
-  | 'sentry'; // Sentry: NO ataca; REVELA a los monstruos invisibles dentro de su radio (item de tienda)
+  | 'sentry' // Sentry: NO ataca; REVELA a los monstruos invisibles dentro de su radio (item de tienda)
+  // F5.1 — al FINAL del orden de snapshot
+  | 'flak'; // Balista de Cielo: antiaérea PURA (no puede disparar a tierra), perforante
 
 export type EnemyTypeId =
   | 'goblin'
@@ -111,6 +123,10 @@ export interface TowerLevelDef {
   executeCurrent?: number; // *Cañón de Riel II*: remata por debajo de esta fracción de la vida ACTUAL (no inmunes)
   shredChance?: number; // *Obús/Metralla II*: prob. por impacto de reducir a la mitad la armadura en radio 1.5
   growth?: number; // *Arco Largo/Explorador II*: +daño base permanente por disparo
+  // F5.1 · *Corrosión II*: el DoT garantiza al menos esta FRACCIÓN de la vida MÁXIMA
+  // por segundo (daño porcentual del lategame), con tope POISON_PCT_CAP_DPS. Se
+  // resuelve al APLICAR el veneno (por enemigo), no cambia el pipeline del DoT.
+  poisonPctMax?: number;
   // --- F4.3 · mecánicas exclusivas de las FUSIONES (balance/fusions.ts) ---
   lineWidth?: number; // *Tormenta de Riel*: rayo PERFORANTE — golpea a todos los enemigos a ≤ esta distancia de la línea de tiro (a inmunes −70%, como el Tesla)
   alsoFires?: boolean; // *Señor de la Guerra*: la torre tiene aura de Estandarte Y ADEMÁS dispara
@@ -143,6 +159,10 @@ export interface TowerDef {
   targetsAir: boolean;
   targetsGround: boolean;
   projectileKind: 'bullet' | 'shell' | 'bomb' | 'none' | 'beam' | 'snipe';
+  // F5.1 · tipo de ataque para la matriz ataque×armadura. Es identidad de ROL de la
+  // torre completa (niveles y specs comparten tipo); las torres de apoyo que jamás
+  // dañan (mina/estandarte/alquimista/sentry) llevan un valor nominal que nunca se usa.
+  attackType: AttackTypeId;
   levels: [TowerLevelDef, TowerLevelDef, TowerLevelDef];
   specs: [TowerSpecDef, TowerSpecDef]; // ramas A/B al máximo nivel
   // F4.2 · Trampa de púas: única torre construible SOBRE el camino (y solo ahí).
@@ -166,6 +186,9 @@ export interface EnemyDef {
   speed: number; // celdas/s
   bounty: number;
   armor: number; // reducción plana por golpe
+  // F5.1 · tipo de armadura para la matriz ataque×armadura (identidad de silueta:
+  // ligera=rápidos/frágiles, media=grunts, blindada=tanques, colosal=jefes/tanque aéreo)
+  armorType: ArmorTypeId;
   radius: number; // celdas
   livesCost: number;
   flying: boolean;
@@ -245,6 +268,14 @@ export interface EnemyState {
   // trampa/barril) y el tick de veneno (por poisonSrc). Al morir, killEnemy busca aquí al
   // mayor dañador para el oro de asistencia. Determinista: acumulación en orden estable.
   dmgBy: Record<string, number>;
+  // --- F5.1 · timeout de zapado · AL FINAL ---
+  // Tick en que el zapador empezó a aturdir su torre ACTUAL, y TODAS las torres
+  // que ya SOLTÓ por timeout (jamás re-elegibles: con una sola torre vetada podía
+  // oscilar entre dos para siempre). Cada torre se zapa UNA vez por zapador →
+  // finito por construcción. Sin esto, 4-5 zapadores podían colgar la partida
+  // PARA SIEMPRE (softlock en el 25% de las semillas de la revisión adversarial).
+  sapStartTick: number;
+  sappedIds: number[];
 }
 
 export interface TowerState {
@@ -304,7 +335,9 @@ export interface ProjectileState {
   damage: number;
   splash: number;
   slow?: { factor: number; durationTicks: number };
-  poison?: { dps: number; durationTicks: number };
+  // `pctMax` (F5.1, Corrosión II): fracción de la vida MÁX/s que garantiza el DoT
+  // (se resuelve por enemigo al impactar, con tope POISON_PCT_CAP_DPS)
+  poison?: { dps: number; durationTicks: number; pctMax?: number };
   pierceArmor: boolean;
   execute: number; // remata por debajo de esta fracción de vida MÁX (0 = nunca)
   color: string;
@@ -314,6 +347,9 @@ export interface ProjectileState {
   shredChance: number; // prob. de shred de armadura AoE por impacto (Obús/Metralla II; 0 = nunca)
   // --- F6.2 ---
   airBonus: number; // multiplicador de daño contra voladores (1 = sin bonus)
+  // --- F5.1 · AL FINAL ---
+  // tipo de ataque de la torre emisora (matriz ataque×armadura al impactar)
+  attackType: AttackTypeId;
 }
 
 export interface PlayerStats {

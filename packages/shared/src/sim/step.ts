@@ -1,4 +1,5 @@
 import type {
+  AttackTypeId,
   EnemyState,
   EnemyTypeId,
   GameEvent,
@@ -12,17 +13,19 @@ import type {
 import type { AffixId } from '../types.js';
 import { ENEMIES } from '../balance/enemies.js';
 import { TOWERS, towerTargetsAir } from '../balance/towers.js';
-import { fusionOf, statsOf, towerFires } from '../balance/fusions.js';
+import { attackTypeOf, fusionOf, statsOf, towerFires } from '../balance/fusions.js';
 import { generateWave, waveBountyMult, waveHpMult } from '../balance/waves.js';
 import {
   ASSIST_MIN_DMG_FRAC,
   ASSIST_SHARE,
+  ATTACK_MATRIX,
   BLESSED_BOUNTY_MULT,
   BLESSED_BONUS_MULT,
   ELITE_BOUNTY_MULT,
   ELITE_EXTRA_LIVES,
   ELITE_HP_MULT,
   ELITE_RADIUS_MULT,
+  GROWTH_CAP,
   GROWTH_PER_SHOT,
   HORDE_CAP,
   HORDE_LAP_HP_FLOOR,
@@ -31,6 +34,8 @@ import {
   INVISIBLE_EVERY,
   INVISIBLE_FROM,
   LEAK_WAVE_DIV,
+  POISON_PCT_CAP_DPS,
+  SAPPER_MAX_SEC,
   SHRED_DURATION,
   SHRED_RADIUS,
   SPELL_IMMUNE_TESLA_MULT,
@@ -94,7 +99,9 @@ function spawnEnemy(
     poisonDps: 0,
     poisonUntil: 0,
     poisonSrc: 0,
-    bountyMult: waveBountyMult(Math.max(1, state.wave)),
+    // F5.1 · el modo viaja al botín: en endless el multiplicador gana su término
+    // superlineal desde la oleada 30 (waveBountyMult lo ignora en classic/horde)
+    bountyMult: waveBountyMult(Math.max(1, state.wave), state.mode),
     elite: false,
     affixes: [],
     speedMult: 1,
@@ -114,6 +121,8 @@ function spawnEnemy(
     invisible: false,
     detected: false,
     dmgBy: {},
+    sapStartTick: 0,
+    sappedIds: [],
   };
   state.enemies.push(enemy);
   return enemy;
@@ -300,6 +309,11 @@ function effectiveArmor(state: GameState, enemy: EnemyState): number {
 // `executeCurrent`: Rango II del Cañón de Riel — remata por debajo de esta
 // fracción de la vida ACTUAL (anti-tanque). También es daño de hechizo: no
 // funciona contra inmunes.
+// `attackType` (F5.1): tipo de ataque de la fuente para la matriz ataque×armadura.
+// El multiplicador se aplica ANTES de restar la armadura plana; `pierceArmor`
+// ignora la armadura plana pero NO la matriz (la matriz es identidad de rol).
+// `null` = daño VERDADERO fuera de la matriz (solo la ELIMINACIÓN del Barril, que
+// debe matar sí o sí — un ×0.65 dejaría vivos a los que promete borrar).
 function damageEnemy(
   state: GameState,
   ctx: SimContext,
@@ -311,10 +325,13 @@ function damageEnemy(
   execute = 0,
   executeCurrent = 0,
   shredChance = 0,
+  attackType: AttackTypeId | null = null,
 ): boolean {
   if (enemy.hp <= 0) return false;
   const armor = pierceArmor ? 0 : effectiveArmor(state, enemy);
-  const dmg = Math.max(1, amount - armor);
+  // matriz ataque×armadura (un solo redondeo del producto, determinista)
+  const mult = attackType ? ATTACK_MATRIX[attackType][ENEMIES[enemy.type].armorType] : 1;
+  const dmg = Math.max(1, Math.round(amount * mult) - armor);
   const hpBefore = enemy.hp;
   enemy.hp -= dmg;
   // execute es daño de HECHIZO: no remata a los inmunes a magia.
@@ -512,6 +529,8 @@ function fireTower(
   const shredChance = lvl.shredChance ?? 0;
   const airBonus = lvl.airBonus ?? 1; // F6.2: multiplicador vs voladores
   const shots = Math.max(1, lvl.shots ?? 1);
+  // F5.1 · tipo de ataque de esta torre (fusion-aware) para la matriz ataque×armadura
+  const attackType = attackTypeOf(tower);
 
   const target = pickTarget(state, ctx, tower, lvl, canAir, canGround);
   if (!target) return;
@@ -526,7 +545,9 @@ function fireTower(
   const growthNow = tower.growthBonus;
   const dmgFor = (base: number) => Math.round((base + growthNow) * (1 + dmgMult));
   const growth = lvl.growth ?? 0;
-  if (growth > 0) tower.growthBonus += growth;
+  // F5.1 · el crecimiento permanente tiene TOPE (ver GROWTH_CAP): sin él, el bono
+  // divergía cuadráticamente y una sola torre acababa siendo el 50-70% del daño.
+  if (growth > 0) tower.growthBonus = Math.min(GROWTH_CAP, tower.growthBonus + growth);
 
   const tx = tower.cx + 0.5;
   const ty = tower.cy + 0.5;
@@ -558,7 +579,7 @@ function fireTower(
       if (perp > lvl.lineWidth + edef.radius * e.radiusMult) continue;
       let dmg = e.spellImmune ? Math.max(1, Math.round(dmgBase * SPELL_IMMUNE_TESLA_MULT)) : dmgBase;
       if (edef.flying && airBonus > 1) dmg = Math.round(dmg * airBonus);
-      damageEnemy(state, ctx, e, dmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
+      damageEnemy(state, ctx, e, dmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance, attackType);
     }
     events.push({ e: 'shot', x: tx, y: ty, tx: tx + ux * lvl.range, ty: ty + uy * lvl.range, kind: 'beam', color });
     return;
@@ -582,8 +603,11 @@ function fireTower(
       // y la Piedra Filosofal. Ningún Tesla base tiene `poison`, así que esto solo
       // se activa en la Tempestad Tóxica.
       if (lvl.poison && !current.spellImmune) {
-        if (lvl.poison.dps >= current.poisonDps) {
-          current.poisonDps = lvl.poison.dps;
+        // F5.1 · dps efectivo con el suelo porcentual (poisonPctMax; hoy solo la
+        // Corrosión II lo usa, pero la cadena comparte el criterio de applyPayload)
+        const dps = effectivePoisonDps(lvl.poison.dps, lvl.poisonPctMax, current);
+        if (dps >= current.poisonDps) {
+          current.poisonDps = dps;
           current.poisonSrc = tower.id;
         }
         current.poisonUntil = Math.max(current.poisonUntil, state.tick + Math.round(lvl.poison.duration * TICK_RATE));
@@ -591,7 +615,7 @@ function fireTower(
       // el rayo Tesla es mágico: los inmunes reciben −70% (execute ya se ignora en damageEnemy)
       let linkDmg = current.spellImmune ? Math.max(1, Math.round(dmg * SPELL_IMMUNE_TESLA_MULT)) : dmg;
       if (ENEMIES[current.type].flying && airBonus > 1) linkDmg = Math.round(linkDmg * airBonus);
-      damageEnemy(state, ctx, current, linkDmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
+      damageEnemy(state, ctx, current, linkDmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance, attackType);
       dmg = Math.max(1, Math.round(dmg * chain.falloff));
       // buscar el siguiente eslabón cerca del último golpeado
       let next: EnemyState | null = null;
@@ -637,7 +661,7 @@ function fireTower(
       events.push({ e: 'shot', x: tx, y: ty, tx: t.x, ty: t.y, kind: 'snipe', color });
       let dmg = dmgFor(lvl.damage);
       if (ENEMIES[t.type].flying && airBonus > 1) dmg = Math.round(dmg * airBonus);
-      damageEnemy(state, ctx, t, dmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance);
+      damageEnemy(state, ctx, t, dmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance, attackType);
     }
     return;
   }
@@ -661,7 +685,7 @@ function fireTower(
         ? { factor: lvl.slow.factor, durationTicks: Math.round(lvl.slow.duration * TICK_RATE) }
         : undefined,
       poison: lvl.poison
-        ? { dps: lvl.poison.dps, durationTicks: Math.round(lvl.poison.duration * TICK_RATE) }
+        ? { dps: lvl.poison.dps, durationTicks: Math.round(lvl.poison.duration * TICK_RATE), pctMax: lvl.poisonPctMax }
         : undefined,
       pierceArmor: lvl.pierceArmor ?? false,
       execute,
@@ -670,6 +694,7 @@ function fireTower(
       executeCurrent,
       shredChance,
       airBonus,
+      attackType,
     };
     state.projectiles.push(proj);
   }
@@ -678,6 +703,16 @@ function fireTower(
 // factor de hielo tras la resistencia del enemigo (frostward). 1 = sin efecto.
 function resolvedSlow(factor: number, resist: number): number {
   return factor + (1 - factor) * resist;
+}
+
+// F5.1 · dps EFECTIVO de un veneno con suelo porcentual (Corrosión II): al menos
+// `pctMax` de la vida MÁXIMA del objetivo por segundo, con TOPE POISON_PCT_CAP_DPS
+// (el porqué del tope está en constants.ts). Se resuelve al APLICAR el veneno —
+// por enemigo, determinista (round de aritmética pura) — así el pipeline del DoT
+// (poisonDps/poisonUntil) no cambia y el veneno clásico queda intacto (sin pctMax).
+function effectivePoisonDps(dps: number, pctMax: number | undefined, enemy: EnemyState): number {
+  if (!pctMax) return dps;
+  return Math.max(dps, Math.min(POISON_PCT_CAP_DPS, Math.round(enemy.maxHp * pctMax)));
 }
 
 function applyPayload(
@@ -697,8 +732,10 @@ function applyPayload(
     }
   }
   if (proj.poison && !enemy.spellImmune) {
-    if (proj.poison.dps >= enemy.poisonDps) {
-      enemy.poisonDps = proj.poison.dps;
+    // F5.1 · suelo porcentual del DoT (Corrosión II): se resuelve por enemigo
+    const dps = effectivePoisonDps(proj.poison.dps, proj.poison.pctMax, enemy);
+    if (dps >= enemy.poisonDps) {
+      enemy.poisonDps = dps;
       enemy.poisonSrc = proj.towerId;
     }
     enemy.poisonUntil = Math.max(enemy.poisonUntil, state.tick + proj.poison.durationTicks);
@@ -707,7 +744,7 @@ function applyPayload(
   // en un splash mixto solo los voladores reciben el extra.
   const dmgAmount =
     proj.airBonus > 1 && ENEMIES[enemy.type].flying ? Math.round(proj.damage * proj.airBonus) : proj.damage;
-  damageEnemy(state, ctx, enemy, dmgAmount, proj.pierceArmor, proj.towerId, events, proj.execute, proj.executeCurrent, proj.shredChance);
+  damageEnemy(state, ctx, enemy, dmgAmount, proj.pierceArmor, proj.towerId, events, proj.execute, proj.executeCurrent, proj.shredChance, proj.attackType);
 }
 
 function explode(
@@ -795,11 +832,13 @@ function nearestSappableTower(
   y: number,
   maxDist: number,
   claimed: Set<number>,
+  sapped?: number[], // F5.1 · torres que este zapador SOLTÓ por timeout: no re-elegibles
 ): TowerState | null {
   let best: TowerState | null = null;
   let bestD = maxDist;
   for (const t of state.towers) {
     if (claimed.has(t.id)) continue;
+    if (sapped && sapped.includes(t.id)) continue; // vetadas por el timeout de zapado
     if (!towerFires(t)) continue; // aturdir una mina/aura/trampa no hace nada
     const d = dist(x, y, t.cx + 0.5, t.cy + 0.5);
     if (d < bestD) {
@@ -877,6 +916,12 @@ function stepEnemies(state: GameState, ctx: SimContext, events: GameEvent[]): vo
     // en `stunTicks`). Si todas las torres cercanas ya están tomadas, SIGUE
     // CAMINANDO en busca de otra. Prefiere quedarse con su torre actual para no
     // saltar entre torres. Determinista: orden estable + set de reclamadas.
+    // F5.1 · TIMEOUT DE ZAPADO: tras SAPPER_MAX_SEC sobre la MISMA torre la suelta
+    // al instante y reanuda la marcha sin poder re-elegirla. Sin esto, 4-5
+    // zapadores inmunes podían aturdir para siempre las únicas torres en rango y
+    // COLGAR la partida (softlock verificado en el 25% de las semillas de la
+    // revisión adversarial: ni derrota ni victoria, sala zombi). 8 s × zapador
+    // sigue siendo presión real; el softlock pasa a ser daño temporal.
     let sapping = false;
     if (def.sapper) {
       let tower: TowerState | null = null;
@@ -888,10 +933,21 @@ function stepEnemies(state: GameState, ctx: SimContext, events: GameEvent[]): vo
           towerFires(cur) &&
           dist(enemy.x, enemy.y, cur.cx + 0.5, cur.cy + 0.5) <= sapRange
         ) {
-          tower = cur;
+          if (state.tick - enemy.sapStartTick >= SAPPER_MAX_SEC * TICK_RATE) {
+            // tiempo agotado: libera la torre YA (contraplay inmediato) y la veta
+            // PARA SIEMPRE para este zapador (una lista, no un solo id: con un
+            // único veto podía oscilar entre dos torres eternamente)
+            enemy.sappedIds.push(cur.id);
+            cur.stunnedUntil = state.tick;
+          } else {
+            tower = cur;
+          }
         }
       }
-      if (!tower) tower = nearestSappableTower(state, enemy.x, enemy.y, sapRange, sapClaimed);
+      if (!tower) {
+        tower = nearestSappableTower(state, enemy.x, enemy.y, sapRange, sapClaimed, enemy.sappedIds);
+        if (tower) enemy.sapStartTick = state.tick; // empieza a zapar una torre nueva
+      }
       if (tower) {
         sapClaimed.add(tower.id);
         tower.stunnedUntil = state.tick + stunTicks;
@@ -1163,13 +1219,17 @@ function stepTraps(state: GameState, ctx: SimContext, events: GameEvent[]): void
           if (e.hp <= 0 || ENEMIES[e.type].flying) continue; // explosión a ras de suelo
           if (dist(bx, by, e.x, e.y) <= splash + ENEMIES[e.type].radius * e.radiusMult) {
             if (ENEMIES[e.type].boss) {
-              // los JEFES no se eliminan: reciben el daño del barril (físico, con armadura)
-              damageEnemy(state, ctx, e, lvl.damage, false, trap.id, events, 0, 0, 0);
+              // los JEFES no se eliminan: reciben el daño del barril (asedio, con
+              // armadura — la matriz F5.1 aplica ×1.0 vs colosal, neutro a propósito)
+              damageEnemy(state, ctx, e, lvl.damage, false, trap.id, events, 0, 0, 0, attackTypeOf(trap));
             } else {
               // ELIMINACIÓN: cualquier no-jefe dentro del radio muere, da igual su
               // vida, armadura o inmunidad. El daño aplicado = su vida actual (con
               // perforación) para que las estadísticas reflejen la vida retirada.
-              damageEnemy(state, ctx, e, Math.max(1, Math.ceil(e.hp)), true, trap.id, events, 0, 0, 0);
+              // F5.1 · daño VERDADERO (attackType null): la eliminación NO pasa por
+              // la matriz — un ×0.65 de asedio vs ligera dejaría vivo lo que el
+              // barril promete borrar.
+              damageEnemy(state, ctx, e, Math.max(1, Math.ceil(e.hp)), true, trap.id, events, 0, 0, 0, null);
             }
           }
         }
@@ -1189,8 +1249,9 @@ function stepTraps(state: GameState, ctx: SimContext, events: GameEvent[]): void
       if (ENEMIES[e.type].flying) continue; // la trampa está en el suelo
       if (Math.floor(e.x) !== trap.cx || Math.floor(e.y) !== trap.cy) continue;
       hitAny = true;
-      // daño físico (pierceArmor irrelevante: es daño directo, funciona vs inmunes)
-      damageEnemy(state, ctx, e, lvl.damage, false, trap.id, events, 0, 0, 0);
+      // daño directo (funciona vs inmunes); F5.1: pasa por la matriz como ASEDIO —
+      // revienta blindados que pisan (×1.5) y castiga menos a las alimañas (×0.65)
+      damageEnemy(state, ctx, e, lvl.damage, false, trap.id, events, 0, 0, 0, attackTypeOf(trap));
     }
     if (hitAny) {
       trap.charges -= 1;

@@ -5,8 +5,14 @@
 import {
   AFFIX_ORDER,
   AFFIXES,
+  ALCHEMIST_BOUNTY_MULT,
+  ARMOR_TYPE_INFO,
   ASSIST_MIN_DMG_FRAC,
   ASSIST_SHARE,
+  ATTACK_TYPE_INFO,
+  attackMult,
+  CALL_WAVE_GOLD_PER_SEC,
+  ENDLESS_BOUNTY_FROM,
   ENEMY_ORDER,
   ENEMIES,
   FUSION_ORDER,
@@ -18,6 +24,7 @@ import {
   WOOD_COST_SPEC,
 } from '@td/shared';
 import type { EnemyDef, EnemyTypeId, TowerDef, TowerLevelDef, TowerTypeId } from '@td/shared';
+import { armorLabel, ARMOR_ORDER, ATTACK_ORDER, attackMatchup, syncHotkeyLabels } from './hud.js';
 import { ENEMY_ICONS, TOWER_ICONS } from './renderer.js';
 import {
   CONTROL_ACTIONS,
@@ -28,7 +35,6 @@ import {
   towerTypeForAction,
   type KeymapAction,
 } from './keymap.js';
-import { syncHotkeyLabels } from './hud.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -106,12 +112,20 @@ function buildEnemies(): void {
       const chips = traitsOf(def)
         .map((tr) => `<span class="etrait ${tr.cls ?? ''}">${tr.icon} ${tr.label}</span>`)
         .join('');
-      const armorStat = def.armor > 0 ? ` <span>🛡 ${def.armor}</span>` : '';
+      const armorStat = def.armor > 0 ? ` <span title="Armadura plana: se resta a cada golpe">🛡 ${def.armor}</span>` : '';
+      // F5.1 · tipo de ARMADURA (identidad de silueta para la matriz ataque×armadura):
+      // icono + nombre de ARMOR_TYPE_INFO, con su identidad como subtítulo y tooltip.
+      const ar = ARMOR_TYPE_INFO[def.armorType];
+      const armorType = `<div class="earmor" title="${escapeHtml(ar.desc)}">
+          <span class="earmor-badge armor-${def.armorType}">${ar.icon} ${ar.name}</span>
+          <span class="earmor-id">${ar.desc}</span>
+        </div>`;
       return `<div class="enemy-card${def.boss ? ' boss' : ''}">
         <div class="ecard-head">
           <span class="eicon">${ENEMY_ICONS[type]}</span>
           <span class="ename">${def.name}</span>
         </div>
+        ${armorType}
         <div class="etraits">${chips}</div>
         <p class="edesc">${DESC[type]}</p>
         <div class="estats"><span>❤️ ${def.hp}</span> <span>🦶 ${speedLabel(def.speed)}</span> <span>🪙 ${def.bounty}</span>${armorStat}</div>
@@ -184,6 +198,33 @@ function buildElites(): void {
         <p class="edesc">Llegan cada 10 oleadas; la <b>Quimera voladora</b> en la 15/25/35 del clásico.
         Consulta su ficha en la pestaña Enemigos.</p>
       </div>
+    </div>
+    <div class="guide-intro">
+      <h3>💰 Economía — trucos que casi nadie usa</h3>
+    </div>
+    <div class="bestiary-grid">
+      <div class="enemy-card">
+        <div class="ecard-head"><span class="eicon">⏱</span><span class="ename">Llama la oleada antes</span></div>
+        <p class="edesc">El botón <b>«¡Ya!»</b> paga <b>${CALL_WAVE_GOLD_PER_SEC}🪙 por cada segundo</b> que le quedaba al
+        interludio. Encadenar oleadas cuando ya tienes tus torres listas es oro puro (y acelera la partida).</p>
+      </div>
+      <div class="enemy-card">
+        <div class="ecard-head"><span class="eicon">⚗</span><span class="ename">Aura del Alquimista</span></div>
+        <p class="edesc">Su <b>+${Math.round((ALCHEMIST_BOUNTY_MULT - 1) * 100)}% de botín</b> solo cuenta si el enemigo
+        <b>MUERE dentro del anillo verde</b>. No basta con que pase por él: colócalo donde REVIENTAN, no donde entran.</p>
+      </div>
+      <div class="enemy-card">
+        <div class="ecard-head"><span class="eicon">♾️</span><span class="ename">Botín del Infinito</span></div>
+        <p class="edesc">En modo <b>Infinito</b>, desde la <b>oleada ${ENDLESS_BOUNTY_FROM}</b> el botín gana un extra que
+        crece compuesto por oleada: cuanto más aguantes, más paga cada baja (con tope). Es lo que sostiene la economía tardía.</p>
+      </div>
+    </div>
+    <div class="guide-intro">
+      <h3>♾️ Infinito — el lategame honesto</h3>
+      <p class="edesc">Del <b>40 en adelante</b> la vida de los enemigos crece <b>exponencialmente</b>: el daño plano se
+      queda corto y ninguna torre "normal" mata a tiempo. Lo que escala de verdad son los <b>remates porcentuales</b>
+      —<b>Cañón de Riel ★★</b>, <b>Arpón del Cénit ★★</b> y el <b>Ojo de Asedio</b>— y la <b>Corrosión ★★</b>
+      (veneno que arranca un porcentaje de la vida MÁXIMA por segundo). Sin ellos, tarde o temprano la esponja gana.</p>
     </div>`;
 }
 
@@ -385,6 +426,47 @@ function towerTraits(def: TowerDef): Trait[] {
   return t;
 }
 
+// formato corto del multiplicador de la matriz (sin ceros de relleno): 0.9, 1, 1.5…
+function fmtMult(m: number): string {
+  return String(Math.round(m * 100) / 100);
+}
+
+// F5.1 · la tabla 4×4 completa (ataque en filas, armadura en columnas). Legible en
+// móvil gracias al scroll horizontal de .matrix-wrap. Verde=fuerte, rojo=débil.
+function matrixTableHtml(): string {
+  const headCells = ARMOR_ORDER.map((a) => {
+    const i = ARMOR_TYPE_INFO[a];
+    return `<th title="${escapeHtml(i.desc)}"><span class="m-ico">${i.icon}</span><span class="m-lbl">${i.name}</span></th>`;
+  }).join('');
+  const rows = ATTACK_ORDER.map((atk) => {
+    const ai = ATTACK_TYPE_INFO[atk];
+    const cells = ARMOR_ORDER.map((arm) => {
+      const m = attackMult(atk, arm);
+      const cls = m >= 1.25 ? 'm-strong' : m <= 0.8 ? 'm-weak' : 'm-neutral';
+      return `<td class="${cls}">×${fmtMult(m)}</td>`;
+    }).join('');
+    return `<tr><th class="m-row" title="${escapeHtml(ai.desc)}"><span class="m-ico">${ai.icon}</span><span class="m-lbl">${ai.name}</span></th>${cells}</tr>`;
+  }).join('');
+  return `
+    <div class="guide-intro">
+      <h3>⚔ Matriz ataque × armadura</h3>
+      <p class="edesc">El daño DIRECTO (impacto, área, cadena, ráfaga, trampa) se multiplica por esta tabla según el
+      tipo de ataque de tu torre y la armadura del enemigo. El veneno, las auras y los ralentizadores NO pasan por
+      aquí. <b>Ningún tipo lo mata todo: diversifica.</b></p>
+    </div>
+    <div class="matrix-wrap">
+      <table class="matrix-table">
+        <thead><tr><th class="m-corner">ataque \\ armadura</th>${headCells}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="matrix-legend">
+      <span class="m-chip m-strong">×≥1.25 fuerte</span>
+      <span class="m-chip m-neutral">≈1 neutral</span>
+      <span class="m-chip m-weak">×≤0.8 débil</span>
+    </div>`;
+}
+
 function buildTowers(): void {
   const cards = TOWER_ORDER.map((type) => {
     const def = TOWERS[type];
@@ -434,6 +516,29 @@ function buildTowers(): void {
             .join(' · ')}</div>`
         : `<div class="tfuse tdim">⚗ No se fusiona.</div>`;
 
+    // F5.1 · tipo de ATAQUE + "fuerte/débil vs" (derivado de la matriz): solo para
+    // torres que hacen daño directo (las de apoyo/economía no entran en la matriz).
+    const dealsDmg = anyStat(def, (l) => (l.damage ?? 0) > 0);
+    let matchHtml = '';
+    if (dealsDmg) {
+      const info = ATTACK_TYPE_INFO[def.attackType];
+      const { strong, weak } = attackMatchup(def.attackType);
+      const bits: string[] = [];
+      if (strong.length) bits.push(`Fuerte vs ${strong.map(armorLabel).join(', ')}`);
+      if (weak.length) bits.push(`Débil vs ${weak.map(armorLabel).join(', ')}`);
+      const vs = bits.length > 0 ? bits.join(' · ') : 'Daño parejo contra todas las armaduras';
+      matchHtml = `<div class="tmatch" title="${escapeHtml(info.desc)}">
+          <span class="etrait atk">${info.icon} ${info.name}</span>
+          <span class="tmatch-vs">${vs}</span>
+        </div>`;
+    }
+    // aviso de "SOLO aire" (Balista de Cielo): es su trade-off de diseño, hay que
+    // destacarlo. Data-driven: cualquier torre antiaérea pura lo mostraría.
+    const airWarn =
+      def.targetsAir && !def.targetsGround
+        ? `<div class="twarn">⚠ <b>SOLO dispara al aire</b> — no toca tierra. Su ★★ <b>Arpón del Cénit</b> es el remate porcentual antiaéreo: si el arponazo arranca la mitad de la vida del volador, lo derriba.</div>`
+        : '';
+
     // icono: sprite real si existe, con FALLBACK al emoji (igual que la barra de torres)
     return `<div class="enemy-card tower-card">
       <div class="ecard-head">
@@ -441,7 +546,9 @@ function buildTowers(): void {
         <span class="ename">${def.name}</span>
       </div>
       <div class="etraits">${chips}</div>
+      ${matchHtml}
       <p class="edesc">${def.desc}</p>
+      ${airWarn}
       ${costLine}
       <div class="tspec-list">${specHtml}</div>
       ${fuseHtml}
@@ -455,6 +562,7 @@ function buildTowers(): void {
       (cuestan 🪙 oro y 🪵 madera). Cada especialización puede subir una vez más al <b>★★ Rango II</b>.
       Dos torres ★ especializadas y pegadas del mismo dueño pueden <b>⚗ fusionarse</b> (ver la pestaña Fusiones).</p>
     </div>
+    ${matrixTableHtml()}
     <div class="bestiary-grid">${cards}</div>`;
 
   // sprite real con fallback al emoji (mismo truco que buildTowerBar en hud.ts):

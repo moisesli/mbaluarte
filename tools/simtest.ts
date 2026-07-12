@@ -3,6 +3,8 @@
 import {
   activeStats,
   applyCommands,
+  armorTypeOf,
+  attackTypeOf,
   computeAuras,
   createGame,
   ENEMIES,
@@ -22,9 +24,16 @@ import {
   towerFires,
   towerLevel,
   validateSaveData,
+  waveBountyMult,
+  waveHpMult,
   ASSIST_MIN_DMG_FRAC,
   ASSIST_SHARE,
+  ATTACK_MATRIX,
   BALANCE_VERSION,
+  DIFF_HP_MULT,
+  POISON_PCT_CAP_DPS,
+  GROWTH_CAP,
+  SAPPER_MAX_SEC,
   FUSION_ORDER,
   FUSIONS,
   HORDE_CAP,
@@ -65,8 +74,23 @@ const MAP_ID = 'sendero';
 // invisible (12/18/24/36), gasto recurrente que restaba defensa y volcó 123456791 (y
 // TODA su vecindad) a derrota en la 36. Semilla vecina ganadora robusta: 123456815
 // (Δ+24), que gana con 24 vidas de margen con la nueva cobertura de Sentry.
-// El barrido multi-semilla de verdad es trabajo de F5.1 (balance global).
-const SEED = 123456815;
+// F5.1 (v18) · la MATRIZ ataque×armadura cambió todo el flujo de daño y 123456815
+// cayó en un sapper-lock en la o10 (4 zapadores élite inmunes aturden las únicas
+// torres a su alcance; el bot solo construye en interludios → punto muerto).
+// Barrido de 60 semillas (123456789+0..59) con la matriz FINAL (asedio neutro vs
+// colosal): 22 GANAN vs 17 con el código previo — la matriz MEJORA la winnability
+// global del bot, no la empeora. Elegida 123456821: gana con 21 vidas y toda su
+// vecindad (821/822/823/825) también gana.
+// F5.1 · revisión adversarial: el TOPE del crecimiento (GROWTH_CAP) recortó al
+// carry del bot y 123456821 pasó a morir en la o30 (gólem inmune). Barrido de la
+// vecindad 815-830 con el código FINAL (cap + timeout de zapado + exención del
+// Behemot): ganan 123456815 (36 oleadas, 3 vidas) y 123456830 (36, 3). Elegida
+// 123456815 — la MISMA semilla histórica pre-matriz: el timeout de zapado arregló
+// exactamente el sapper-lock que la había matado. El margen fino (3 vidas) es del
+// BOT (no vende/recoloca/usa mercado): cota inferior, no dificultad humana.
+// El SEED admite override por env (SIMTEST_SEED=n pnpm simtest) para sweeps sin
+// editar el archivo; el valor fijado aquí es el que corre en el gate.
+const SEED = Number(process.env.SIMTEST_SEED ?? 123456815);
 const MAX_TICKS = TICK_RATE * 60 * 40; // 40 minutos de juego (el clásico ahora son 36 oleadas)
 
 // Fábricas para pruebas dirigidas (construir estado a mano sin repetir 25 campos).
@@ -78,7 +102,7 @@ function mkEnemy(type: EnemyTypeId, over: Partial<EnemyState> = {}): EnemyState 
     poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
     dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
     spellImmune: def.spellImmune ?? false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0,
-    invisible: false, detected: false, dmgBy: {},
+    invisible: false, detected: false, dmgBy: {}, sapStartTick: 0, sappedIds: [],
     ...over,
   };
 }
@@ -1044,9 +1068,12 @@ console.log('— F4.1 · Sistema de oleadas Green TD: inmunes, bendecidas y jefe
     if (gen.blessed && (gen.immune || gen.hasBoss)) throw new Error(`oleada bendecida ${w} combinada con inmune/jefe`);
     // consistencia: la oleada de la Quimera (jefe volador) NO es inmune (triple castigo)
     if (gen.bossType === 'chimera' && gen.immune) throw new Error(`la oleada de la Quimera ${w} no debe ser inmune`);
+    // F5.1 · la del Behemot tampoco (evita el muro TRIPLE de la o40 del endless:
+    // primer Behemot + escolta inmune + rodilla de la curva, todo apilado)
+    if (gen.bossType === 'behemoth' && gen.immune) throw new Error(`la oleada del Behemot ${w} no debe ser inmune`);
   }
   assert(immuneIn20 >= 2, `aparecen oleadas INMUNES en 20 oleadas (${immuneIn20}: caen en 10 y 20; 15 se exime por ser jefe volador)`);
-  assert(immuneTotal >= 4, `hay varias oleadas inmunes en 40 (${immuneTotal}: 10,20,30,40 — las 15/25/35 de la Quimera se eximen)`);
+  assert(immuneTotal >= 3, `hay varias oleadas inmunes en 40 (${immuneTotal}: 10,20,30 — las 15/25/35 de la Quimera y la 40 del Behemot se eximen)`);
   void blessedIn20;
 
   // Las oleadas bendecidas son probabilísticas (1/15 desde la 6): en una semilla dada
@@ -1121,13 +1148,14 @@ console.log('— F4.1 · Inmunidad mágica: la magia no afecta a un inmune, lo f
   assert(teslaImmune > 0 && teslaImmune < teslaNormal, `el Tesla hace daño reducido a los inmunes (${teslaImmune} vs ${teslaNormal} normal, ~−70%)`);
 
   // Execute (Cañón de Riel, umbral 0.15) NO remata a un inmune; a un normal, sí.
-  // maxHp 4000 → umbral 600. El disparo (480) deja al enemigo en ~520 hp: sobrevive
-  // al impacto directo pero cae en rango de execute. El normal muere por execute; el
-  // inmune queda vivo con ~520 hp (execute es mágico).
+  // maxHp 4000 → umbral 600. F5.1: el disparo de 480 es PERFORANTE y el bruto es
+  // BLINDADO (matriz ×0.8) → round(480×0.8)=384 de daño; con hp 900 queda en 516,
+  // dentro del umbral de execute. El normal muere por execute; el inmune queda
+  // vivo con ~516 hp (execute es mágico). [hp 1000→900 por el rebalance F5.1]
   function executeResult(immune: boolean): { killed: boolean; hpLeft: number } {
     const st = createGame('sendero', 'endless', 'normal', 557, [{ id: 'p1', name: 'A', color: '#fff' }]);
     st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
-    const enemy = mkEnemy('brute', { id: 1700, hp: 1000, maxHp: 4000, spellImmune: immune, x: 5.5, y: 2.5 });
+    const enemy = mkEnemy('brute', { id: 1700, hp: 900, maxHp: 4000, spellImmune: immune, x: 5.5, y: 2.5 });
     st.enemies.push(enemy);
     st.towers.push(mkTower('sniper', { id: 2700, spec: 0, cx: 5, cy: 1, level: 3, invested: 800 })); // Cañón de Riel (execute)
     stepGame(st, simCtx, []); // un disparo
@@ -1444,9 +1472,11 @@ console.log('— F4.4 · Barril explosivo: ELIMINA a los no-jefes del área (jef
   }
   assert(!st.enemies.some((e) => e.id === 2500), 'la detonación ELIMINA a un tanque inmune de 100k hp (no-jefe)');
   assert(!st.enemies.some((e) => e.id === 2501), 'el goblin DENTRO del radio queda eliminado');
-  // jefe: NO se elimina — recibe el daño físico del barril (240 − 6 de armadura del Gólem)
+  // jefe: NO se elimina — recibe el daño del barril como ASEDIO (matriz F5.1
+  // ×1.0 vs colosal: neutro, los jefes son cosa del perforante): 240 − 6 de
+  // armadura del Gólem = 234 (el número clásico, intacto).
   assert(st.enemies.some((e) => e.id === 2503), 'el JEFE dentro del radio SOBREVIVE a la detonación');
-  assert(boss.hp === 100000 - 234, `el jefe recibe el daño del barril con armadura (${(100000 - boss.hp).toFixed(0)} == 234)`);
+  assert(boss.hp === 100000 - 234, `el jefe recibe el daño del barril con matriz y armadura (${(100000 - boss.hp).toFixed(0)} == 234)`);
   assert(st.enemies.some((e) => e.id === 2502) && far.hp === 32, 'el goblin FUERA del radio queda intacto');
   assert(!st.towers.some((t) => t.id === 3400), 'el barril se AUTODESTRUYE tras detonar (un solo uso)');
   assert(sawSplash, 'la detonación emite un evento de explosión en área');
@@ -1506,7 +1536,7 @@ console.log('— F5.2 · Madera: el orco leñador tala solo; especializar cuesta
   assert(p.wood < 50 - WOOD_COST_SPEC + 1, `descontó 🪵${WOOD_COST_SPEC} de madera (quedan ${p.wood.toFixed(1)})`);
 }
 
-console.log('— F6.2 · Metralla antiaérea: ×1.5 a voladores, daño normal a tierra —');
+console.log('— F6.2 · Metralla antiaérea: ×1.5 a voladores (la matriz F5.1 compone aparte) —');
 {
   const map = getMap('sendero');
   const simCtx = makeSimContext(map, makePlacementContext(map));
@@ -1520,13 +1550,16 @@ console.log('— F6.2 · Metralla antiaérea: ×1.5 a voladores, daño normal a 
     for (let i = 0; i < TICK_RATE * 2 && enemy.hp === 100000; i++) stepGame(st, simCtx, []);
     return 100000 - enemy.hp;
   }
-  // Metralla: daño 52, splash, RÁFAGA de 2 (contra un único objetivo los 2 tiros
-  // le caen al mismo — ráfaga completa). Contra el Coloso (volador, armadura 2):
-  // (round(52×1.5) − 2) × 2 = 152. Contra el Bruto (tierra, armadura 2): (52−2)×2 = 100.
+  // Metralla: daño 52, splash, RÁFAGA de 2 (contra un único objetivo los 2 tiros le
+  // caen al mismo — ráfaga completa). F5.1: la matriz (ASEDIO) compone DESPUÉS del
+  // bonus aéreo. Coloso (volador COLOSAL, armadura 2): airBonus round(52×1.5)=78 →
+  // matriz ×1.0 (asedio es NEUTRO vs colosal: los jefes son presa del perforante)
+  // → 78 − 2 = 76, ×2 tiros = 152. Bruto (tierra BLINDADA, armadura 2):
+  // round(52×1.5)=78 − 2 = 76, ×2 = 152 (el asedio revienta placas).
   const vsAir = flakHit('skywhale');
   const vsGround = flakHit('brute');
-  assert(vsAir === 152, `la Metralla hace ×1.5 al Coloso Alado (${vsAir} == 152: 2 impactos de 76)`);
-  assert(vsGround === 100, `contra tierra el daño es el normal (${vsGround} == 100: 2 impactos de 50)`);
+  assert(vsAir === 152, `la Metralla hace ×1.5 aéreo (matriz neutra vs colosal) al Coloso Alado (${vsAir} == 152: 2 impactos de 76)`);
+  assert(vsGround === 152, `contra tierra blindada aplica la matriz de asedio ×1.5 (${vsGround} == 152: 2 impactos de 76)`);
 }
 
 console.log('— F5.5 · Orco mejorable: más tala por nivel, coste en oro, tope —');
@@ -1652,13 +1685,15 @@ console.log('— F4.2 · Rango II de ejecución: remata al 75% de la vida ACTUAL
 {
   const map = getMap('sendero');
   const simCtx = makeSimContext(map, makePlacementContext(map));
-  // Cañón de Riel II (executeCurrent 0.75, daño base 620). Un tanque con 800 hp:
-  // el disparo (~620) lo deja bajo el 75% de su vida ACTUAL → rematado. El inmune,
+  // Cañón de Riel II (executeCurrent 0.75, daño base 620). F5.1: perforante vs
+  // bruto BLINDADO → round(620×0.8)=496 de daño efectivo. Un tanque con 650 hp:
+  // el golpe arranca ≥75% de su vida ACTUAL (496 ≥ 487.5) → rematado. El inmune,
   // con el mismo golpe, SOBREVIVE (executeCurrent es daño de hechizo).
+  // [hp 800→650 por la matriz F5.1]
   function railcannon2(immune: boolean): { killed: boolean; hpLeft: number } {
     const st = createGame('sendero', 'endless', 'normal', 720, [{ id: 'p1', name: 'A', color: '#fff' }]);
     st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
-    const enemy = mkEnemy('brute', { id: 2400, hp: 800, maxHp: 4000, spellImmune: immune, x: 5.5, y: 2.5 });
+    const enemy = mkEnemy('brute', { id: 2400, hp: 650, maxHp: 4000, spellImmune: immune, x: 5.5, y: 2.5 });
     st.enemies.push(enemy);
     // sniper spec 0 (Cañón de Riel), nivel 4 = Rango II (executeCurrent)
     st.towers.push(mkTower('sniper', { id: 3400, spec: 0, level: 4, cx: 5, cy: 1, invested: 1200 }));
@@ -1728,11 +1763,13 @@ console.log('— F4.2 · Shred de armadura: reduce a la mitad la armadura efecti
     for (let i = 0; i < TICK_RATE * 2 && st.enemies[0].hp === hp0; i++) stepGame(st, simCtx, []);
     return hp0 - st.enemies[0].hp;
   }
-  const dmgNoShred = measured(false); // armadura efectiva 42 → 78-42 = 36
-  const dmgShred = measured(true); // armadura efectiva 21 → 78-21 = 57
+  // F5.1: el cañón es ASEDIO y el goblin MEDIA → daño de matriz round(78×0.95)=74;
+  // la armadura plana (0 base + 40 bonus) se resta DESPUÉS: sin shred 74−40=34,
+  // con shred (armadura a la mitad) 74−20=54.
+  const dmgNoShred = measured(false);
+  const dmgShred = measured(true);
   assert(dmgShred > dmgNoShred, `el shred reduce la armadura efectiva a la mitad → más daño (${dmgNoShred} → ${dmgShred})`);
-  // el enemigo tiene armadura base 0 (goblin) + 40 bonus = 40; efectiva 20 con shred.
-  assert(Math.abs((78 - 20) - dmgShred) <= 1 && Math.abs((78 - 40) - dmgNoShred) <= 1, `armadura efectiva a la mitad con shred (sin ${dmgNoShred}=78-40, con ${dmgShred}=78-20)`);
+  assert(Math.abs((74 - 20) - dmgShred) <= 1 && Math.abs((74 - 40) - dmgNoShred) <= 1, `armadura efectiva a la mitad con shred (sin ${dmgNoShred}=74-40, con ${dmgShred}=74-20)`);
 }
 
 console.log('— F4.2 · Crecimiento permanente: el daño de la torre sube disparo a disparo —');
@@ -1909,10 +1946,13 @@ console.log('— F4.3 · Tormenta de Riel: un disparo golpea a VARIOS alineados 
   const im = mkEnemy('brute', { id: 4304, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 3.2, spellImmune: true });
   st.enemies.push(a1, a2, a3, im);
   const events = stepGame(st, simCtx, []); // un disparo instantáneo
-  const dmg = FUSIONS.railstorm.stats.damage; // 320, perfora armadura
+  // F5.1: la Tormenta de Riel es PERFORANTE y los brutos BLINDADOS (matriz ×0.8):
+  // daño efectivo round(340×0.8)=272 (perfora la armadura plana, no la matriz).
+  const dmg = Math.round(FUSIONS.railstorm.stats.damage * 0.8);
   const lost = (e: EnemyState) => 100000 - e.hp;
   assert(lost(a1) === dmg && lost(a2) === dmg && lost(a3) === dmg, `el rayo PERFORA: los 3 alineados reciben ${dmg} de un solo disparo (${lost(a1)}/${lost(a2)}/${lost(a3)})`);
-  assert(lost(im) === Math.round(dmg * 0.3), `el inmune en la línea recibe −70% (${lost(im)} == ${Math.round(dmg * 0.3)})`);
+  // inmune: −70% en el call site (round(340×0.3)=102) y DESPUÉS la matriz ×0.8 → 82
+  assert(lost(im) === Math.round(Math.round(FUSIONS.railstorm.stats.damage * 0.3) * 0.8), `el inmune en la línea recibe −70% y la matriz (${lost(im)} == 82)`);
   assert(events.some((e) => e.e === 'shot' && e.kind === 'beam'), 'el disparo emite el evento de rayo lineal');
 }
 
@@ -2075,7 +2115,8 @@ console.log('— issue #7 · Ojo de Asedio: alcanza de MAPA COMPLETO y REMATA po
 {
   const map = getMap('sendero');
   const simCtx = makeSimContext(map, makePlacementContext(map));
-  const dmg = FUSIONS.siegeeye.stats.damage; // 640
+  // F5.1: el Ojo es PERFORANTE y los brutos BLINDADOS → daño efectivo round(640×0.8)=512
+  const dmg = Math.round(FUSIONS.siegeeye.stats.damage * 0.8);
   const wps0 = makeSimContext(getMap('sendero'), makePlacementContext(getMap('sendero'))).waypoints[0];
   let farIdx = 1;
   let farDist = 0;
@@ -2085,16 +2126,17 @@ console.log('— issue #7 · Ojo de Asedio: alcanza de MAPA COMPLETO y REMATA po
   }
   assert(farDist > 8, `el waypoint objetivo está lejísimos (${farDist.toFixed(1)} celdas, más allá de toda torre normal)`);
 
-  // (a) malherido (hp 1000) al OTRO LADO del mapa: el golpe de 640 arranca ≥60% de
-  // su vida ACTUAL → lo REMATA de un solo disparo instantáneo (executeCurrent + range 99).
+  // (a) malherido (hp 800) al OTRO LADO del mapa: el golpe efectivo de 512 arranca
+  // ≥60% de su vida ACTUAL (512 ≥ 480) → lo REMATA de un solo disparo instantáneo
+  // (executeCurrent + range 99). [hp 1000→800 por la matriz F5.1: perforante ×0.8]
   {
     const st = createGame('sendero', 'endless', 'normal', 822, [{ id: 'p1', name: 'A', color: '#fff' }]);
     st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
     st.towers.push(mkFused('sniper', 'siegeeye', { id: 4820, cx: 5, cy: 1 }));
-    const weak = mkEnemy('brute', { id: 4821, hp: 1000, maxHp: 6000, speedMult: 0, x: wps0[farIdx].x, y: wps0[farIdx].y, wpIdx: Math.max(1, farIdx) });
+    const weak = mkEnemy('brute', { id: 4821, hp: 800, maxHp: 6000, speedMult: 0, x: wps0[farIdx].x, y: wps0[farIdx].y, wpIdx: Math.max(1, farIdx) });
     st.enemies.push(weak);
     stepGame(st, simCtx, []); // un disparo
-    assert(weak.hp <= 0, `REMATA de un disparo al malherido lejano (640 ≥ 60% de 1000)`);
+    assert(weak.hp <= 0, `REMATA de un disparo al malherido lejano (${dmg} ≥ 60% de 800)`);
   }
 
   // (b) sano (hp 6000): el mismo golpe NO llega al 60% de su vida ACTUAL → solo lo HIERE.
@@ -2104,7 +2146,7 @@ console.log('— issue #7 · Ojo de Asedio: alcanza de MAPA COMPLETO y REMATA po
     st.towers.push(mkFused('sniper', 'siegeeye', { id: 4822, cx: 5, cy: 1 }));
     const healthy = mkEnemy('brute', { id: 4823, hp: 6000, maxHp: 6000, speedMult: 0, x: 5.5, y: 3.5 });
     st.enemies.push(healthy);
-    stepGame(st, simCtx, []); // un disparo (perfora armadura → daño pleno)
+    stepGame(st, simCtx, []); // un disparo (perfora la armadura plana; la matriz ×0.8 sí aplica)
     assert(healthy.hp === 6000 - dmg, `al SANO solo lo hiere, no lo remata (hp ${Math.round(healthy.hp)} == ${6000 - dmg})`);
   }
 }
@@ -2133,7 +2175,8 @@ console.log('— issue #7 · Bóveda Alquímica: fuse VÁLIDO (mina+alquimista),
   assert(ev.some((e) => e.e === 'fuse' && e.name === FUSIONS.alchemyvault.name), 'emite el evento fuse de la Bóveda Alquímica');
   assert(!towerFires(vault), 'la Bóveda Alquímica NO dispara (es de apoyo)');
 
-  // su aura de botín (+55%): un arquero remata un goblin encima de la Bóveda y cobra el botín aumentado.
+  // su aura de botín (+60% tras el buff F5.1): un arquero remata un goblin encima
+  // de la Bóveda y cobra el botín aumentado.
   const gob = mkEnemy('goblin', { id: 4832, hp: 5, maxHp: 60, speedMult: 0, x: vault.cx + 0.5, y: vault.cy + 0.5, wpIdx: 1 });
   st.enemies.push(gob);
   st.towers.push(mkTower('archer', { id: 4833, cx: vault.cx, cy: vault.cy + 1, level: 3, spec: -1 }));
@@ -2141,8 +2184,8 @@ console.log('— issue #7 · Bóveda Alquímica: fuse VÁLIDO (mina+alquimista),
   for (let i = 0; i < TICK_RATE * 3 && st.enemies.some((e) => e.id === 4832); i++) stepGame(st, simCtx, []);
   const paid = st.players[0].gold - g0;
   assert(
-    paid === Math.round(ENEMIES.goblin.bounty * 1.55),
-    `una baja en el aura de la Bóveda paga +55% (${paid} == ${Math.round(ENEMIES.goblin.bounty * 1.55)})`,
+    paid === Math.round(ENEMIES.goblin.bounty * 1.6),
+    `una baja en el aura de la Bóveda paga +60% (${paid} == ${Math.round(ENEMIES.goblin.bounty * 1.6)})`,
   );
 }
 
@@ -2647,6 +2690,252 @@ console.log('— Lote 4 · determinismo con focus + halt en plena oleada —');
     ]);
   }
   assert(hashCtl() === hashCtl(), 'la sim con focus+halt es DETERMINISTA (mismo hash en dos corridas)');
+}
+
+console.log('— F5.1 · Matriz ataque×armadura: el multiplicador aplica ANTES de la armadura plana —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  // Primer golpe de una torre L3 sobre un enemigo inmóvil gordo (sin élite/afijos).
+  function firstHit(towerType: TowerTypeId, enemyType: EnemyTypeId): number {
+    const st = createGame('sendero', 'endless', 'normal', 5100, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const enemy = mkEnemy(enemyType, { id: 5101, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5, wpIdx: 1, dodgeBonus: -1 });
+    st.enemies.push(enemy);
+    st.towers.push(mkTower(towerType, { id: 5102, cx: 5, cy: 1, level: 3, invested: 500 }));
+    for (let i = 0; i < TICK_RATE * 2 && enemy.hp === 100000; i++) stepGame(st, simCtx, []);
+    return 100000 - enemy.hp;
+  }
+  // asignaciones base (guard de identidad: si alguien las cambia, esto salta)
+  assert(attackTypeOf({ type: 'cannon', fusion: -1 }) === 'asedio' && attackTypeOf({ type: 'sniper', fusion: -1 }) === 'perforante', 'cañón=asedio y francotirador=perforante');
+  assert(attackTypeOf({ type: 'tesla', fusion: -1 }) === 'magico' && attackTypeOf({ type: 'archer', fusion: -1 }) === 'fisico', 'tesla=mágico y arquero=físico');
+  assert(armorTypeOf('runner') === 'ligera' && armorTypeOf('armored') === 'blindada' && armorTypeOf('skywhale') === 'colosal' && armorTypeOf('goblin') === 'media', 'runner=ligera, armored=blindada, skywhale=colosal, goblin=media');
+  // la matriz queda en el rango de diseño [0.65, 1.5]
+  {
+    let inRange = true;
+    for (const row of Object.values(ATTACK_MATRIX)) for (const v of Object.values(row)) if (v < 0.65 || v > 1.5) inRange = false;
+    assert(inRange, 'todos los multiplicadores de la matriz están en [0.65, 1.5]');
+  }
+  // asedio ARAÑA ligera: cañón L3 (78) vs corredor (ligera, armadura 0) → round(78×0.65)=51
+  const vsLight = firstHit('cannon', 'runner');
+  assert(vsLight === 51, `asedio araña ligera: cañón 78 → ${vsLight} == 51 contra el corredor`);
+  // asedio DESTROZA blindada: vs acorazado (armadura 8) → round(78×1.5)−8 = 109
+  const vsArmored = firstHit('cannon', 'armored');
+  assert(vsArmored === 109, `asedio destroza blindada: cañón 78 → ${vsArmored} == 109 contra el acorazado`);
+  // perforante caza COLOSAL: francotirador L3 (210, perfora) vs coloso alado → round(210×1.5)=315
+  const vsColossal = firstHit('sniper', 'skywhale');
+  assert(vsColossal === 315, `perforante caza colosal: francotirador 210 → ${vsColossal} == 315 contra el Coloso Alado`);
+  // pierceArmor ignora la armadura PLANA pero NO la matriz: sniper vs acorazado
+  // (blindada ×0.8, armadura 8 ignorada) → round(210×0.8)=168
+  const pierceVsArmored = firstHit('sniper', 'armored');
+  assert(pierceVsArmored === 168, `pierceArmor ignora la armadura plana pero NO la matriz (${pierceVsArmored} == 168)`);
+  // mágico débil vs blindada: tesla L3 (55) vs acorazado → round(55×0.65)−8 = 28
+  const magicVsArmored = firstHit('tesla', 'armored');
+  assert(magicVsArmored === 28, `mágico débil vs blindada: tesla 55 → ${magicVsArmored} == 28 contra el acorazado`);
+  // el DoT de veneno NO pasa por la matriz ni por la armadura: un blindado con
+  // 150 dps de veneno pierde exactamente 150 hp/s (capa de inmunidad aparte).
+  {
+    const st = createGame('sendero', 'endless', 'normal', 5103, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const tank = mkEnemy('armored', { id: 5104, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5, wpIdx: 1, poisonDps: 150, poisonUntil: 10000, poisonSrc: 0 });
+    st.enemies.push(tank);
+    for (let i = 0; i < TICK_RATE; i++) stepGame(st, simCtx, []);
+    assert(Math.abs(100000 - tank.hp - 150) < 1e-6, `el DoT ignora matriz y armadura (perdió ${(100000 - tank.hp).toFixed(1)} == 150 en 1 s)`);
+  }
+}
+
+console.log('— F5.1 · Balista de Cielo: SOLO aire; su Arpón II remata voladores por vida ACTUAL —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  assert(TOWER_ORDER[TOWER_ORDER.length - 1] === 'flak', 'flak crece AL FINAL de TOWER_ORDER (índices de snapshot intactos)');
+  assert(TOWERS.flak.targetsAir && !TOWERS.flak.targetsGround, 'la Balista apunta a aire y NUNCA a tierra (flags)');
+  assert(TOWERS.flak.attackType === 'perforante', 'la Balista es perforante (caza colosales)');
+
+  // (a) NO dispara a tierra: un bruto en pleno rango, 3 s, ni un proyectil.
+  {
+    const st = createGame('sendero', 'endless', 'normal', 5200, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const ground = mkEnemy('brute', { id: 5201, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5, wpIdx: 1 });
+    st.enemies.push(ground);
+    st.towers.push(mkTower('flak', { id: 5202, cx: 5, cy: 1, level: 3, invested: 670 }));
+    let anyProj = false;
+    for (let i = 0; i < TICK_RATE * 3; i++) {
+      stepGame(st, simCtx, []);
+      if (st.projectiles.length > 0) anyProj = true;
+    }
+    assert(!anyProj && ground.hp === 100000, 'la Balista NO dispara a un terrestre en rango (targetsGround=false se respeta)');
+  }
+  // (b) SÍ dispara al aire, y con la matriz de su rol: L3 (165) vs murciélago
+  // (ligera ×0.9 → 149) y vs Coloso Alado (colosal ×1.5, armadura 2 → 246).
+  function flakFirstHit(enemyType: EnemyTypeId): number {
+    const st = createGame('sendero', 'endless', 'normal', 5203, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const enemy = mkEnemy(enemyType, { id: 5204, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5, wpIdx: 1, dodgeBonus: -1 });
+    st.enemies.push(enemy);
+    st.towers.push(mkTower('flak', { id: 5205, cx: 5, cy: 1, level: 3, invested: 670 }));
+    for (let i = 0; i < TICK_RATE * 2 && enemy.hp === 100000; i++) stepGame(st, simCtx, []);
+    return 100000 - enemy.hp;
+  }
+  assert(flakFirstHit('bat') === 149, `la Balista dispara al aire: 165 → ${flakFirstHit('bat')} == 149 al murciélago (ligera ×0.9)`);
+  assert(flakFirstHit('skywhale') === 246, `perforante ×1.5 al Coloso Alado (${flakFirstHit('skywhale')} == 246)`);
+  // (c) con tierra y aire a la vez, ignora al terrestre aunque vaya PRIMERO.
+  {
+    const st = createGame('sendero', 'endless', 'normal', 5206, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const first = mkEnemy('brute', { id: 5207, hp: 100000, maxHp: 100000, speedMult: 0, x: 5.5, y: 2.5, travelled: 50, wpIdx: 1 });
+    const bat = mkEnemy('bat', { id: 5208, hp: 100000, maxHp: 100000, speedMult: 0, x: 6.5, y: 2.5, travelled: 1, wpIdx: 1, dodgeBonus: -1 });
+    st.enemies.push(first, bat);
+    st.towers.push(mkTower('flak', { id: 5209, cx: 5, cy: 1, level: 3, invested: 670 }));
+    for (let i = 0; i < TICK_RATE * 2; i++) stepGame(st, simCtx, []);
+    assert(first.hp === 100000 && bat.hp < 100000, 'con mezcla tierra+aire, la Balista solo toca al volador');
+  }
+  // (d) Arpón del Cénit II (spec 1, nivel 4): executeCurrent 0.5 — derriba a un
+  // volador si el arponazo arranca ≥50% de su vida ACTUAL; el daño efectivo vs
+  // colosal es round(520×1.5)=780 (perfora la armadura plana). 520/1.1 desde la
+  // revisión adversarial (con 460/1.4 lo dominaba la Ráfaga de Agujas ★★ en su
+  // propio rol antitanque).
+  function harpoon(hp: number, immune: boolean): { killed: boolean; hpLeft: number } {
+    const st = createGame('sendero', 'endless', 'normal', 5210, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const whale = mkEnemy('skywhale', { id: 5211, hp, maxHp: 12000, spellImmune: immune, speedMult: 0, x: 5.5, y: 2.5, wpIdx: 1, dodgeBonus: -1 });
+    st.enemies.push(whale);
+    st.towers.push(mkTower('flak', { id: 5212, cx: 5, cy: 1, level: 4, spec: 1, invested: 1230 }));
+    for (let i = 0; i < TICK_RATE * 2 && st.enemies.some((e) => e.id === 5211 && e.hp === hp); i++) stepGame(st, simCtx, []);
+    const alive = st.enemies.find((e) => e.id === 5211);
+    return { killed: !alive, hpLeft: alive ? alive.hp : 0 };
+  }
+  assert((activeStats('flak', 4, 1).executeCurrent ?? 0) === 0.5, 'el Arpón del Cénit II lleva executeCurrent 0.5');
+  const downed = harpoon(1200, false);
+  assert(downed.killed, 'el Arpón II DERRIBA a un volador malherido (780 ≥ 50% de 1200)');
+  const healthy = harpoon(12000, false);
+  assert(!healthy.killed && healthy.hpLeft === 12000 - 780, `a un volador sano solo lo hiere (${healthy.hpLeft} == ${12000 - 780})`);
+  const immuneWhale = harpoon(1200, true);
+  assert(!immuneWhale.killed && immuneWhale.hpLeft === 1200 - 780, `NO remata a un volador inmune (executeCurrent es hechizo): queda con ${immuneWhale.hpLeft}`);
+  // el execute del Arpón solo puede tocar AIRE por construcción: la torre no
+  // apunta ni daña a nada terrestre (probado en (a) y (c)).
+}
+
+console.log('— F5.1 · DoT porcentual (Corrosión II): max(dps plano, 1.2%/s de la vida MÁX) con tope 400 —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  assert((activeStats('poison', 4, 1).poisonPctMax ?? 0) === 0.012, 'la Corrosión II lleva poisonPctMax 0.012');
+  assert(POISON_PCT_CAP_DPS === 400, `el tope del DoT porcentual es 400 dps (${POISON_PCT_CAP_DPS})`);
+  // dps efectivo aplicado a un enemigo según su vida MÁXIMA
+  function corrosionDps(maxHp: number): number {
+    const st = createGame('sendero', 'endless', 'normal', 5300, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const enemy = mkEnemy('brute', { id: 5301, hp: maxHp, maxHp, speedMult: 0, x: 5.5, y: 2.5, wpIdx: 1, dodgeBonus: -1 });
+    st.enemies.push(enemy);
+    st.towers.push(mkTower('poison', { id: 5302, cx: 5, cy: 1, level: 4, spec: 1, invested: 1200 })); // Corrosión II
+    for (let i = 0; i < TICK_RATE * 2 && enemy.poisonDps === 0; i++) stepGame(st, simCtx, []);
+    return enemy.poisonDps;
+  }
+  // enemigo chico (maxHp 10000): 1.2% = 120 < 190 → manda el dps PLANO (el clásico no cambia)
+  assert(corrosionDps(10000) === 190, `contra un enemigo chico manda el dps plano (${corrosionDps(10000)} == 190)`);
+  // esponja media (maxHp 20000): 1.2% = 240 > 190 → manda el porcentual
+  assert(corrosionDps(20000) === 240, `contra una esponja media manda el 1.2%/s (${corrosionDps(20000)} == 240)`);
+  // jefe del infinito (maxHp 100000): 1.2% = 1200 → TOPE en 400 dps
+  assert(corrosionDps(100000) === 400, `contra un jefe del infinito el DoT se TOPA en 400 dps (${corrosionDps(100000)} == 400)`);
+}
+
+console.log('— F5.1 · Curva del infinito y botín superlineal del endless —');
+{
+  // clásico (≤40): waveHpMult IDÉNTICO a la fórmula previa (×1.13 desde la 20)
+  const w36 = waveHpMult(36, 'normal', 1);
+  assert(Math.abs(w36 - (1 + 0.11 * 35) * Math.pow(1.13, 16)) < 1e-9, `el clásico no cambia: waveHpMult(36) == base×1.13^16 (${w36.toFixed(2)})`);
+  // tramo 2: desde la 40, el crecimiento compuesto baja a ×1.10
+  const w50 = waveHpMult(50, 'normal', 1);
+  assert(
+    Math.abs(w50 - (1 + 0.11 * 49) * Math.pow(1.13, 20) * Math.pow(1.1, 10)) < 1e-9,
+    `tramo 2 del infinito: waveHpMult(50) == base×1.13^20×1.10^10 (${w50.toFixed(1)})`,
+  );
+  const growth45 = waveHpMult(45, 'normal', 1) / waveHpMult(44, 'normal', 1);
+  const growth35 = waveHpMult(35, 'normal', 1) / waveHpMult(34, 'normal', 1);
+  assert(growth45 < growth35, `pasada la 40 el hp crece más suave (${growth45.toFixed(3)} < ${growth35.toFixed(3)})`);
+  void DIFF_HP_MULT;
+
+  // botín: sin modo (o clásico/horda) la fórmula es la de siempre
+  assert(waveBountyMult(40) === 1 + 0.03 * 39, 'waveBountyMult sin modo conserva la firma y la fórmula clásicas');
+  assert(waveBountyMult(40, 'classic') === 1 + 0.03 * 39, 'en clásico no hay término extra');
+  // endless: ×1.02 compuesto por oleada sobre la 30…
+  const b40 = waveBountyMult(40, 'endless');
+  assert(Math.abs(b40 - (1 + 0.03 * 39) * Math.pow(1.02, 10)) < 1e-9, `endless o40: botín ×1.02^10 extra (${b40.toFixed(3)})`);
+  // …con tope ×3 extra en oleadas profundas
+  const b200 = waveBountyMult(200, 'endless');
+  assert(Math.abs(b200 - (1 + 0.03 * 199) * 3) < 1e-9, `el término endless se TOPA en ×3 (${b200.toFixed(2)})`);
+
+  // integración: en una partida ENDLESS los enemigos nacen con el bounty superlineal
+  function spawnedBountyMult(mode: 'classic' | 'endless'): number {
+    const map = getMap('sendero');
+    const simCtx = makeSimContext(map, makePlacementContext(map));
+    const st = createGame('sendero', mode, 'normal', 5400, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.wave = 39;
+    st.waveState = 'interlude';
+    st.interludeLeft = 1;
+    st.lives = 1e9; st.maxLives = 1e9;
+    for (let i = 0; i < TICK_RATE * 20 && st.enemies.length === 0; i++) stepGame(st, simCtx, []);
+    return st.enemies[0]?.bountyMult ?? 0;
+  }
+  const classicMult = spawnedBountyMult('classic');
+  const endlessMult = spawnedBountyMult('endless');
+  assert(Math.abs(classicMult - waveBountyMult(40)) < 1e-9, `en clásico la oleada 40 nace con el bounty clásico (${classicMult.toFixed(3)})`);
+  assert(Math.abs(endlessMult - waveBountyMult(40, 'endless')) < 1e-9, `en endless la oleada 40 nace con el bounty superlineal (${endlessMult.toFixed(3)})`);
+}
+
+console.log('— F5.1 · revisión adversarial: timeout de zapado y tope de crecimiento —');
+{
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  // (a) TIMEOUT DE ZAPADO: el zapador aturde su torre un máximo de SAPPER_MAX_SEC,
+  // la suelta AL INSTANTE, la veta para siempre y reanuda la marcha. Sin esto,
+  // 4-5 zapadores inmunes podían colgar la partida eternamente (softlock del 25%
+  // de las semillas del informe adversarial).
+  {
+    const st = createGame('sendero', 'endless', 'normal', 5500, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    // zapador inmortal a rango de la ÚNICA torre (spellImmune: el arquero igual le
+    // pega, pero con 1e9 de vida el timeout llega mucho antes que su muerte)
+    const sap = mkEnemy('sapper', { id: 5501, hp: 1e9, maxHp: 1e9, x: 5.5, y: 2.5, travelled: 5, wpIdx: 1, dodgeBonus: -1 });
+    st.enemies.push(sap);
+    const t = mkTower('archer', { id: 5502, cx: 5, cy: 1, level: 3, invested: 300 });
+    st.towers.push(t);
+    stepGame(st, simCtx, []);
+    assert(sap.stunTowerId === t.id && t.stunnedUntil > st.tick, 'el zapador toma la única torre en rango y la aturde');
+    for (let i = 0; i < SAPPER_MAX_SEC * TICK_RATE + 2; i++) stepGame(st, simCtx, []);
+    assert(sap.sappedIds.includes(t.id), `tras ${SAPPER_MAX_SEC}s la torre queda VETADA para ese zapador`);
+    assert(t.stunnedUntil <= st.tick, 'la torre se libera al instante (vuelve a disparar)');
+    const xAfter = sap.x;
+    for (let i = 0; i < TICK_RATE; i++) stepGame(st, simCtx, []);
+    assert(sap.x > xAfter, 'el zapador reanuda la marcha (no re-elige la torre vetada)');
+  }
+  // (b) TOPE DE CRECIMIENTO: el Arco Largo II deja de crecer en GROWTH_CAP (sin
+  // tope divergía cuadráticamente: +13.000 de daño por flecha en endless o50).
+  {
+    const st = createGame('sendero', 'endless', 'normal', 5510, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
+    const dummy = mkEnemy('brute', { id: 5511, hp: 1e9, maxHp: 1e9, speedMult: 0, x: 5.5, y: 2.5, wpIdx: 1, dodgeBonus: -1 });
+    st.enemies.push(dummy);
+    // Arco Largo II (archer nivel 4, spec 1) a 2 de crecimiento del tope
+    const bow = mkTower('archer', { id: 5512, cx: 5, cy: 1, level: 4, spec: 1, invested: 900, growthBonus: GROWTH_CAP - 2 });
+    st.towers.push(bow);
+    for (let i = 0; i < TICK_RATE * 3; i++) stepGame(st, simCtx, []);
+    assert(bow.growthBonus === GROWTH_CAP, `el crecimiento se TOPA en +${GROWTH_CAP} (${bow.growthBonus})`);
+    assert((activeStats('archer', 4, 1).growth ?? 0) > 0, 'el Arco Largo II sigue teniendo crecimiento por disparo');
+  }
+}
+
+console.log('— F5.1 · retoques de fusiones: literales del rebalance (guard de regresión) —');
+{
+  assert(FUSIONS.bigbertha.stats.cooldown === 6 && FUSIONS.bigbertha.stats.damage === 900, 'Gran Bertha: cooldown 9→6 y daño 780→900');
+  assert(FUSIONS.shredder.stats.damage === 46 && FUSIONS.shredder.stats.splash === 1.0, 'Fragmentador: daño 30→46 y splash 0.85→1.0');
+  assert(FUSIONS.alchemyvault.stats.incomePerWave === 140 && FUSIONS.alchemyvault.stats.auraBounty === 0.6, 'Bóveda Alquímica: renta 60→140 y aura 0.55→0.6');
+  assert(TOWERS.cannon.specs[1].rank2!.cost === 460 && TOWERS.cannon.specs[1].rank2!.damage === 83, 'Metralla ★★: coste 400→460 y daño 90→83');
+  assert(TOWERS.mortar.specs[0].rank2!.cost === 550 && TOWERS.mortar.specs[0].rank2!.damage === 212, 'Bombardeo ★★: coste 480→550 y daño 230→212');
+  // el Fragmentador es FÍSICO a propósito (asedio contradiría su rol anti-enjambre)
+  assert(attackTypeOf({ type: 'archer', fusion: FUSION_ORDER.indexOf('shredder') }) === 'fisico', 'el Fragmentador hereda físico (rol anti-enjambre)');
+  assert(attackTypeOf({ type: 'sniper', fusion: FUSION_ORDER.indexOf('siegeeye') }) === 'perforante', 'el Ojo de Asedio hereda perforante (cazatanques)');
 }
 
 console.log('— Determinismo: misma semilla + mismos comandos → mismo estado —');

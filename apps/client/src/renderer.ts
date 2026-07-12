@@ -59,6 +59,8 @@ export const TOWER_ICONS: Record<TowerTypeId, string> = {
   boom: '💥',
   // Lote 3
   sentry: '👁',
+  // F5.1
+  flak: '🪶',
 };
 
 export const ENEMY_ICONS: Record<EnemyTypeId, string> = {
@@ -2200,6 +2202,53 @@ function drawTowerArt(
         g.arc(-eyeR * 0.2, -s * 0.06 - eyeR * 0.2, eyeR * 0.16, 0, Math.PI * 2);
         g.fill();
       }
+      break;
+    }
+    case 'flak': {
+      // F5.1 · Balista de Cielo (fallback procedural: aún sin hoja de sprites).
+      // Balista de brazos anchos que gira hacia su blanco AÉREO, dardo emplumado
+      // listo. Índigo claro (#8c9eff) para separarla del hielo y del Tesla.
+      g.save();
+      g.rotate(a);
+      g.translate(-rec, 0);
+      // bancada de madera
+      g.fillStyle = '#5d4037';
+      roundRect(g, -s * 0.2, -s * 0.09, s * 0.4 * grow, s * 0.18, s * 0.05);
+      g.fill();
+      // brazos de la balista (arco doble, muy abierto)
+      g.strokeStyle = '#8c9eff';
+      g.lineWidth = Math.max(1.5, s * 0.05);
+      for (const side of [-1, 1]) {
+        g.beginPath();
+        g.arc(s * 0.06, 0, s * 0.26 * grow, side * Math.PI * 0.16, side * Math.PI * 0.5, side < 0);
+        g.stroke();
+      }
+      // cuerda tensa
+      g.strokeStyle = '#e8eaf6';
+      g.lineWidth = Math.max(1, s * 0.02);
+      g.beginPath();
+      g.moveTo(s * 0.06, -s * 0.26 * grow);
+      g.lineTo(-s * 0.08 - rec, 0);
+      g.lineTo(s * 0.06, s * 0.26 * grow);
+      g.stroke();
+      // dardo antiaéreo con PLUMA (su emoji 🪶) en la cola
+      g.strokeStyle = '#c5cae9';
+      g.lineWidth = Math.max(1, s * 0.035);
+      g.beginPath();
+      g.moveTo(-s * 0.1, 0);
+      g.lineTo(s * 0.32, 0);
+      g.stroke();
+      g.fillStyle = '#e8eaf6';
+      g.beginPath();
+      g.moveTo(s * 0.38, 0);
+      g.lineTo(s * 0.26, -s * 0.06);
+      g.lineTo(s * 0.26, s * 0.06);
+      g.fill();
+      g.fillStyle = '#b3c2ff';
+      g.beginPath();
+      g.ellipse(-s * 0.12, -s * 0.03, s * 0.09, s * 0.035, -0.5, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
       break;
     }
   }

@@ -1,5 +1,9 @@
 import {
   activeStats,
+  ARMOR_TYPE_INFO,
+  ATTACK_TYPE_INFO,
+  attackMult,
+  attackTypeOf,
   CALL_WAVE_GOLD_PER_SEC,
   ENEMIES,
   ENEMY_ORDER,
@@ -26,6 +30,8 @@ import {
   WOOD_COST_SPEC,
   WOOD_LOT,
   WOOD_SELL_SPREAD,
+  type ArmorTypeId,
+  type AttackTypeId,
   type Snap,
   type SnapTower,
   type TargetMode,
@@ -52,6 +58,52 @@ const TARGET_LABELS: Record<TargetMode, string> = {
 // los nombres de jugador son datos del usuario: SIEMPRE escapar antes de innerHTML
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+// ---------- F5.1 · matriz ataque × armadura (helpers de presentación) ----------
+// Orden canónico de columnas/filas de la matriz (identidad de rol/silueta), fijo
+// para que la tabla de la Guía y las líneas del panel lean igual en todos lados.
+export const ARMOR_ORDER: ArmorTypeId[] = ['ligera', 'media', 'blindada', 'colosal'];
+export const ATTACK_ORDER: AttackTypeId[] = ['fisico', 'perforante', 'asedio', 'magico'];
+
+// Umbrales de lectura (fuerte ≥1.25, débil ≤0.8) — los mismos que pide la fase 2.
+// Devuelve las armaduras contra las que este tipo de ataque brilla o falla.
+export function attackMatchup(attack: AttackTypeId): { strong: ArmorTypeId[]; weak: ArmorTypeId[] } {
+  const strong: ArmorTypeId[] = [];
+  const weak: ArmorTypeId[] = [];
+  for (const armor of ARMOR_ORDER) {
+    const m = attackMult(attack, armor);
+    if (m >= 1.25) strong.push(armor);
+    else if (m <= 0.8) weak.push(armor);
+  }
+  return { strong, weak };
+}
+
+// etiqueta compacta de una armadura (icono + nombre) para las líneas "fuerte/débil vs …"
+export function armorLabel(a: ArmorTypeId): string {
+  return `${ARMOR_TYPE_INFO[a].icon} ${ARMOR_TYPE_INFO[a].name}`;
+}
+
+// Línea compacta del panel: «⚔ Perforante · fuerte vs 🏰 Colosal · débil vs 🦾 Blindada».
+// Usa attackTypeOf (fusion-aware): en una torre fusionada manda el rol de la receta.
+function attackMatrixLine(t: { type: TowerTypeId; fusion: number }): string {
+  const at = attackTypeOf(t);
+  const info = ATTACK_TYPE_INFO[at];
+  const { strong, weak } = attackMatchup(at);
+  const parts = [`⚔ <b>${info.name}</b>`];
+  if (strong.length) parts.push(`fuerte vs ${strong.map(armorLabel).join(', ')}`);
+  if (weak.length) parts.push(`débil vs ${weak.map(armorLabel).join(', ')}`);
+  if (!strong.length && !weak.length) parts.push('parejo contra todo');
+  return `<span class="pmatrix" title="${escapeHtml(info.desc)}">${parts.join(' · ')}</span>`;
+}
+
+// ¿la torre hace daño DIRECTO (y por tanto su tipo de ataque significa algo en la
+// matriz)? Las de apoyo/economía (mina/estandarte/alquimista/sentry) llevan un
+// attackType nominal que NUNCA se usa: no deben lucir badge ni línea de tipo.
+function towerDealsDamage(def: TowerDef): boolean {
+  const has = (l: TowerLevelDef | undefined): boolean => !!l && (l.damage ?? 0) > 0;
+  if (def.levels.some(has)) return true;
+  return def.specs.some((s) => has(s) || (s.rank2 ? has({ ...s, ...s.rank2 } as TowerLevelDef) : false));
 }
 
 // ---------- premovimientos (estilo Hikaru / chess.com) ----------
@@ -195,7 +247,7 @@ function processPremoves(snap: Snap): void {
 // es el orden compacto de los snapshots): ataque · apoyo/economía · camino.
 // Una torre nueva que no esté aquí cae en un grupo extra al final (red de seguridad).
 const BAR_GROUPS: TowerTypeId[][] = [
-  ['archer', 'cannon', 'frost', 'poison', 'tesla', 'sniper', 'mortar'],
+  ['archer', 'cannon', 'frost', 'poison', 'tesla', 'sniper', 'mortar', 'flak'],
   ['banner', 'bank', 'alchemist'],
   ['trap', 'boom'],
 ];
@@ -217,7 +269,15 @@ export function buildTowerBar(): void {
     if (gi > 0 && ti === 0) card.classList.add('group-start');
     card.dataset.type = type;
     card.title = `${def.name} — ${def.desc}`;
+    // F5.1 · badge del tipo de ataque en la esquina (solo torres que dañan: las de
+    // apoyo/economía llevan attackType nominal y no deben mostrarlo). No roba clics
+    // (pointer-events:none) ni rompe el layout móvil (emoji diminuto en la esquina).
+    const at = attackTypeOf({ type, fusion: -1 });
+    const badge = towerDealsDamage(def)
+      ? `<span class="tbadge" title="Ataque ${ATTACK_TYPE_INFO[at].name}">${ATTACK_TYPE_INFO[at].icon}</span>`
+      : '';
     card.innerHTML = `
+      ${badge}
       <span class="thk">${keyLabel(`tower:${type}`)}</span>
       <img class="tsprite" alt="" src="/sprites/tower_${type}_l1.png" />
       <span class="ticon">${TOWER_ICONS[type]}</span>
@@ -649,7 +709,13 @@ function statBlock(lvl: TowerLevelDef, next: TowerLevelDef | null, aura?: Client
   if (lvl.poison) lines.push(stat('Veneno', `${lvl.poison.dps}/s`, next?.poison ? `${next.poison.dps}/s` : null));
   if (lvl.chain) lines.push(stat('Salta a', lvl.chain.targets, next?.chain?.targets));
   if (lvl.execute) lines.push(`Remata por debajo del <b>${Math.round(lvl.execute * 100)}%</b> de la vida máx`);
-  if (lvl.executeCurrent) lines.push(`Remata por debajo del <b>${Math.round(lvl.executeCurrent * 100)}%</b> de la vida ACTUAL`);
+  if (lvl.executeCurrent) {
+    lines.push(`Remata por debajo del <b>${Math.round(lvl.executeCurrent * 100)}%</b> de la vida ACTUAL`);
+    // el remate arranca vida SIN sumar al contador de daño de la torre: su cifra
+    // de "Daño total" SIEMPRE infravalora su aporte real (Arpón del Cénit ★★ /
+    // Cañón de Riel ★★). Se avisa para que nadie la venda "porque hace poco daño".
+    lines.push('<span class="hint">💡 El remate no cuenta en el contador de daño: aporta más de lo que marca</span>');
+  }
   if (lvl.shredChance) lines.push(`Shred: <b>${Math.round(lvl.shredChance * 100)}%</b> de partir la armadura en área`);
   if (lvl.growth) lines.push(`Crecimiento: <b>+${lvl.growth}</b> de daño por disparo`);
   // F4.3 · mecánicas de fusión
@@ -809,6 +875,9 @@ function buildGroupPanel(
     `Grupo de <b>${n}</b> torres idénticas (doble click)`,
     'Bajas: <b data-lv="kills"></b> · Daño total: <b data-lv="damage"></b>',
   ];
+  // F5.1 · misma línea de tipo de ataque que el panel individual (bajo el nombre),
+  // solo si el grupo DISPARA (auras/economía no entran en la matriz).
+  if (fires) statLines.unshift(attackMatrixLine({ type, fusion: head[13] ?? -1 }));
 
   // ⬆ Mejorar todas: coste TOTAL real, sumado por torre (oro Y madera — p. ej. el
   // Rango II cuesta ambas). El grupo nace idéntico, así que el unitario es uniforme;
@@ -913,6 +982,9 @@ function buildTowerPanel(gs: GameStore, selectedId: number): { html: string; liv
   // aura de Estandarte activa SOBRE esta torre → el panel muestra stats efectivos
   const auraBuff = computeBannerAuras(snap).get(id);
   const statLines = statBlock(lvl, next, auraBuff);
+  // F5.1 · línea de tipo de ataque + fuerte/débil vs (bajo el nombre): solo para
+  // torres que hacen daño directo (las de apoyo/economía no entran en la matriz).
+  if (towerAttacks(lvl, def)) statLines.unshift(attackMatrixLine({ type, fusion: fusionIdx }));
   // F6.2 · contador de PRÓXIMO ATAQUE, solo para torres que disparan (las de apoyo
   // y las de camino no lo muestran). Va en un span con id estable para poder
   // refrescarlo en CADA tick desde onTick (a 15/s) sin re-renderizar el panel

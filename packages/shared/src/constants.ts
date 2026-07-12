@@ -1,3 +1,5 @@
+import type { ArmorTypeId, AttackTypeId } from './types.js';
+
 export const TICK_RATE = 15; // ticks por segundo (autoridad del servidor)
 export const TICK_MS = 1000 / TICK_RATE;
 export const INTERP_DELAY_MS = 120; // el cliente renderiza este delay por detrás para interpolar
@@ -80,6 +82,78 @@ export const SHRED_RADIUS = 1.5; // celdas alrededor del enemigo golpeado
 export const SHRED_DURATION = 4; // segundos que dura el shred (armadura a la mitad)
 // Rango II · Arco Largo/Explorador II: crecimiento permanente por disparo.
 export const GROWTH_PER_SHOT = 8; // +8 de daño base por cada disparo, para siempre
+// F5.1 · TOPE del crecimiento permanente: sin él divergía cuadráticamente
+// (+13.000 de daño por flecha en endless o50 → el 52-72% de TODO el daño de una
+// partida larga era de esta spec). Con +400 la flecha "termina de crecer" en
+// ~2.9× su daño base y queda ~1.6-1.9× del Cañón de Riel ★★ a cualquier
+// horizonte: la mejor single-target del juego, no un agujero de balance.
+export const GROWTH_CAP = 400;
+
+// F5.1 · Zapador: segundos MÁXIMOS aturdiendo la MISMA torre; después la suelta
+// al instante y no puede re-elegirla (anti-softlock: 4-5 zapadores inmunes
+// podían colgar la partida para siempre aturdiendo las únicas torres en rango —
+// pasaba en el 25% de las semillas de la revisión adversarial).
+export const SAPPER_MAX_SEC = 8;
+
+// ---------- F5.1 · matriz ataque × armadura ----------
+// El daño DIRECTO (impacto/splash/cadena/ráfaga/trampa) se multiplica por esta
+// matriz ANTES de restar la armadura plana: dmg = max(1, round(daño×mult) − armadura).
+// `pierceArmor` ignora la armadura PLANA pero NO la matriz (la matriz es identidad
+// de rol, no armadura). El DoT de veneno, las auras y los slows NO pasan por aquí
+// (su capa de contrajuego es la inmunidad mágica). Rango de diseño: [0.65, 1.5].
+//
+//              │ ligera   media   blindada  colosal │ identidad
+//  ────────────┼────────────────────────────────────┼─────────────────────────────
+//  fisico      │  1.00    1.00     0.90     0.90    │ parejo: nunca brilla, nunca falla
+//  perforante  │  0.90    1.05     0.80     1.50    │ caza colosales; la placa lo desvía
+//  asedio      │  0.65    0.95     1.50     1.00    │ destroza blindados; araña lo ligero
+//  magico      │  1.30    1.20     0.65     0.90    │ funde carne; la placa lo disipa
+//
+// asedio vs colosal = 1.00 A PROPÓSITO: los jefes/colosos son presa EXCLUSIVA del
+// perforante (si el asedio también les pegara de más, cañón+mortero volverían a
+// ser la respuesta universal y el rol antijefe del francotirador/Balista se diluye).
+export const ATTACK_MATRIX: Record<AttackTypeId, Record<ArmorTypeId, number>> = {
+  fisico: { ligera: 1.0, media: 1.0, blindada: 0.9, colosal: 0.9 },
+  perforante: { ligera: 0.9, media: 1.05, blindada: 0.8, colosal: 1.5 },
+  asedio: { ligera: 0.65, media: 0.95, blindada: 1.5, colosal: 1.0 },
+  magico: { ligera: 1.3, media: 1.2, blindada: 0.65, colosal: 0.9 },
+};
+
+// multiplicador de la matriz (helper para la sim y la UI)
+export function attackMult(attack: AttackTypeId, armor: ArmorTypeId): number {
+  return ATTACK_MATRIX[attack][armor];
+}
+
+// Nombres e iconos por tipo, para que la fase de UI (guía/bestiario/panel) pinte
+// la matriz sin inventarse textos. El icono es emoji (lenguaje del HUD).
+export const ATTACK_TYPE_INFO: Record<AttackTypeId, { name: string; icon: string; desc: string }> = {
+  fisico: { name: 'Físico', icon: '🗡', desc: 'Daño parejo contra todo; pierde un poco contra placas y jefes.' },
+  perforante: { name: 'Perforante', icon: '🏹', desc: 'Atraviesa a los COLOSALES (+50%); la armadura blindada lo desvía.' },
+  asedio: { name: 'Asedio', icon: '💣', desc: 'Destroza a los BLINDADOS (+50%) pero apenas araña a los ligeros (−35%).' },
+  magico: { name: 'Mágico', icon: '✨', desc: 'Funde a ligeros y medianos; las placas blindadas lo disipan (−35%).' },
+};
+export const ARMOR_TYPE_INFO: Record<ArmorTypeId, { name: string; icon: string; desc: string }> = {
+  ligera: { name: 'Ligera', icon: '🪶', desc: 'Rápidos y frágiles: corredores, murciélagos, alimañas.' },
+  media: { name: 'Media', icon: '🛡', desc: 'La infantería común: grunts y monstruos medianos.' },
+  blindada: { name: 'Blindada', icon: '🦾', desc: 'Placas pesadas: tanques y acorazados. El asedio las revienta.' },
+  colosal: { name: 'Colosal', icon: '🏰', desc: 'Jefes y colosos: solo lo perforante los atraviesa de verdad.' },
+};
+
+// F5.1 · TOPE del DoT porcentual (Corrosión ★★): el 1.2%/s de la vida MÁXIMA no
+// puede superar estos dps. PORQUÉ: sin tope, el % escala sin límite con el hp de
+// los jefes del endless profundo y UNA torre trivializaría cualquier jefe; con
+// tope, la Corrosión II crece hasta ~33k de vida máxima (0.012×33k ≈ 400) y de
+// ahí en adelante queda plana — relevante en el infinito sin romper el clásico.
+export const POISON_PCT_CAP_DPS = 400;
+
+// F5.1 · botín superlineal SOLO en endless: desde la oleada ENDLESS_BOUNTY_FROM el
+// botín gana un término ×ENDLESS_BOUNTY_STEP compuesto por oleada por encima de la
+// base, con tope ×ENDLESS_BOUNTY_CAP extra. La curva de hp del infinito (waveHpMult)
+// crece geométrica; sin este término la economía se queda atrás y toda partida
+// endless muere por pobreza en vez de por diseño.
+export const ENDLESS_BOUNTY_FROM = 30;
+export const ENDLESS_BOUNTY_STEP = 1.02;
+export const ENDLESS_BOUNTY_CAP = 3;
 
 // ---------- F5.2 · madera (economía secundaria estilo Green TD) ----------
 // Cada jugador tiene un orco leñador implícito que tala madera AUTOMÁTICAMENTE,
@@ -160,6 +234,11 @@ export const PLAYER_COLORS = [
 // con ≥35% del maxHp cobra un extra si no dio el golpe final) · 16 (issue #7): 5
 // recetas de fusión nuevas (toxicstorm/shredder/siegeeye/alchemyvault/icelance) ·
 // 17: SENTRY rediseñado — MEJORABLE (más radio, 3 niveles) y TEMPORAL (caduca por
-// TICKS; duración 5/7.5/10 min por nivel; mejorar refresca el ward)
-export const BALANCE_VERSION = 17;
+// TICKS; duración 5/7.5/10 min por nivel; mejorar refresca el ward) ·
+// 18 (F5.1): MATRIZ ataque×armadura (attackType/armorType + ATTACK_MATRIX en el
+// daño directo), torre nueva 'flak' (Balista de Cielo, antiaérea pura), DoT
+// porcentual de la Corrosión ★★, curva de hp del infinito en dos tramos, botín
+// superlineal del endless y retoques de fusiones (Bertha/Fragmentador/Bóveda) —
+// invalida guardados y replays de v17 (correcto: la sim ya no reproduce igual)
+export const BALANCE_VERSION = 18;
 export const PROTOCOL_VERSION = 1;

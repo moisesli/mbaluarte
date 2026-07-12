@@ -1,4 +1,4 @@
-import type { AffixId, Difficulty, EnemyTypeId, SpawnEntry, WaveComp } from '../types.js';
+import type { AffixId, Difficulty, EnemyTypeId, GameMode, SpawnEntry, WaveComp } from '../types.js';
 import { ENEMIES } from './enemies.js';
 import { AFFIX_ORDER } from './affixes.js';
 import {
@@ -7,6 +7,9 @@ import {
   DIFF_HP_MULT,
   ELITE_MIN_WAVE,
   ELITE_TWO_AFFIX_WAVE,
+  ENDLESS_BOUNTY_CAP,
+  ENDLESS_BOUNTY_FROM,
+  ENDLESS_BOUNTY_STEP,
   HP_PER_EXTRA_PLAYER,
   IMMUNE_EVERY,
   IMMUNE_FROM,
@@ -17,25 +20,47 @@ import {
 import { rand, pick } from '../rng.js';
 
 // Multiplicador de HP según oleada, dificultad y cantidad de jugadores.
+// F5.1 · curva del INFINITO en dos tramos: ×1.13 compuesto hasta la oleada 40 y
+// ×1.10 de ahí en adelante. El clásico (36 oleadas) queda EXACTAMENTE igual que
+// antes; solo se dobla la rodilla del endless/horda profundos, donde el 1.13
+// perpetuo convertía toda oleada >45 en un muro binario imposible de pagar.
 export function waveHpMult(wave: number, difficulty: Difficulty, playerCount: number): number {
   const base = 1 + 0.11 * (wave - 1);
-  const late = wave > 20 ? Math.pow(1.13, wave - 20) : 1;
+  const late =
+    wave > 20
+      ? Math.pow(1.13, Math.min(wave - 20, 20)) * Math.pow(1.1, Math.max(0, wave - 40))
+      : 1;
   const players = 1 + HP_PER_EXTRA_PLAYER * (playerCount - 1);
   return base * late * DIFF_HP_MULT[difficulty] * players;
 }
 
-export function waveBountyMult(wave: number): number {
-  return 1 + 0.03 * (wave - 1);
+// F5.1 · botín superlineal SOLO en endless: desde la oleada 30 el botín gana un
+// término ×1.02 compuesto por oleada (tope ×3 extra) que acompaña la curva
+// geométrica de hp — sin él, el endless profundo muere por pobreza, no por reto.
+// `mode` es OPCIONAL para no romper la firma pública (sin mode = clásico/horda).
+export function waveBountyMult(wave: number, mode?: GameMode): number {
+  const base = 1 + 0.03 * (wave - 1);
+  const endless =
+    mode === 'endless' && wave > ENDLESS_BOUNTY_FROM
+      ? Math.min(ENDLESS_BOUNTY_CAP, Math.pow(ENDLESS_BOUNTY_STEP, wave - ENDLESS_BOUNTY_FROM))
+      : 1;
+  return base * endless;
 }
 
 // ¿La oleada `wave` es de inmunidad mágica? Múltiplos de 5 desde la 10 (10,15,20,25…)
 // PERO se exime la oleada de la Quimera (jefe VOLADOR en 15/25/35): inmune + volador +
 // jefe a la vez solo dejaría el arquero/francotirador físicos anti-aire, un triple
-// castigo casi imposible. Las oleadas del golem/behemot (terrestres) sí son inmunes.
+// castigo casi imposible. Las oleadas del golem (terrestre) sí son inmunes.
+// F5.1 · también se exime la del BEHEMOT (endless: 40/60/80…): la revisión
+// adversarial mostró que en la o40 se apilaban TRES castigos a la vez — primer
+// Behemot + escolta inmune + último paso ×1.13 de la rodilla de la curva — y 5/6
+// muertes no atascadas del endless caían exactamente ahí. Desfasar la inmunidad
+// reparte el muro sin ablandar la curva.
 export function isImmuneWave(wave: number): boolean {
   if (wave < IMMUNE_FROM || (wave - IMMUNE_FROM) % IMMUNE_EVERY !== 0) return false;
   const isChimeraWave = wave >= 15 && wave % 10 === 5;
-  return !isChimeraWave;
+  const isBehemothWave = wave >= 30 && wave % 20 === 0;
+  return !isChimeraWave && !isBehemothWave;
 }
 
 // ¿La oleada `wave` es INVISIBLE? (Lote 3) Cada INVISIBLE_EVERY oleadas desde

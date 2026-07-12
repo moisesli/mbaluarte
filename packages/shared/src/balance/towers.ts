@@ -18,6 +18,8 @@ export const TOWER_ORDER: TowerTypeId[] = [
   'boom',
   // Lote 3 — al FINAL para no romper índices de snapshot
   'sentry',
+  // F5.1 — al FINAL para no romper índices de snapshot
+  'flak',
 ];
 
 export const TOWERS: Record<TowerTypeId, TowerDef> = {
@@ -30,6 +32,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: true,
     targetsGround: true,
     projectileKind: 'bullet',
+    attackType: 'fisico',
     levels: [
       { cost: 50, damage: 8, range: 2.6, cooldown: 0.7, projectileSpeed: 14 },
       { cost: 70, damage: 15, range: 2.9, cooldown: 0.6, projectileSpeed: 15 },
@@ -88,6 +91,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: false,
     targetsGround: true,
     projectileKind: 'shell',
+    attackType: 'asedio',
     levels: [
       { cost: 90, damage: 24, range: 2.4, cooldown: 1.6, projectileSpeed: 10, splash: 0.9 },
       { cost: 135, damage: 44, range: 2.6, cooldown: 1.5, projectileSpeed: 10, splash: 1.05 },
@@ -133,9 +137,13 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
         airBonus: 1.5,
         rank2: {
           // *Antiaéreo II*: ráfaga triple demoledora; aún más letal contra el aire.
-          cost: 400,
+          // F5.1 · nerf sutil al mono-build: coste 400→460 (+15%) y daño 90→83 (−8%).
+          // El golpe de verdad se lo da la MATRIZ (asedio ×0.65 vs ligera): la
+          // Metralla sigue siendo la respuesta de ÁREA al aire pesado, pero deja
+          // de borrar sola los enjambres ligeros (eso ahora es de la Balista).
+          cost: 460,
           desc: 'Antiaéreo II: ráfaga triple, más daño y área; +60% contra voladores.',
-          damage: 90,
+          damage: 83,
           range: 3.3,
           cooldown: 1.0,
           splash: 1.2,
@@ -154,6 +162,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: true,
     targetsGround: true,
     projectileKind: 'bullet',
+    attackType: 'magico',
     levels: [
       { cost: 70, damage: 4, range: 2.3, cooldown: 0.9, projectileSpeed: 12, slow: { factor: 0.55, duration: 1.6 } },
       { cost: 100, damage: 7, range: 2.5, cooldown: 0.85, projectileSpeed: 13, slow: { factor: 0.45, duration: 2.1 } },
@@ -209,6 +218,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: true,
     targetsGround: true,
     projectileKind: 'bullet',
+    attackType: 'magico',
     levels: [
       { cost: 80, damage: 6, range: 2.5, cooldown: 1.1, projectileSpeed: 12, poison: { dps: 10, duration: 3 } },
       { cost: 120, damage: 10, range: 2.7, cooldown: 1.05, projectileSpeed: 13, poison: { dps: 19, duration: 3.2 } },
@@ -249,13 +259,18 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
         poison: { dps: 95, duration: 4 },
         pierceArmor: true,
         rank2: {
-          // *Corrosión II*: ácido que derrite tanques enteros.
+          // *Corrosión II*: ácido que derrite tanques enteros. F5.1 · daño
+          // PORCENTUAL oficial del lategame: su DoT garantiza al menos el 1.2%
+          // de la vida MÁXIMA por segundo (poisonPctMax), con tope de
+          // POISON_PCT_CAP_DPS (400 dps) — contra enemigos normales manda el dps
+          // plano (no rompe el clásico); contra las esponjas del infinito, el %.
           cost: 400,
-          desc: 'Corrosión II: ácido más potente que perfora cualquier armadura.',
+          desc: 'Corrosión II: ácido que derrite en proporción al tamaño — al menos el 1,2% de la vida MÁXIMA por segundo (tope 400/s).',
           damage: 60,
           range: 3.2,
           cooldown: 0.8,
           poison: { dps: 190, duration: 4.5 },
+          poisonPctMax: 0.012,
         },
       },
     ],
@@ -269,6 +284,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: true,
     targetsGround: true,
     projectileKind: 'beam',
+    attackType: 'magico',
     levels: [
       { cost: 120, damage: 18, range: 2.2, cooldown: 1.3, chain: { targets: 3, falloff: 0.7 } },
       { cost: 180, damage: 32, range: 2.4, cooldown: 1.2, chain: { targets: 4, falloff: 0.72 } },
@@ -324,6 +340,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: true,
     targetsGround: true,
     projectileKind: 'snipe',
+    attackType: 'perforante',
     levels: [
       { cost: 130, damage: 60, range: 5.5, cooldown: 3.2, pierceArmor: true },
       { cost: 195, damage: 115, range: 6.5, cooldown: 3.0, pierceArmor: true },
@@ -381,6 +398,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: false,
     targetsGround: true,
     projectileKind: 'bomb',
+    attackType: 'asedio',
     levels: [
       { cost: 140, damage: 42, range: 6.0, cooldown: 2.9, projectileSpeed: 5.5, splash: 1.3, minRange: 2.0 },
       { cost: 210, damage: 75, range: 6.6, cooldown: 2.8, projectileSpeed: 6, splash: 1.5, minRange: 2.0 },
@@ -401,9 +419,12 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
         shots: 3,
         rank2: {
           // *Bombardeo II*: cuatro bombas por andanada, más daño y área.
-          cost: 480,
+          // F5.1 · nerf sutil al mono-build: coste 480→550 (+15%) y daño 230→212
+          // (−8%). Conservador a propósito: el mono-mortero muere por la MATRIZ
+          // (asedio araña ligera), no por este recorte.
+          cost: 550,
           desc: 'Bombardeo II: cuatro bombas por andanada.',
-          damage: 230,
+          damage: 212,
           range: 8.0,
           cooldown: 2.9,
           splash: 1.9,
@@ -444,6 +465,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: false,
     targetsGround: false,
     projectileKind: 'none',
+    attackType: 'fisico', // nominal: no hace daño directo, jamás entra en la matriz
     levels: [
       { cost: 100, damage: 0, range: 0, cooldown: 0, incomePerWave: 14 },
       { cost: 160, damage: 0, range: 0, cooldown: 0, incomePerWave: 26 },
@@ -494,6 +516,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: false,
     targetsGround: false,
     projectileKind: 'none',
+    attackType: 'fisico', // nominal: no hace daño directo, jamás entra en la matriz
     levels: [
       { cost: 90, damage: 0, range: 2.2, cooldown: 0, auraDamage: 0.15 },
       { cost: 140, damage: 0, range: 2.6, cooldown: 0, auraDamage: 0.25 },
@@ -548,6 +571,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: false,
     targetsGround: true,
     projectileKind: 'none',
+    attackType: 'asedio',
     onPathOnly: true,
     levels: [
       // No dispara: `charges` marca los golpes disponibles. `damage` es el daño por
@@ -572,6 +596,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: false,
     targetsGround: false,
     projectileKind: 'none',
+    attackType: 'fisico', // nominal: no hace daño directo, jamás entra en la matriz
     levels: [
       { cost: 120, damage: 0, range: 2.4, cooldown: 0, auraBounty: 0.3 },
       { cost: 170, damage: 0, range: 2.8, cooldown: 0, auraBounty: 0.3 },
@@ -625,6 +650,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: false,
     targetsGround: true,
     projectileKind: 'none',
+    attackType: 'asedio',
     onPathOnly: true,
     detonates: true,
     levels: [
@@ -652,6 +678,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     targetsAir: false,
     targetsGround: false,
     projectileKind: 'none',
+    attackType: 'fisico', // nominal: no hace daño directo, jamás entra en la matriz
     // `detects`: cada tick marca como detectados a los invisibles dentro de su `range`.
     // No dispara (towerFires lo excluye) y NO se especializa (specs dummy como la
     // Trampa), pero v17 lo hace MEJORABLE: 3 niveles reales que suben el RADIO
@@ -669,6 +696,89 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
     specs: [
       { key: 'sentry', name: 'Sentry', desc: 'No se especializa.', cost: 0, damage: 0, range: 5.0, cooldown: 0 },
       { key: 'sentry', name: 'Sentry', desc: 'No se especializa.', cost: 0, damage: 0, range: 5.0, cooldown: 0 },
+    ],
+  },
+
+  // ---------- F5.1 · Balista de Cielo (antiaérea PURA) ----------
+  flak: {
+    id: 'flak',
+    name: 'Balista de Cielo',
+    desc: 'SOLO dispara al AIRE: dardos perforantes que cazan voladores (los colosales sufren +50% por la matriz). No puede tocar el suelo.',
+    color: '#8c9eff',
+    hotkey: 'r',
+    targetsAir: true,
+    // Primera torre del juego que NO pega a tierra: su trade-off de diseño ES ese.
+    // A cambio, es claramente LA respuesta aérea (perforante ×1.5 vs colosal, DPS
+    // por oro muy por encima del resto contra voladores). pickTarget ya respeta
+    // targetsGround=false (mismo gate que targetsAir).
+    targetsGround: false,
+    projectileKind: 'bullet',
+    attackType: 'perforante',
+    levels: [
+      // costes en línea con el francotirador (130/195/310); daño/cadencia pensados
+      // para superar CLARAMENTE en DPS antiaéreo a cualquier generalista de su
+      // precio (el banco antiaéreo de balance-probe la pone ~+30% por oro sobre
+      // el Tesla y muy por encima del arquero/francotirador contra el aire).
+      { cost: 140, damage: 48, range: 4.2, cooldown: 0.9, projectileSpeed: 18 },
+      { cost: 205, damage: 90, range: 4.6, cooldown: 0.85, projectileSpeed: 19 },
+      { cost: 325, damage: 165, range: 5.0, cooldown: 0.8, projectileSpeed: 20 },
+    ],
+    specs: [
+      {
+        // rol A: limpiadora de ENJAMBRES aéreos (bats/quimeras de escolta) — la
+        // ráfaga reparte agujas entre varios blancos (shots), sin splash: al no
+        // tener área ni tocar tierra, ningún daño puede "colarse" al suelo. Debe
+        // GANAR a la Metralla ★★ en daño/oro contra un flujo aéreo (sonda F5.1):
+        // es el pago por renunciar del todo al suelo.
+        key: 'needlerain',
+        name: 'Ráfaga de Agujas',
+        desc: 'Aguja tras aguja: ráfaga doble a cadencia máxima contra todo lo que vuele.',
+        cost: 500,
+        damage: 68,
+        range: 5.2,
+        cooldown: 0.35,
+        projectileSpeed: 22,
+        shots: 2,
+        rank2: {
+          cost: 520,
+          desc: 'Agujas II: tres agujas por ráfaga, todavía más rápidas.',
+          // F5.1 · revisión adversarial: con 95 esta ráfaga le ganaba al Arpón ★★
+          // EN SU PROPIO ROL antitanque (skywhale 12k en 11.3s vs 23.5s). Con 80
+          // sigue reinando contra enjambres (~1.200 dps vs colosal) sin invadirlo.
+          damage: 80,
+          range: 5.6,
+          cooldown: 0.3,
+          shots: 3,
+        },
+      },
+      {
+        // rol B: cazadora de TANQUES aéreos (skywhale/chimera). Su Rango II es la
+        // herramienta PORCENTUAL antiaérea del lategame: executeCurrent 0.5 —
+        // si el arponazo arranca ≥50% de la vida ACTUAL, derriba. Es "solo aire"
+        // por construcción: la torre no puede apuntar ni dañar a nada terrestre.
+        // OJO al leer la sonda: el remate NO se contabiliza como daño de torre,
+        // así que su cifra de daño SIEMPRE subestima su valor real antijefe.
+        key: 'zenith',
+        name: 'Arpón del Cénit',
+        desc: 'Un arpón colosal de un solo blanco: el terror de los jefes voladores. Perfora armadura.',
+        cost: 540,
+        damage: 330,
+        range: 6.2,
+        cooldown: 1.5,
+        projectileSpeed: 24,
+        pierceArmor: true,
+        rank2: {
+          cost: 520,
+          desc: 'Cénit II: si el arponazo arranca la MITAD de la vida actual del volador, lo derriba al instante (no inmunes).',
+          // F5.1 · revisión adversarial: con 460/1.4 quedaba DOMINADO por la
+          // Ráfaga de Agujas ★★ en su propio rol. Con 520/1.1 (~709 dps + remate)
+          // recupera la corona single-target aérea (TTK 12k ≈ 16s).
+          damage: 520,
+          range: 6.8,
+          cooldown: 1.1,
+          executeCurrent: 0.5,
+        },
+      },
     ],
   },
 };

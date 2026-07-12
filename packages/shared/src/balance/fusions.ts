@@ -1,4 +1,4 @@
-import type { FusionId, TowerLevelDef, TowerSpecDef, TowerTypeId } from '../types.js';
+import type { AttackTypeId, FusionId, TowerLevelDef, TowerSpecDef, TowerTypeId } from '../types.js';
 import { activeStats, TOWERS } from './towers.js';
 
 // ---------- F4.3 · Fusión de torres — 6 recetas curadas estilo Element TD ----------
@@ -47,6 +47,9 @@ export interface FusionDef {
   projectileKind: 'bullet' | 'shell' | 'bomb' | 'none' | 'beam' | 'snipe';
   targetsAir: boolean;
   targetsGround: boolean;
+  // F5.1 · tipo de ataque para la matriz: la fusión hereda el del ROL que ejerce
+  // (no siempre el del ingrediente conservado). Documentado receta a receta.
+  attackType: AttackTypeId;
   stats: TowerLevelDef; // stats completos de la torre fusionada (cost = 0: no se compra)
 }
 
@@ -64,6 +67,7 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'shell',
     targetsAir: true,
     targetsGround: true,
+    attackType: 'magico', // nube gélida/tóxica: rol de MAGIA de área
     stats: {
       cost: 0,
       damage: 40,
@@ -89,6 +93,7 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'beam',
     targetsAir: true,
     targetsGround: true,
+    attackType: 'perforante', // rayo que ATRAVIESA en línea: rol de francotirador (el −70% a inmunes es capa aparte)
     stats: {
       cost: 0,
       damage: 340,
@@ -111,11 +116,15 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'bomb',
     targetsAir: false,
     targetsGround: true,
+    attackType: 'asedio', // obús de mapa completo: asedio puro
     stats: {
+      // F5.1 · buff de rol: cooldown 9→6 y daño 780→900. Con 9 s el "pepinazo
+      // global" llegaba tarde a su propia oleada; a 6 s dispara ~1.5× más y el
+      // obús de 900 (asedio ×1.5 vs blindada) justifica consumir cañón+mortero.
       cost: 0,
-      damage: 780,
+      damage: 900,
       range: 99, // todo el mapa
-      cooldown: 9,
+      cooldown: 6,
       projectileSpeed: 8,
       splash: 2.6,
       minRange: 2.0,
@@ -136,6 +145,7 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'bullet',
     targetsAir: true,
     targetsGround: true,
+    attackType: 'fisico', // dispara como el arquero que la origina: físico parejo
     stats: {
       cost: 0,
       damage: 82,
@@ -162,6 +172,7 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'bullet',
     targetsAir: true,
     targetsGround: true,
+    attackType: 'magico', // mata con su VENENO: rol mágico (el impacto también)
     stats: {
       cost: 0,
       damage: 28,
@@ -186,6 +197,7 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'none',
     targetsAir: true,
     targetsGround: true,
+    attackType: 'magico', // no daña (aura pura): valor nominal coherente con el hielo
     stats: {
       cost: 0,
       damage: 0,
@@ -215,6 +227,7 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'beam',
     targetsAir: true,
     targetsGround: true,
+    attackType: 'magico', // cadena eléctrica venenosa: magia de grupo
     stats: {
       cost: 0,
       damage: 46,
@@ -241,13 +254,18 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'shell',
     targetsAir: false,
     targetsGround: true,
+    attackType: 'fisico', // metralla LIGERA anti-enjambre: físico (asedio contradiría su rol — araña ligera)
     stats: {
+      // F5.1 · buff de rol: daño 30→46 por obús y splash 0.85→1.0. La sonda lo
+      // dejaba muy por debajo de la Metralla ★★ en su propio rol anti-grupo; con
+      // esto compite en limpieza de hordas SIN igualar su single-target (46×3
+      // por ráfaga sigue lejos de un pepinazo).
       cost: 0,
-      damage: 30,
+      damage: 46,
       range: 3.1,
       cooldown: 0.6,
       projectileSpeed: 13,
-      splash: 0.85,
+      splash: 1.0,
       shots: 3,
     },
   },
@@ -269,6 +287,7 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'snipe',
     targetsAir: true,
     targetsGround: true,
+    attackType: 'perforante', // ejecutor cazatanques/antijefe: perforante caza colosal
     stats: {
       // Un solo objetivo (sin área ni cadena): pega MUY fuerte para compensar. Debe
       // superar al Cañón de Riel II del propio francotirador (620) — si no, fusionar
@@ -294,20 +313,25 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
   alchemyvault: {
     id: 'alchemyvault',
     name: 'Bóveda Alquímica',
-    desc: 'No dispara: genera renta cada oleada Y su aura da +55% de oro por las bajas cercanas.',
+    desc: 'No dispara: genera renta cada oleada Y su aura da +60% de oro por las bajas cercanas.',
     icon: '💰⚗',
     color: '#ffd54f',
     ingredients: ['bank', 'alchemist'],
     projectileKind: 'none',
     targetsAir: false,
     targetsGround: false,
+    attackType: 'fisico', // no daña (economía pura): valor nominal
     stats: {
+      // F5.1 · buff de rol: renta 60→140 y aura 0.55→0.6. Consumir una
+      // Tesorería-candidata (110/oleada, 200 en ★★) por una renta de 60 era un
+      // downgrade seco; con 140 + aura 0.6 el paquete renta+aura por UNA celda
+      // justifica la fusión sin superar a Tesorería ★★ + Transmutador por dos.
       cost: 0,
       damage: 0,
       range: 3.8, // radio del aura de botín
       cooldown: 0,
-      incomePerWave: 60,
-      auraBounty: 0.55,
+      incomePerWave: 140,
+      auraBounty: 0.6,
     },
   },
 
@@ -328,6 +352,7 @@ export const FUSIONS: Record<FusionId, FusionDef> = {
     projectileKind: 'bullet',
     targetsAir: true,
     targetsGround: true,
+    attackType: 'perforante', // dardo perforante de largo alcance: rol de lanza (el slow es capa mágica aparte)
     stats: {
       cost: 0,
       damage: 120,
@@ -355,6 +380,14 @@ export function findFusion(a: TowerTypeId, b: TowerTypeId): FusionDef | null {
 export function fusionByIndex(idx: number): FusionDef | null {
   if (idx < 0 || idx >= FUSION_ORDER.length) return null;
   return FUSIONS[FUSION_ORDER[idx]];
+}
+
+// F5.1 · tipo de ataque EFECTIVO de una torre del estado de sim (fusion-aware):
+// si está fusionada manda el rol de la fusión; si no, el del tipo base. Lo usan
+// la sim (damageEnemy vía fireTower/stepTraps) y la UI (panel/guía) por igual.
+export function attackTypeOf(t: { type: TowerTypeId; fusion: number }): AttackTypeId {
+  const f = fusionByIndex(t.fusion);
+  return f ? f.attackType : TOWERS[t.type].attackType;
 }
 
 // Def de fusión de una torre del estado de sim (null si no está fusionada).

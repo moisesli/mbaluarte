@@ -1,4 +1,4 @@
-import type { EnemyDef, EnemyTypeId } from '../types.js';
+import type { ArmorTypeId, EnemyDef, EnemyTypeId } from '../types.js';
 
 // Orden estable: se usa como índice compacto en los snapshots.
 export const ENEMY_ORDER: EnemyTypeId[] = [
@@ -32,6 +32,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 1.5,
     bounty: 4,
     armor: 0,
+    armorType: 'media',
     radius: 0.26,
     livesCost: 1,
     flying: false,
@@ -46,6 +47,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 2.6,
     bounty: 4,
     armor: 0,
+    armorType: 'ligera',
     radius: 0.22,
     livesCost: 1,
     flying: false,
@@ -60,6 +62,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 0.95,
     bounty: 12,
     armor: 2,
+    armorType: 'blindada',
     radius: 0.36,
     livesCost: 2,
     flying: false,
@@ -74,6 +77,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 2.0,
     bounty: 5,
     armor: 0,
+    armorType: 'ligera',
     radius: 0.24,
     livesCost: 1,
     flying: true,
@@ -88,6 +92,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 1.2,
     bounty: 10,
     armor: 8,
+    armorType: 'blindada',
     radius: 0.3,
     livesCost: 1,
     flying: false,
@@ -102,6 +107,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 1.3,
     bounty: 12,
     armor: 0,
+    armorType: 'media',
     radius: 0.28,
     livesCost: 1,
     flying: false,
@@ -117,6 +123,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 2.2,
     bounty: 1,
     armor: 0,
+    armorType: 'ligera',
     radius: 0.16,
     livesCost: 1,
     flying: false,
@@ -131,6 +138,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 1.0,
     bounty: 16,
     armor: 1,
+    armorType: 'blindada',
     radius: 0.38,
     livesCost: 2,
     flying: false,
@@ -146,6 +154,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 1.4,
     bounty: 6,
     armor: 0,
+    armorType: 'media',
     radius: 0.32,
     livesCost: 1,
     flying: false,
@@ -161,6 +170,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 1.8,
     bounty: 2,
     armor: 0,
+    armorType: 'ligera',
     radius: 0.2,
     livesCost: 1,
     flying: false,
@@ -175,6 +185,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 1.7,
     bounty: 9,
     armor: 0,
+    armorType: 'ligera',
     radius: 0.26,
     livesCost: 1,
     flying: false,
@@ -190,6 +201,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 0.6,
     bounty: 150,
     armor: 6,
+    armorType: 'colosal',
     radius: 0.55,
     livesCost: 5,
     flying: false,
@@ -211,6 +223,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 1.1,
     bounty: 14,
     armor: 0,
+    armorType: 'media',
     radius: 0.3,
     livesCost: 1,
     flying: false,
@@ -227,6 +240,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 2.7,
     bounty: 8,
     armor: 0,
+    armorType: 'ligera',
     radius: 0.24,
     livesCost: 0,
     flying: false,
@@ -245,6 +259,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 1.0,
     bounty: 22,
     armor: 1,
+    armorType: 'media',
     radius: 0.36,
     livesCost: 2,
     flying: false,
@@ -263,6 +278,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 0.85,
     bounty: 34,
     armor: 2,
+    armorType: 'colosal',
     radius: 0.5,
     livesCost: 2,
     flying: true,
@@ -280,6 +296,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 0.85,
     bounty: 16,
     armor: 0,
+    armorType: 'media',
     radius: 0.28,
     livesCost: 1,
     flying: false,
@@ -300,6 +317,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 0.7,
     bounty: 210,
     armor: 3,
+    armorType: 'colosal',
     radius: 0.55,
     livesCost: 4,
     flying: true,
@@ -317,6 +335,7 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     speed: 0.5,
     bounty: 260,
     armor: 8,
+    armorType: 'colosal',
     radius: 0.6,
     livesCost: 6,
     flying: false,
@@ -327,3 +346,16 @@ export const ENEMIES: Record<EnemyTypeId, EnemyDef> = {
     minWave: 99,
   },
 };
+
+// ---------- F5.1 · matriz ataque × armadura ----------
+// Criterio de asignación de `armorType` (identidad de SILUETA, no de número):
+//   ligera   → rápidos/frágiles: runner, bat, larva, slimelet, thief y el ghost
+//              (escurridizo, casi sin hp — su defensa es la esquiva, no la piel)
+//   media    → la infantería común: goblin (el grunt canónico), shaman, slime,
+//              sapper, berserker y wraith (lento pero sin placas)
+//   blindada → los tanques de placa: brute, armored y troll
+//   colosal  → jefes (golem/chimera/behemoth) y el skywhale (el tanque AÉREO:
+//              es la razón de ser del rol perforante antiaéreo)
+export function armorTypeOf(type: EnemyTypeId): ArmorTypeId {
+  return ENEMIES[type].armorType;
+}

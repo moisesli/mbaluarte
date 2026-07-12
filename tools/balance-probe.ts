@@ -14,13 +14,16 @@ import {
   rank2Cost,
   stepGame,
   towerLevel,
+  towerTotalCost,
   findFusion,
+  fusionByIndex,
   FUSION_ORDER,
   FUSIONS,
   ORC_RATES,
   ORC_UPGRADE_COSTS,
   TICK_RATE,
   TOWERS,
+  TOWER_ORDER,
   WOOD_COST_RANK2,
   WOOD_COST_SPEC,
   type Difficulty,
@@ -216,6 +219,10 @@ interface RunResult {
   livesLostByWave: Map<number, number>;
   specs: number; rank2: number; fusions: number; towers: number;
   goldEarned: number; woodSpent: number;
+  // F5.1 · daño acumulado por FAMILIA de torre al final de la partida (las
+  // fusiones se etiquetan con su nombre). El bot casi no vende, así que la foto
+  // final es fiel al reparto real de la partida.
+  dmgByFamily: Map<string, number>;
 }
 
 function run(mapId: string, diff: Difficulty, seed: number, useFusion = true): RunResult {
@@ -246,19 +253,27 @@ function run(mapId: string, diff: Difficulty, seed: number, useFusion = true): R
   const seconds = state.tick / TICK_RATE;
   // gasto EXACTO de madera: solo la consumen las specs y el Rango II
   const woodSpent = specs * WOOD_COST_SPEC + rank2 * WOOD_COST_RANK2;
+  const dmgByFamily = new Map<string, number>();
+  for (const t of state.towers) {
+    const label = t.fusion >= 0 ? `⚗${fusionByIndex(t.fusion)?.name ?? '?'}` : TOWERS[t.type].name;
+    dmgByFamily.set(label, (dmgByFamily.get(label) ?? 0) + t.damage);
+  }
   return {
     victory: state.over?.victory === true,
     wave: state.wave, lives: state.lives, minutes: seconds / 60,
     livesLostByWave, specs, rank2, fusions, towers: state.towers.length,
     goldEarned: state.players.reduce((s, p) => s + p.stats.goldEarned, 0),
     woodSpent,
+    dmgByFamily,
   };
 }
 
 console.log('=== Clásico 36 · 2 bots · «sendero» ===');
+const familyTotals = new Map<string, number>(); // F5.1 · share de daño agregado de las 9 corridas
 for (const diff of ['easy', 'normal', 'hard'] as Difficulty[]) {
   for (const seed of [11, 22, 33]) {
     const r = run('sendero', diff, seed * 1000003);
+    for (const [fam, dmg] of r.dmgByFamily) familyTotals.set(fam, (familyTotals.get(fam) ?? 0) + dmg);
     const spikes = [...r.livesLostByWave.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
       .map(([w, l]) => `o${w}:−${l}`).join(' ');
     console.log(
@@ -266,6 +281,171 @@ for (const diff of ['easy', 'normal', 'hard'] as Difficulty[]) {
       ` vidas ${String(r.lives).padStart(2)} · ${r.minutes.toFixed(0)}min · torres ${r.towers} · ★${r.specs} ★★${r.rank2} ⚗${r.fusions}` +
       ` · 🪵gastada ${r.woodSpent.toFixed(0)} · picos[${spikes}]`,
     );
+  }
+}
+
+// ---- F5.1 · share de DAÑO por familia en partidas reales (agregado de las 9
+// corridas de arriba). Es la foto del reparto que la matriz debe mantener sana:
+// ninguna familia dominando el daño total del bot (>25% es señal de mono-build). ----
+console.log('\n=== F5.1 · Share de daño por familia (9 partidas clásicas de bots) ===');
+{
+  const total = [...familyTotals.values()].reduce((a, b) => a + b, 0) || 1;
+  const rows = [...familyTotals.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [fam, dmg] of rows) {
+    const share = (dmg / total) * 100;
+    console.log(`${fam.padEnd(22)} ${String(Math.round(dmg)).padStart(9)} · ${share.toFixed(1).padStart(5)}%${share > 25 ? '  ⚠ >25%' : ''}`);
+  }
+}
+
+// ---- F5.1 · BANCO DE TORRES: cada torre L3 (banda ~235-680 de oro) y cada ★★R2
+// (banda ~1000-1800) sola contra el MISMO flujo mixto (tierra+aire, wave 18).
+// Criterio: ninguna torre de combate >25% del daño TOTAL de su banda ni <2% del
+// daño MEDIANO de su banda. La Balista (solo aire) se evalúa aparte en el banco
+// ANTIAÉREO: contra un flujo mayormente terrestre su share bajo es su diseño. ----
+function benchTower(type: TowerTypeId, level: number, spec: number, air: boolean): { dmg: number; kills: number; cost: number } {
+  const map = getMap('sendero');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('sendero', 'endless', 'normal', 7200, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.wave = 18;
+  st.waveState = 'active';
+  st.pendingWave = [];
+  st.nextId = 32000;
+  st.lives = 1e9;
+  st.maxLives = 1e9;
+  const wps = simCtx.waypoints[0];
+  const mid = wps[Math.floor(wps.length / 2)];
+  const [cx, cy] = nearestBuildCell('sendero', mid.x, mid.y);
+  const tower: TowerState = {
+    id: 95000, type, cx, cy, level, spec, owner: 'p1',
+    cooldownLeft: 0, targetMode: 'first', invested: 400, kills: 0, damage: 0, stunnedUntil: 0,
+    charges: 0, growthBonus: 0, goldGen: 0, fusion: -1, focusId: 0, halted: false, expiresTick: 0,
+  };
+  st.towers.push(tower);
+  // Flujo mixto con DIETA DE ARMADURAS equilibrada (~95 hp base por clase y
+  // ciclo: ligera 92 / media 96 / blindada 95): el mixto de benchFusion es ~65%
+  // blindada en hp y sesgaría la foto a favor del asedio — benchFusion lo
+  // conserva para no romper la comparabilidad con los registros de issue #7.
+  // El AÉREO mezcla enjambre (bat, ligera) y tanque volador (skywhale, colosal)
+  // con suficiente hp total para que NINGUNA torre lo limpie entero (si una
+  // torre mata el 100% del flujo, su cifra de daño queda topada y no compara).
+  const mix: EnemyTypeId[] = air
+    ? ['bat', 'bat', 'skywhale', 'skywhale']
+    : ['runner', 'bat', 'goblin', 'runner', 'bat', 'goblin', 'goblin', 'armored'];
+  const queue: SpawnEntry[] = [];
+  // los colosos van ESPACIADOS (delay 15) como en una oleada real: una conga
+  // densa de tanques aéreos infla el splash de la Metralla y falsea la foto
+  for (let k = 0; k < (air ? 40 : 30); k++) {
+    for (const t of mix) queue.push({ type: t, delay: air ? (t === 'skywhale' ? 15 : 6) : 6, pathIdx: 0 });
+  }
+  st.spawnQueue = queue;
+  for (let i = 0; i < TICK_RATE * 100; i++) stepGame(st, simCtx, []);
+  return { dmg: Math.round(tower.damage), kills: tower.kills, cost: towerTotalCost(type, level, spec) };
+}
+
+console.log('\n=== F5.1 · Banco de torres L3 · flujo mixto (100 s, wave 18) ===');
+{
+  const combat = TOWER_ORDER.filter((t) => !['bank', 'banner', 'alchemist', 'sentry', 'trap', 'boom'].includes(t));
+  const rows = combat.map((t) => ({ t, ...benchTower(t, 3, -1, false) }));
+  rows.sort((a, b) => b.dmg - a.dmg);
+  // el mediano y el total se calculan SIN la Balista (solo aire: banda aparte)
+  const ground = rows.filter((r) => r.t !== 'flak');
+  const median = ground[Math.floor(ground.length / 2)].dmg;
+  const total = ground.reduce((s, r) => s + r.dmg, 0) || 1;
+  for (const r of rows) {
+    const share = (r.dmg / total) * 100;
+    const rel = median > 0 ? (r.dmg / median) * 100 : 0;
+    const flag = r.t === 'flak' ? ' (solo aire: ver banco antiaéreo)' : share > 25 ? ' ⚠ >25% del total' : rel < 2 ? ' ⚠ <2% del mediano' : '';
+    console.log(
+      `${TOWERS[r.t].name.padEnd(18)} 🪙${String(r.cost).padStart(4)} · daño ${String(r.dmg).padStart(7)} · bajas ${String(r.kills).padStart(3)} · ${rel.toFixed(0).padStart(3)}% del mediano · ${share.toFixed(1).padStart(4)}% del total${flag}`,
+    );
+  }
+  console.log(`(mediano de la banda L3 terrestre: ${median})`);
+}
+
+console.log('\n=== F5.1 · Banco de torres ★★R2 · flujo mixto (100 s, wave 18) ===');
+{
+  const combat = TOWER_ORDER.filter((t) => !['bank', 'banner', 'alchemist', 'sentry', 'trap', 'boom'].includes(t));
+  const rows: { label: string; dmg: number; kills: number; cost: number; air: boolean }[] = [];
+  for (const t of combat) {
+    for (const spec of [0, 1]) {
+      if (!TOWERS[t].specs[spec].rank2) continue;
+      const r = benchTower(t, 4, spec, false);
+      rows.push({ label: `${TOWERS[t].specs[spec].name}★★`, ...r, air: t === 'flak' });
+    }
+  }
+  rows.sort((a, b) => b.dmg - a.dmg);
+  const ground = rows.filter((r) => !r.air);
+  const median = ground[Math.floor(ground.length / 2)].dmg;
+  const total = ground.reduce((s, r) => s + r.dmg, 0) || 1;
+  for (const r of rows) {
+    const share = (r.dmg / total) * 100;
+    const rel = median > 0 ? (r.dmg / median) * 100 : 0;
+    // la Escarcha Eterna★★ (slowAura, no dispara) hace 0 a propósito: apoyo puro
+    const support = r.dmg === 0;
+    const flag = r.air ? ' (solo aire: ver banco antiaéreo)' : support ? ' (apoyo: no dispara)' : share > 25 ? ' ⚠ >25% del total' : rel < 2 ? ' ⚠ <2% del mediano' : '';
+    console.log(
+      `${r.label.padEnd(22)} 🪙${String(r.cost).padStart(4)} · daño ${String(r.dmg).padStart(7)} · bajas ${String(r.kills).padStart(3)} · ${rel.toFixed(0).padStart(3)}% del mediano · ${share.toFixed(1).padStart(4)}% del total${flag}`,
+    );
+  }
+  console.log(`(mediano de la banda ★★ terrestre: ${median})`);
+}
+
+// ---- F5.1 · Banco ANTIAÉREO: flujo 100% aéreo (3×bat + 1×skywhale). La Balista
+// debe ser LA respuesta aérea por oro invertido: su trade-off (no toca tierra)
+// se paga aquí. Se compara contra los generalistas y la Metralla ★★. ----
+console.log('\n=== F5.1 · Banco ANTIAÉREO · flujo 100% aéreo (100 s, wave 18) ===');
+{
+  const entries: { label: string; type: TowerTypeId; level: number; spec: number }[] = [
+    { label: 'Arquero L3', type: 'archer', level: 3, spec: -1 },
+    { label: 'Tesla L3', type: 'tesla', level: 3, spec: -1 },
+    { label: 'Francotirador L3', type: 'sniper', level: 3, spec: -1 },
+    { label: 'Balista de Cielo L3', type: 'flak', level: 3, spec: -1 },
+    { label: 'Metralla★★ (cañón)', type: 'cannon', level: 4, spec: 1 },
+    { label: 'Ráfaga de Agujas★★', type: 'flak', level: 4, spec: 0 },
+    { label: 'Arpón del Cénit★★', type: 'flak', level: 4, spec: 1 },
+  ];
+  const rows = entries.map((e) => ({ label: e.label, ...benchTower(e.type, e.level, e.spec, true) }));
+  rows.sort((a, b) => b.dmg / b.cost - a.dmg / a.cost);
+  for (const r of rows) {
+    console.log(
+      `${r.label.padEnd(22)} 🪙${String(r.cost).padStart(4)} · daño ${String(r.dmg).padStart(7)} · bajas ${String(r.kills).padStart(3)} · ${(r.dmg / r.cost).toFixed(0).padStart(4)} daño/oro`,
+    );
+  }
+
+  // ---- tanque aéreo SOLO (un Coloso gordo, sin enjambre): aquí el splash de la
+  // Metralla no ayuda y se ve el rol single-target de la Balista. Se mide el
+  // TIEMPO en derribar un coloso de 12k hp (≈ oleada 30 de endless). ----
+  console.log('\n--- tanque aéreo SOLO (skywhale 12k hp): tiempo en derribarlo ---');
+  function timeToKillWhale(type: TowerTypeId, level: number, spec: number): number {
+    const map = getMap('sendero');
+    const simCtx = makeSimContext(map, makePlacementContext(map));
+    const st = createGame('sendero', 'endless', 'normal', 7300, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st.wave = 30; st.waveState = 'active'; st.pendingWave = []; st.nextId = 33000;
+    st.lives = 1e9; st.maxLives = 1e9;
+    st.enemies.push({
+      id: 1, type: 'skywhale', x: 8.5, y: 2.5, hp: 12000, maxHp: 12000, pathIdx: 0, wpIdx: 1, travelled: 0,
+      slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0, poisonSrc: 0, bountyMult: 1, elite: false,
+      affixes: [], speedMult: 0, armorBonus: 0, regenBonus: 0, dodgeBonus: -1, slowResist: 0, radiusMult: 1,
+      auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0, spellImmune: false, stunTowerId: 0, lastWpIdx: 1,
+      armorShredUntil: 0, invisible: false, detected: false, dmgBy: {},
+    });
+    const [cx, cy] = nearestBuildCell('sendero', 8.5, 2.5);
+    st.towers.push({
+      id: 95001, type, cx, cy, level, spec, owner: 'p1',
+      cooldownLeft: 0, targetMode: 'first', invested: 400, kills: 0, damage: 0, stunnedUntil: 0,
+      charges: 0, growthBonus: 0, goldGen: 0, fusion: -1, focusId: 0, halted: false, expiresTick: 0,
+    });
+    for (let i = 0; i < TICK_RATE * 180 && st.enemies.length > 0; i++) stepGame(st, simCtx, []);
+    return st.enemies.length > 0 ? Infinity : st.tick / TICK_RATE;
+  }
+  for (const e of [
+    { label: 'Metralla★★ (cañón)', type: 'cannon' as TowerTypeId, level: 4, spec: 1 },
+    { label: 'Ráfaga de Agujas★★', type: 'flak' as TowerTypeId, level: 4, spec: 0 },
+    { label: 'Arpón del Cénit★★', type: 'flak' as TowerTypeId, level: 4, spec: 1 },
+    { label: 'Francotirador L3', type: 'sniper' as TowerTypeId, level: 3, spec: -1 },
+  ]) {
+    const secs = timeToKillWhale(e.type, e.level, e.spec);
+    console.log(`${e.label.padEnd(22)} derriba el coloso de 12k en ${secs === Infinity ? '>180' : secs.toFixed(1)} s`);
   }
 }
 
@@ -349,8 +529,8 @@ console.log('\n=== Banco de fusiones · daño/bajas contra un MISMO flujo (100 s
 
 // ---- issue #7 · Bóveda Alquímica: valor ECONÓMICO (su aura de botín). Un mismo
 // asesino (railstorm) mata el flujo; con la Bóveda al lado, las bajas cercanas
-// pagan +55%. Se compara el oro ganado con y sin la Bóveda. La renta por oleada
-// (incomePerWave) es un número fijo, se reporta aparte. ----
+// pagan +60% (F5.1). Se compara el oro ganado con y sin la Bóveda. La renta por
+// oleada (incomePerWave) es un número fijo, se reporta aparte. ----
 function benchVaultGold(withVault: boolean): number {
   const map = getMap('sendero');
   const simCtx = makeSimContext(map, makePlacementContext(map));
@@ -383,7 +563,7 @@ console.log('\n=== Bóveda Alquímica · aura de botín (oro con vs sin) ===');
   const without = benchVaultGold(false);
   const extra = withV - without;
   console.log(
-    `oro sin Bóveda ${without} · con Bóveda ${withV} · +${extra} (${without > 0 ? ((extra / without) * 100).toFixed(0) : '∞'}%) por su aura +55%` +
+    `oro sin Bóveda ${without} · con Bóveda ${withV} · +${extra} (${without > 0 ? ((extra / without) * 100).toFixed(0) : '∞'}%) por su aura +60%` +
       ` · además renta fija ${FUSIONS.alchemyvault.stats.incomePerWave}/oleada (Mina Tesorería=110, Casa de Moneda=55)`,
   );
 }
@@ -426,7 +606,7 @@ console.log('\n=== Mercado de madera: ciclos de ida y vuelta (no debe ser rentab
     slowFactor: 1, slowUntil: 0, poisonDps: 0, poisonUntil: 0, poisonSrc: 0, bountyMult: 1, elite: false,
     affixes: [], speedMult: 0, armorBonus: 0, regenBonus: 0, dodgeBonus: 0, slowResist: 0, radiusMult: 1,
     auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0, spellImmune: false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0,
-    dmgBy: {},
+    invisible: false, detected: false, dmgBy: {},
   });
   const p = st.players[0];
   p.gold = 10000; p.wood = 100;

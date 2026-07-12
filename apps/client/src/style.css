@@ -1730,7 +1730,10 @@ html, body {
 .replay-info { display: flex; flex-direction: column; gap: 2px; font-size: 0.9rem; }
 .replay-info .hint { font-size: 0.76rem; }
 .replay-actions { display: flex; gap: 6px; flex-shrink: 0; }
-#btn-load-replay { margin-top: 10px; }
+/* nota: #btn-load-replay ya NO lleva margin-top propio — vive dentro de
+   .home-side-actions (fila con los otros dos botones) y ese margen extra
+   descuadraba su altura frente a "Continuar partida guardada" y "Guía del
+   juego" (quedaba más bajo y más corto que sus vecinos) */
 
 @media (max-width: 700px) {
   #replay-bar { bottom: 10px; padding: 8px 10px; }

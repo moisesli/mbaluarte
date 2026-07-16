@@ -540,7 +540,10 @@ export interface SaveData {
 // ---------- Eventos (sim -> clientes, efímeros por tick) ----------
 
 export type GameEvent =
-  | { e: 'shot'; x: number; y: number; tx: number; ty: number; kind: 'beam' | 'snipe'; color: string }
+  // `sniperBullet`: true SOLO para el Francotirador sin fusionar (no para fusiones
+  // como el Ojo de Asedio que también disparan `kind: 'snipe'`) — así el cliente
+  // sabe cuándo mostrar la bala visual del sniper y cuándo el láser genérico.
+  | { e: 'shot'; x: number; y: number; tx: number; ty: number; kind: 'beam' | 'snipe'; color: string; sniperBullet?: boolean }
   | { e: 'chain'; pts: [number, number][]; color: string }
   | { e: 'hit'; x: number; y: number; r: number; kind: 'splash' | 'impact' | 'poison' | 'frost' }
   | { e: 'shred'; x: number; y: number; r: number } // proc de shred de armadura (Obús/Metralla II)

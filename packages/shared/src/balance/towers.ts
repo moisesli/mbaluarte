@@ -365,7 +365,7 @@ export const TOWERS: Record<TowerTypeId, TowerDef> = {
           damage: 620,
           range: 9.0,
           cooldown: 2.9,
-          execute: 0, // el execute clásico deja de usarse; se sustituye por executeCurrent
+          execute: 0,
           executeCurrent: 0.75,
         },
       },

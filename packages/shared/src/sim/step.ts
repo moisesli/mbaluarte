@@ -662,7 +662,7 @@ function fireTower(
   if (projectileKind === 'snipe') {
     // Francotirador: impacto instantáneo, ignora esquiva
     for (const t of targets) {
-      events.push({ e: 'shot', x: tx, y: ty, tx: t.x, ty: t.y, kind: 'snipe', color });
+      events.push({ e: 'shot', x: tx, y: ty, tx: t.x, ty: t.y, kind: 'snipe', color, sniperBullet: !fusion && tower.type === 'sniper' });
       let dmg = dmgFor(lvl.damage);
       if (ENEMIES[t.type].flying && airBonus > 1) dmg = Math.round(dmg * airBonus);
       damageEnemy(state, ctx, t, dmg, lvl.pierceArmor ?? false, tower.id, events, execute, executeCurrent, shredChance, attackType);

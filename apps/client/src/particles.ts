@@ -1,9 +1,9 @@
 // Sistema de partículas. Las posiciones están en unidades de celda;
 // el renderer las convierte a píxeles con la transformación de la vista.
-import { getPartSprite } from './sprites.js';
+import { getPartSprite, getProjSprite } from './sprites.js';
 
 export interface Particle {
-  kind: 'dot' | 'ring' | 'text' | 'beam' | 'spark' | 'tex';
+  kind: 'dot' | 'ring' | 'text' | 'beam' | 'spark' | 'tex' | 'proj';
   x: number;
   y: number;
   vx: number;
@@ -139,6 +139,33 @@ export function line(x: number, y: number, x2: number, y2: number, color: string
   );
 }
 
+// bala puramente visual: recorre origen -> destino en `durationMs` usando un sprite
+// de proyectil (atlas proj_<tex>, sin tintar). El daño ya se aplicó al instante en el
+// sim (projectileKind: 'snipe'); esto es solo teatro, como el retroceso de las torres.
+export function bulletTrail(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  tex: string,
+  durationMs = 150,
+): void {
+  const life = durationMs / 1000;
+  addParticle({
+    kind: 'proj',
+    x: x0,
+    y: y0,
+    vx: (x1 - x0) / life,
+    vy: (y1 - y0) / life,
+    life,
+    maxLife: life,
+    color: '',
+    size: 0.7,
+    tex,
+    rot: Math.atan2(y1 - y0, x1 - x0) + Math.PI / 2,
+  });
+}
+
 export function updateParticles(dt: number): void {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
@@ -186,6 +213,21 @@ export function drawParticles(
         g.translate(toX(p.x), toY(p.y));
         if (p.rot) g.rotate(p.rot);
         g.drawImage(tinted(img, p.color), -w / 2, -h / 2, w, h);
+        g.restore();
+        break;
+      }
+      case 'proj': {
+        const img = p.tex ? getProjSprite(p.tex) : null;
+        if (!img) break;
+        // a diferencia de las demás partículas, un proyectil real NO se desvanece
+        // en vuelo — opacidad completa siempre, igual que drawProjectiles().
+        g.globalAlpha = 1;
+        const ph = p.size * scale;
+        const pw = (img.naturalWidth / img.naturalHeight) * ph;
+        g.save();
+        g.translate(toX(p.x), toY(p.y));
+        g.rotate(p.rot ?? 0);
+        g.drawImage(img, -pw / 2, -ph / 2, pw, ph);
         g.restore();
         break;
       }

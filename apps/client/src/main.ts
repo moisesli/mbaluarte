@@ -7,7 +7,7 @@ import { initInput } from './input.js';
 import { initBestiary } from './bestiary.js';
 import { applySpectatorUI, buildTowerBar, hidePanel, initMarket, initScoreboard, initShop, onTick, toast, addChat, refreshPanel, syncSpeedButton, syncTowerBar, toggleSpectatorTowers } from './hud.js';
 import { hideEnd, homeError, initHome, initLobby, renderLobby, showEnd, switchScreen } from './screens.js';
-import { beam, burst, clearParticles, floatText, fx, line, ring } from './particles.js';
+import { beam, bulletTrail, burst, clearParticles, floatText, fx, line, ring } from './particles.js';
 import { sfx, setMuted, setSfxVolume, setMusicVolume, unlockAudio } from './audio.js';
 import { startMusic, setMusicState, pauseMusic, resumeMusic, stopMusic, type MusicState } from './music.js';
 import { initReplayHome, saveReplay, setReplayEventSink, startReplay } from './replay.js';
@@ -15,6 +15,12 @@ import { downloadSave, initLoadSaveHome, requestSaveGame } from './savegame.js';
 import type { ReplayData } from '@td/shared';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+// duración del vuelo VISUAL de la bala del francotirador (puro teatro; el daño en
+// el sim ya se aplicó al instante). CORTO a propósito: como el daño es instantáneo,
+// un vuelo largo hace que el enemigo pierda la vida (o muera y desaparezca) ANTES
+// de que la bala le llegue — a 150ms el ojo ve la bala pero no nota la disonancia.
+const SNIPER_BULLET_MS = 150;
 
 // la repetición de la partida que acaba de terminar (para "🎬 Ver repetición")
 let lastReplay: ReplayData | null = null;
@@ -97,8 +103,17 @@ function processEvents(events: GameEvent[]): void {
   for (const ev of events) {
     switch (ev.e) {
       case 'shot':
-        line(ev.x, ev.y, ev.tx, ev.ty, ev.color);
-        fx(ev.tx, ev.ty, 'spark', ev.color, 0.7, 0.25, { add: true }); // fogonazo en el blanco
+        if (ev.sniperBullet) {
+          // bala visual; el daño ya se aplicó al instante en el sim. El fogonazo de
+          // impacto se retrasa hasta que la bala realmente llega, si no se ve el
+          // impacto antes que la propia bala.
+          const dur = SNIPER_BULLET_MS;
+          bulletTrail(ev.x, ev.y, ev.tx, ev.ty, 'sniper', dur);
+          setTimeout(() => fx(ev.tx, ev.ty, 'spark', ev.color, 0.7, 0.25, { add: true }), dur);
+        } else {
+          line(ev.x, ev.y, ev.tx, ev.ty, ev.color);
+          fx(ev.tx, ev.ty, 'spark', ev.color, 0.7, 0.25, { add: true }); // fogonazo en el blanco
+        }
         towerFired(ev.x, ev.y);
         sfx.snipe(panOf(ev.x), ev.color);
         break;

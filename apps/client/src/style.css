@@ -222,6 +222,9 @@ html, body {
 /* acciones secundarias lado a lado, ancladas al fondo de la tarjeta */
 .home-side-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 14px; }
 .home-side-actions .btn { flex: 1; }
+/* pie legal (términos/privacidad): visible pero sin robar atención */
+.home-legal { margin-top: 14px; text-align: center; font-size: 11px; opacity: 0.55; }
+.home-legal a { color: inherit; }
 .create-hint { margin: 12px 0 2px; line-height: 1.45; }
 /* mientras falte nombre o visibilidad, el hint explica el bloqueo en dorado */
 .create-hint.blocked { color: var(--accent-hi); }

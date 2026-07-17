@@ -1834,3 +1834,46 @@ html, body {
   #btn-ping, #btn-scoreboard, #btn-shop, #btn-guide,
   #btn-minimap, #btn-mute, #btn-settings { display: none; }
 }
+
+/* ---------- dialog.ts: modales propios (reemplazo de confirm/alert/prompt) ----------
+   Discord Activity corre en iframe sandboxeado, donde los diálogos nativos del
+   navegador están bloqueados. z-index por encima de TODO lo demás (cuenta regresiva
+   incluida, z-index 60) porque puede abrirse sobre pausa, ajustes o el bestiario. */
+.dialog-overlay {
+  z-index: 500;
+  background: rgba(4, 6, 12, 0.78);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: dialog-bg-in 0.15s ease-out;
+}
+.dialog-card {
+  width: min(420px, 94vw);
+  text-align: left;
+  animation: dialog-card-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.dialog-msg { font-size: 1rem; line-height: 1.45; white-space: pre-line; }
+.dialog-linkrow { display: flex; gap: 8px; margin-top: 16px; }
+.dialog-link-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(10, 14, 24, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg);
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  outline: none;
+}
+.dialog-link-input:focus { border-color: var(--accent2); }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.dialog-actions .btn { margin-top: 0; }
+@keyframes dialog-bg-in { from { opacity: 0; } }
+@keyframes dialog-card-in {
+  from { opacity: 0; transform: scale(0.94) translateY(6px); }
+}
+@media (max-width: 480px) {
+  .dialog-overlay { padding: 12px; }
+  .dialog-actions { flex-direction: column-reverse; }
+  .dialog-actions .btn { width: 100%; }
+  .dialog-linkrow { flex-direction: column; }
+}

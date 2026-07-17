@@ -25,6 +25,7 @@ import { onTick, applySpectatorUI, buildTowerBar, hidePanel } from './hud.js';
 import { resetRenderer } from './renderer.js';
 import { clearParticles } from './particles.js';
 import { hideEnd, switchScreen } from './screens.js';
+import { tell } from './dialog.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -402,12 +403,12 @@ export function initReplayHome(): void {
     try {
       const data = JSON.parse(await file.text());
       if (!isReplayData(data)) {
-        alert('Ese archivo no es una repetición válida de Fortaleza.');
+        await tell('Ese archivo no es una repetición válida de Fortaleza.');
         return;
       }
       startReplay(data as ReplayData);
     } catch {
-      alert('No se pudo leer el archivo.');
+      await tell('No se pudo leer el archivo.');
     }
   });
 }

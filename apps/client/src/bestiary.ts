@@ -28,6 +28,7 @@ import {
 import type { EnemyDef, EnemyTypeId, TowerDef, TowerLevelDef, TowerTypeId } from '@td/shared';
 import { armorLabel, ARMOR_ORDER, ATTACK_ORDER, attackMatchup, syncHotkeyLabels } from './hud.js';
 import { ENEMY_ICONS, TOWER_ICONS } from './renderer.js';
+import { ask } from './dialog.js';
 import {
   CONTROL_ACTIONS,
   keyLabel,
@@ -658,13 +659,14 @@ export function initBestiary(): void {
       return;
     }
     if (target.closest('[data-reset]')) {
-      if (confirm('¿Restaurar TODOS los atajos a sus valores por defecto?')) {
+      void ask('¿Restaurar TODOS los atajos a sus valores por defecto?').then((confirmed) => {
+        if (!confirmed) return;
         endCapture();
         resetKeys();
         renderShortcuts();
         syncHotkeyLabels();
         setMsg('↩ Atajos restaurados por defecto.');
-      }
+      });
     }
   });
 

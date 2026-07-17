@@ -12,6 +12,7 @@ import { sfx, setMuted, setSfxVolume, setMusicVolume, unlockAudio } from './audi
 import { startMusic, setMusicState, pauseMusic, resumeMusic, stopMusic, type MusicState } from './music.js';
 import { initReplayHome, saveReplay, setReplayEventSink, startReplay } from './replay.js';
 import { downloadSave, initLoadSaveHome, requestSaveGame } from './savegame.js';
+import { ask, showLink } from './dialog.js';
 import type { ReplayData } from '@td/shared';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -795,7 +796,7 @@ function wireHudButtons(): void {
     // El servidor NO roba sesiones vivas: si el enlace se abre con esta pestaña aún
     // conectada, el otro dispositivo entra de espectador. Hay que DECIRLO aquí.
     const showFallback = () =>
-      window.prompt('Copia este enlace. Luego CIERRA el juego aquí y ábrelo en el otro dispositivo:', url);
+      showLink('Copia este enlace. Luego CIERRA el juego aquí y ábrelo en el otro dispositivo:', url);
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(url).then(
         () => toast('📱 Enlace copiado. CIERRA el juego aquí y ábrelo en el otro dispositivo para retomar tu sitio', 'info'),
@@ -810,10 +811,14 @@ function wireHudButtons(): void {
   // la pausa: no-anfitriones en Node, espectadores). Con confirmación para no
   // salir por accidente. Cierra el panel de ajustes si estaba abierto.
   const wireAbandon = (id: string) =>
-    $(id).addEventListener('click', (e) => {
+    $(id).addEventListener('click', async (e) => {
       e.stopPropagation();
       closePanel();
-      if (!confirm('¿Seguro que quieres ABANDONAR la partida? Tus torres se quedan, pero no podrás volver a jugar esta partida.')) return;
+      const confirmed = await ask(
+        '¿Seguro que quieres ABANDONAR la partida? Tus torres se quedan, pero no podrás volver a jugar esta partida.',
+        { okLabel: 'Abandonar', danger: true },
+      );
+      if (!confirmed) return;
       leaveMatch();
     });
   wireAbandon('btn-abandon-pause');

@@ -9,6 +9,7 @@ import {
 } from '@td/shared';
 import { net, wsPathCreate, wsPathJoin } from './net.js';
 import { roomPrevToken, saveName, store } from './store.js';
+import { ask } from './dialog.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -365,13 +366,20 @@ export function initLobby(): void {
   });
 
   // banear pide confirmación (es irreversible para ese token); compartido entre
-  // la lista de jugadores y la zona de espectadores. true si consumió el clic.
+  // la lista de jugadores y la zona de espectadores. true si CONSUMIÓ el clic (esto
+  // es síncrono: solo mira si el clic cayó en un botón de banear, no si el usuario
+  // termina confirmando — el modal es asíncrono y se resuelve aparte).
   const handleBanClick = (e: Event): boolean => {
     const banBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-ban]');
     if (!banBtn || !store.isHost) return false;
     const name = banBtn.dataset.name ?? 'este jugador';
-    if (confirm(`¿Banear a ${name}? No podrá volver a entrar a esta sala (expulsar sí le permite volver como espectador).`))
-      net.send({ type: 'ban_player', playerId: banBtn.dataset.ban! });
+    const playerId = banBtn.dataset.ban!;
+    void ask(
+      `¿Banear a ${name}? No podrá volver a entrar a esta sala (expulsar sí le permite volver como espectador).`,
+      { okLabel: 'Banear', danger: true },
+    ).then((confirmed) => {
+      if (confirmed) net.send({ type: 'ban_player', playerId });
+    });
     return true;
   };
 
@@ -387,8 +395,12 @@ export function initLobby(): void {
     const cedeBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-cede]');
     if (cedeBtn && store.isHost) {
       const name = cedeBtn.title.replace('Ceder anfitrión a ', '');
-      if (confirm(`¿Ceder la sala a ${name}? Ya no podrás iniciar la partida ni cambiar los ajustes.`))
-        net.send({ type: 'transfer_host', playerId: cedeBtn.dataset.cede! });
+      const playerId = cedeBtn.dataset.cede!;
+      void ask(`¿Ceder la sala a ${name}? Ya no podrás iniciar la partida ni cambiar los ajustes.`, { okLabel: 'Ceder' }).then(
+        (confirmed) => {
+          if (confirmed) net.send({ type: 'transfer_host', playerId });
+        },
+      );
       return;
     }
     const spectateBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-spectate]');

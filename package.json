@@ -10,7 +10,7 @@
     "simtest": "tsx tools/simtest.ts",
     "wstest": "tsx tools/wstest.ts",
     "cf:dev": "pnpm --filter @td/client build && pnpm --filter @td/worker dev",
-    "cf:deploy": "pnpm --filter @td/client build && pnpm --filter @td/worker deploy"
+    "cf:deploy": "pnpm --filter @td/client build && pnpm --filter @td/worker run deploy"
   },
   "devDependencies": {
     "@td/shared": "workspace:*",

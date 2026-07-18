@@ -1024,6 +1024,9 @@ html, body {
 }
 
 /* ---------- mercado global de madera ---------- */
+/* Paneles flotantes del HUD (mercado/jugadores/tienda/ajustes): cristal FUERTE
+   —flotan sobre el juego en movimiento y deben leerse sin pelear con él— con
+   hairline y radio 12, el mismo lenguaje que las islas del HUD. */
 #market-panel {
   position: absolute;
   top: 56px; /* debajo de la isla de stats, ahora más compacta (ver #hud-top) */
@@ -1031,18 +1034,19 @@ html, body {
   z-index: 30;
   width: 280px;
   max-width: calc(100vw - 24px);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: var(--hud-glass-strong);
+  border: 1px solid var(--hud-glass-border);
+  border-radius: var(--h-radius-lg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
   padding: 12px 14px;
   pointer-events: auto;
 }
-#market-panel h4 { margin: 0 0 8px; font-size: 0.95rem; }
-#market-panel .mkt-tag { color: var(--fg-dim); font-size: 0.72rem; font-weight: 600; }
-#market-panel .mkt-price { font-size: 0.95rem; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+#market-panel h4 { margin: 0 0 8px; font-size: 0.95rem; font-weight: 600; color: var(--h-fg); }
+#market-panel .mkt-tag { color: var(--h-muted-2); font-size: 0.72rem; font-weight: 500; }
+#market-panel .mkt-price { font-size: 0.95rem; margin-bottom: 8px; color: var(--h-fg); font-variant-numeric: tabular-nums; }
+#market-panel .mkt-price b { color: var(--h-accent-hi); }
 #market-panel .mkt-row { display: flex; gap: 8px; }
 #market-panel .mkt-row .btn { flex: 1; font-size: 0.8rem; padding: 8px 4px; }
 /* mejora del orco leñador (F5.5) */
@@ -1053,10 +1057,10 @@ html, body {
   gap: 8px;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--hud-glass-border);
 }
-#market-panel .mkt-orc-info { font-size: 0.85rem; }
-#market-panel .mkt-orc-info b { color: var(--accent-hi); }
+#market-panel .mkt-orc-info { font-size: 0.85rem; color: var(--h-fg); }
+#market-panel .mkt-orc-info b { color: var(--h-accent-hi); }
 #market-panel .mkt-orc .btn { flex-shrink: 0; font-size: 0.78rem; padding: 7px 10px; }
 @media (max-height: 500px) {
   #market-panel { top: 42px; padding: 8px 10px; }
@@ -1077,52 +1081,53 @@ html, body {
   z-index: 31;
   width: 340px;
   max-width: calc(100vw - 24px);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: var(--hud-glass-strong);
+  border: 1px solid var(--hud-glass-border);
+  border-radius: var(--h-radius-lg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
   padding: 10px 12px;
   pointer-events: auto;
 }
 .sb-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.sb-head h4 { margin: 0; font-size: 0.95rem; }
+.sb-head h4 { margin: 0; font-size: 0.95rem; font-weight: 600; color: var(--h-fg); }
 .sb-head .btn { padding: 2px 9px; }
 #scoreboard-body table { width: 100%; border-collapse: collapse; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
-#scoreboard-body th { color: var(--fg-dim); font-weight: 600; font-size: 0.72rem; text-align: right; padding: 2px 5px; }
+#scoreboard-body th { color: var(--h-muted-2); font-weight: 600; font-size: 0.7rem; text-align: right; padding: 2px 5px; }
 #scoreboard-body th.sb-name { text-align: left; }
-#scoreboard-body td { padding: 3px 5px; text-align: right; white-space: nowrap; }
+#scoreboard-body td { padding: 4px 5px; text-align: right; white-space: nowrap; color: var(--h-fg); }
 #scoreboard-body td.sb-name { text-align: left; max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
-#scoreboard-body tr.sb-me td { background: rgba(255, 213, 79, 0.08); }
+#scoreboard-body tr.sb-me td { background: rgba(242, 177, 0, 0.08); }
 #scoreboard-body tr.offline td { opacity: 0.45; }
 #scoreboard-body .sb-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; box-shadow: 0 0 5px currentColor; vertical-align: middle; }
-#scoreboard-body .sb-dmg { color: var(--accent-hi); }
-#scoreboard-body .sb-kills { color: #f48fb1; }
+#scoreboard-body .sb-dmg { color: var(--h-accent-hi); }
+#scoreboard-body .sb-kills { color: #f9a8d4; }
 #scoreboard-body .btn.sb-give { padding: 1px 8px; font-size: 0.9rem; line-height: 1.4; }
 /* pie de métricas en vivo propias (⚔️ dps · 🪙 oleada · 💔 vidas): heredero del
    antiguo chip ⚔ de la esquina, ahora dentro de la tabla */
 .sb-live {
   margin-top: 7px;
   padding-top: 7px;
-  border-top: 1px solid var(--border);
-  color: var(--fg-dim);
+  border-top: 1px solid var(--hud-glass-border);
+  color: var(--h-muted);
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
 }
-.sb-live .live-bad { color: var(--danger); font-weight: 800; }
+.sb-live .live-bad { color: var(--h-danger); font-weight: 700; }
 
 /* mini-formulario de regalo (🎁): aparece bajo la tabla al elegir un aliado */
-#scoreboard-give:not(:empty) { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
-.sb-give-title { font-size: 0.85rem; margin-bottom: 7px; }
-.sb-give-title b { color: var(--accent-hi); }
+#scoreboard-give:not(:empty) { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hud-glass-border); }
+.sb-give-title { font-size: 0.85rem; margin-bottom: 7px; color: var(--h-fg); }
+.sb-give-title b { color: var(--h-accent-hi); }
 .sb-give-row { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; }
 .sb-give-row .sb-give-lbl { width: 20px; text-align: center; flex-shrink: 0; }
 .sb-give-row input {
-  width: 64px; flex-shrink: 0; padding: 6px; background: var(--bg);
-  border: 1px solid var(--border); border-radius: 8px; color: var(--fg);
-  font-size: 0.85rem; font-variant-numeric: tabular-nums;
+  width: 64px; flex-shrink: 0; padding: 6px; background: rgba(10, 11, 15, 0.7);
+  border: 1px solid var(--h-border); border-radius: var(--h-radius-sm); color: var(--h-fg);
+  font-size: 0.85rem; font-variant-numeric: tabular-nums; outline: none;
 }
+.sb-give-row input:focus { border-color: var(--h-border-hover); }
 .sb-give-row .btn.sb-quick { padding: 5px 7px; font-size: 0.72rem; flex: 1; min-width: 0; }
 .sb-give-actions { display: flex; gap: 6px; margin-top: 8px; }
 .sb-give-actions .btn { flex: 1; font-size: 0.82rem; padding: 8px 4px; }
@@ -1140,12 +1145,12 @@ html, body {
   z-index: 31;
   width: 320px;
   max-width: calc(100vw - 24px);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: var(--hud-glass-strong);
+  border: 1px solid var(--hud-glass-border);
+  border-radius: var(--h-radius-lg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
   padding: 10px 12px;
   pointer-events: auto;
 }
@@ -1156,21 +1161,22 @@ html, body {
   gap: 10px;
   width: 100%;
   text-align: left;
-  padding: 9px 11px;
-  background: rgba(12, 16, 26, 0.55);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  color: var(--fg);
+  padding: 10px 12px;
+  background: var(--h-card-2);
+  border: 1px solid var(--h-border);
+  border-radius: var(--h-radius);
+  color: var(--h-fg);
   cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
-.shop-item:hover { border-color: rgba(41, 182, 246, 0.6); }
-.shop-item.selected { border-color: var(--accent-hi); box-shadow: 0 0 0 1px var(--accent-hi) inset; }
+.shop-item:hover { border-color: var(--h-border-hover); background: rgba(255, 255, 255, 0.05); }
+.shop-item.selected { border-color: var(--h-accent); box-shadow: 0 0 0 1px var(--h-accent) inset; }
 .shop-item.poor { opacity: 0.5; }
 .shop-item .shop-icon { font-size: 1.5rem; flex-shrink: 0; }
 .shop-item .shop-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.shop-item .shop-info b { font-size: 0.92rem; }
-.shop-item .shop-desc { font-size: 0.74rem; color: var(--fg-dim); line-height: 1.25; }
-.shop-item .shop-cost { flex-shrink: 0; color: var(--accent-hi); font-weight: 700; font-variant-numeric: tabular-nums; }
+.shop-item .shop-info b { font-size: 0.92rem; font-weight: 600; }
+.shop-item .shop-desc { font-size: 0.74rem; color: var(--h-muted); line-height: 1.3; }
+.shop-item .shop-cost { flex-shrink: 0; color: var(--h-accent-hi); font-weight: 700; font-variant-numeric: tabular-nums; }
 @media (max-height: 500px) {
   #shop-panel { top: 42px; padding: 8px 10px; }
 }
@@ -1182,16 +1188,16 @@ html, body {
   z-index: 30;
   width: 250px;
   max-width: calc(100vw - 24px);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: var(--hud-glass-strong);
+  border: 1px solid var(--hud-glass-border);
+  border-radius: var(--h-radius-lg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
   padding: 12px 14px;
   pointer-events: auto;
 }
-#settings-panel h4 { margin: 0 0 10px; font-size: 0.95rem; }
+#settings-panel h4 { margin: 0 0 10px; font-size: 0.95rem; font-weight: 600; color: var(--h-fg); }
 .set-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -1199,23 +1205,24 @@ html, body {
   gap: 4px 8px;
   margin-bottom: 10px;
 }
-.set-row > span:first-child { font-size: 0.85rem; grid-column: 1; }
+.set-row > span:first-child { font-size: 0.85rem; grid-column: 1; color: var(--h-fg); }
 .set-row .set-val {
   grid-column: 2;
   font-size: 0.8rem;
-  color: var(--fg-dim);
+  color: var(--h-muted);
   min-width: 34px;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .set-row input[type='range'] {
   grid-column: 1 / 3;
   width: 100%;
   margin: 2px 0 0;
-  accent-color: var(--accent);
+  accent-color: var(--h-accent);
   height: 22px;
   cursor: pointer;
 }
-.set-hint { margin: 4px 0 0; font-size: 0.75rem; }
+.set-hint { margin: 4px 0 0; font-size: 0.75rem; color: var(--h-muted); }
 
 @media (max-width: 560px) {
   #settings-panel { width: 220px; top: 48px; }
@@ -1440,38 +1447,43 @@ html, body {
   backdrop-filter: blur(14px) saturate(150%);
   -webkit-backdrop-filter: blur(14px) saturate(150%);
 }
-#hud-panel h3 { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; }
-#hud-panel .lvl { color: var(--accent-hi); margin-left: auto; white-space: nowrap; font-size: 0.9rem; }
+#hud-panel h3 { display: flex; align-items: center; gap: 8px; font-size: 1.02rem; font-weight: 600; color: var(--h-fg); }
+#hud-panel .lvl { color: var(--h-accent-hi); margin-left: auto; white-space: nowrap; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
 /* botón ✕ del panel: cierre explícito (clave en móvil, donde el panel es una hoja) */
 #panel-close {
   flex-shrink: 0;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: rgba(10, 14, 24, 0.6);
-  color: var(--fg-dim);
-  font-size: 0.95rem;
-  font-weight: 700;
+  border-radius: var(--h-radius-sm);
+  border: 1px solid var(--h-border);
+  background: var(--h-card-2);
+  color: var(--h-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
   cursor: pointer;
   line-height: 1;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
+#panel-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--h-fg); border-color: var(--h-border-hover); }
 #panel-close:active { transform: scale(0.94); }
 /* recordatorio de recetas en las stats del panel */
-#hud-panel .fuse-req { color: var(--fg-dim); font-size: 0.72rem; }
-#hud-panel .pstats { font-size: 0.85rem; color: var(--fg-dim); margin: 8px 0; line-height: 1.55; }
-#hud-panel .pstats .up { color: var(--ok); font-weight: 700; }
+#hud-panel .fuse-req { color: var(--h-muted-2); font-size: 0.72rem; }
+/* stats: etiqueta en muted, VALORES en <b> a blanco pleno — en la superficie de
+   juego más usada, los números mandan y deben leerse de un vistazo */
+#hud-panel .pstats { font-size: 0.85rem; color: var(--h-muted); margin: 8px 0; line-height: 1.55; font-variant-numeric: tabular-nums; }
+#hud-panel .pstats b { color: var(--h-fg); }
+#hud-panel .pstats .up { color: var(--h-ok); font-weight: 700; }
 /* valor EFECTIVO bajo un aura de Estandarte (⚑ dorado, como su anillo) */
-#hud-panel .pstats .aura { color: var(--accent-hi); font-weight: 700; }
+#hud-panel .pstats .aura { color: var(--h-accent-hi); font-weight: 700; }
 /* F6.2 · contador de próximo ataque de la torre (baja en cada tick) */
-#hud-panel .pstats .pcd { color: var(--accent-hi); font-weight: 700; }
+#hud-panel .pstats .pcd { color: var(--h-accent-hi); font-weight: 700; }
 /* F5.1 · línea de tipo de ataque + fuerte/débil vs (bajo el nombre de la torre) */
 #hud-panel .pstats .pmatrix {
   display: block;
-  color: var(--fg);
-  background: rgba(79, 195, 247, 0.1);
-  border: 1px solid rgba(79, 195, 247, 0.25);
-  border-radius: 8px;
+  color: var(--h-fg);
+  background: rgba(96, 165, 250, 0.1);
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: var(--h-radius-sm);
   padding: 3px 7px;
   margin-bottom: 4px;
   font-size: 0.78rem;
@@ -1479,57 +1491,74 @@ html, body {
 }
 #hud-panel .prow { display: flex; gap: 8px; margin-top: 8px; }
 #hud-panel .prow .btn { flex: 1; font-size: 0.85rem; padding: 9px 6px; }
+/* venta: el ghost neutro ya la mantiene secundaria; un toque de rojo tenue en el
+   texto la separa aún más del primario ámbar (mejorar), sin gritar */
+#hud-panel .prow #panel-sell { color: #e5a3a3; }
+#hud-panel .prow #panel-sell:hover { color: var(--h-danger); border-color: rgba(248, 113, 113, 0.4); background: rgba(248, 113, 113, 0.08); }
 .tmodes { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
 .tmode {
   flex: 1;
   font-size: 0.7rem;
   padding: 6px 2px;
   border-radius: 6px;
-  background: rgba(10, 14, 24, 0.7);
-  border: 1px solid var(--border);
-  color: var(--fg-dim);
+  background: var(--h-card-2);
+  border: 1px solid var(--h-border);
+  color: var(--h-muted);
   cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
-.tmode.active { border-color: var(--accent2); color: var(--fg); }
+.tmode:hover { border-color: var(--h-border-hover); color: var(--h-fg); }
+.tmode.active { border-color: var(--h-border-hover); color: var(--h-fg); background: #202023; }
 
-/* elección de especialización (nivel máximo) */
+/* elección de especialización (nivel máximo): momento de "subir de rango", uno
+   de los pocos sitios donde el ámbar se despliega en grande a propósito. */
 .spec-title {
   margin-top: 10px;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--accent-hi);
-  font-weight: 800;
+  color: var(--h-accent-hi);
+  font-weight: 700;
 }
 .spec-choices { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+/* DISPONIBLE: tarjeta con tinte y borde ámbar (invita a pulsarla) */
 .spec-btn {
   position: relative;
   text-align: left;
-  background: linear-gradient(180deg, rgba(255, 179, 0, 0.12), rgba(34, 44, 68, 0.9));
-  border: 1px solid var(--accent);
-  border-radius: 10px;
-  color: var(--fg);
+  background: linear-gradient(180deg, rgba(242, 177, 0, 0.14), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(242, 177, 0, 0.7);
+  border-radius: var(--h-radius);
+  color: var(--h-fg);
   padding: 8px 58px 8px 10px;
   cursor: pointer;
-  transition: transform 0.06s, filter 0.12s;
+  transition: transform 0.06s ease, filter 0.15s ease, border-color 0.15s ease;
 }
-.spec-btn:hover { filter: brightness(1.12); }
+.spec-btn:hover { filter: brightness(1.1); border-color: var(--h-accent); }
 .spec-btn:active { transform: scale(0.98); }
-.spec-btn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
-.spec-btn .spec-name { display: block; font-weight: 800; font-size: 0.9rem; }
-.spec-btn .spec-desc { display: block; font-size: 0.72rem; color: var(--fg-dim); line-height: 1.25; margin-top: 2px; }
+/* BLOQUEADA (sin oro/madera): pierde el ámbar y se apaga a neutro — se ve de un
+   vistazo que aún no se puede elegir */
+.spec-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: none;
+  background: var(--h-card-2);
+  border-color: var(--h-border);
+}
+.spec-btn .spec-name { display: block; font-weight: 700; font-size: 0.9rem; }
+.spec-btn .spec-desc { display: block; font-size: 0.72rem; color: var(--h-muted); line-height: 1.3; margin-top: 2px; }
 .spec-btn .spec-cost {
   position: absolute;
   top: 50%;
   right: 10px;
   transform: translateY(-50%);
-  font-weight: 800;
-  color: var(--accent-hi);
+  font-weight: 700;
+  color: var(--h-accent-hi);
   text-align: right;
   font-size: 0.8rem;
   line-height: 1.25;
+  font-variant-numeric: tabular-nums;
 }
-.spec-title .spec-woodreq { color: var(--fg-dim); font-weight: 600; text-transform: none; letter-spacing: 0; }
+.spec-title .spec-woodreq { color: var(--h-muted); font-weight: 500; text-transform: none; letter-spacing: 0; }
 
 /* botón de ping armado */
 #btn-ping.armed {
@@ -1543,8 +1572,9 @@ html, body {
 /* Lote 4 · control avanzado: botón 🎯 armado (esperando el tap sobre un enemigo),
    línea "Atacando a…" y pista de hotkey [X]/[F] dentro de los botones */
 #hud-panel .btn.armed {
-  background: var(--accent);
-  color: #221800;
+  background: var(--h-accent);
+  color: var(--h-accent-fg);
+  border-color: transparent;
   animation: pulse 0.8s infinite;
 }
 #hud-panel .focus-line {
@@ -1553,10 +1583,10 @@ html, body {
   gap: 6px;
   margin-top: 6px;
   font-size: 0.8rem;
-  color: var(--fg-dim);
+  color: var(--h-muted);
 }
 #hud-panel .focus-line .btn { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 8px; }
-#hud-panel .khint { font-size: 0.68rem; color: var(--fg-dim); font-weight: 600; }
+#hud-panel .khint { font-size: 0.68rem; color: var(--h-muted-2); font-weight: 600; }
 #hud-panel .btn.armed .khint { color: inherit; }
 
 /* botón de minimapa desactivado (el estado ".off" lo pone main.ts en #btn-minimap;
@@ -1672,52 +1702,182 @@ html, body {
   z-index: 40;
 }
 .toast {
-  background: rgba(14, 18, 28, 0.92);
-  border: 1px solid var(--danger);
-  color: var(--fg);
+  background: var(--hud-glass-strong);
+  border: 1px solid rgba(248, 113, 113, 0.7);
+  color: var(--h-fg);
   border-radius: 999px;
   padding: 7px 14px;
   font-size: 0.85rem;
   font-weight: 600;
   text-align: center;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   animation: toast-in 0.2s ease-out, toast-out 0.4s ease-in 1.8s forwards;
 }
-.toast.info { border-color: var(--accent2); }
+.toast.info { border-color: rgba(96, 165, 250, 0.7); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(0.95); } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(-10px); } }
 
 /* ---------- overlays ---------- */
 
+/* Tokens modernos para los overlays GLOBALES (viven FUERA de #screen-game, así
+   que no heredan los --h-* del juego): bestiario, cuenta atrás, reconexión y
+   los modales propios de dialog.ts. Mismos VALORES zinc + ámbar que
+   portada/lobby/HUD — un único idioma visual en todo el juego. Los overlays
+   que SÍ cuelgan de #screen-game (pausa, fin de partida) ya heredan estos
+   tokens de allí, no hace falta repetirlos. */
+#overlay-bestiary, #overlay-countdown, #overlay-reconnect, .dialog-overlay {
+  --h-card: rgba(19, 19, 21, 0.94);
+  --h-card-2: rgba(255, 255, 255, 0.03);
+  --h-border: rgba(255, 255, 255, 0.09);
+  --h-border-hover: rgba(255, 255, 255, 0.18);
+  --h-fg: #fafafa;
+  --h-muted: #a1a1aa;
+  --h-muted-2: #88888f;
+  --h-accent: #f2b100;
+  --h-accent-hi: #ffcd45;
+  --h-accent-fg: #201700;
+  --h-ok: #34d399;
+  --h-danger: #f87171;
+  --h-radius-sm: 8px;
+  --h-radius: 10px;
+  --h-radius-lg: 12px;
+  --h-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(4, 6, 12, 0.82);
+  background: rgba(6, 6, 8, 0.84);
   display: grid;
   place-items: center;
   z-index: 50;
   padding: 16px;
   overflow: hidden;
 }
+/* Tarjeta base de overlay: superficie SÓLIDA zinc (opaca a propósito — flota
+   sobre el juego en movimiento y debe leerse sin competir con él), hairline
+   blanco y radio 12 — el mismo Card de portada/lobby. #screen-game no declara
+   --h-card (solo --h-card-2), de ahí el fallback: pausa y fin de partida caen
+   en él y quedan igual de opacas que el bestiario. */
 .overlay-card {
-  padding: 30px;
+  padding: 28px;
   text-align: center;
   max-width: 92vw;
   position: relative;
+  background: var(--h-card, rgba(19, 19, 21, 0.94));
+  border: 1px solid var(--h-border, rgba(255, 255, 255, 0.09));
+  border-radius: var(--h-radius-lg, 12px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 24px 60px rgba(0, 0, 0, 0.55);
+  color: var(--h-fg, #fafafa);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
+/* subtítulo de la pausa (quién pausó): jerarquía bajo el título */
+#pause-by { color: var(--h-muted, #a1a1aa); font-size: 0.9rem; margin-top: 2px; }
 .overlay-card.wide { width: min(680px, 94vw); max-height: 92vh; overflow-y: auto; }
-.overlay-card h2 { font-size: 1.9rem; margin-bottom: 8px; }
+.overlay-card h2 {
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+  color: var(--h-fg, #fafafa);
+}
 .overlay-card .btn { margin-top: 16px; }
 
+/* Botones dentro de los paneles/overlays de juego: mismo lenguaje que
+   portada/lobby (neutro zinc, primario ámbar) pero SCOPEADO a cada contenedor
+   para no rozar las islas del HUD (#hud-top, de otro dueño). Solo color/borde:
+   el tamaño lo siguen fijando las reglas propias de cada panel (más
+   específicas), que quedan intactas. */
+#hud-panel .btn, #market-panel .btn, #scoreboard-panel .btn, #shop-panel .btn,
+#settings-panel .btn, #overlay-pause .btn, #overlay-end .btn, #replay-bar .btn,
+#overlay-bestiary .btn, #overlay-countdown .btn, .dialog-card .btn {
+  background: #1c1c1f;
+  color: var(--h-fg);
+  border: 1px solid var(--h-border);
+  border-radius: var(--h-radius-sm);
+  box-shadow: none;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.06s ease;
+}
+#hud-panel .btn:hover, #market-panel .btn:hover, #scoreboard-panel .btn:hover,
+#shop-panel .btn:hover, #settings-panel .btn:hover, #overlay-pause .btn:hover,
+#overlay-end .btn:hover, #replay-bar .btn:hover, #overlay-bestiary .btn:hover,
+#overlay-countdown .btn:hover, .dialog-card .btn:hover {
+  background: #232326;
+  border-color: var(--h-border-hover);
+  filter: none;
+}
+#hud-panel .btn.primary, #market-panel .btn.primary, #scoreboard-panel .btn.primary,
+#shop-panel .btn.primary, #settings-panel .btn.primary, #overlay-pause .btn.primary,
+#overlay-end .btn.primary, #replay-bar .btn.primary, .dialog-card .btn.primary {
+  background: linear-gradient(180deg, var(--h-accent-hi), var(--h-accent));
+  color: var(--h-accent-fg);
+  border-color: rgba(0, 0, 0, 0.15);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 20px rgba(242, 177, 0, 0.16);
+}
+#hud-panel .btn.primary:hover, #market-panel .btn.primary:hover,
+#scoreboard-panel .btn.primary:hover, #shop-panel .btn.primary:hover,
+#settings-panel .btn.primary:hover, #overlay-pause .btn.primary:hover,
+#overlay-end .btn.primary:hover, #replay-bar .btn.primary:hover,
+.dialog-card .btn.primary:hover { filter: brightness(1.06); background: linear-gradient(180deg, var(--h-accent-hi), var(--h-accent)); }
+#hud-panel .btn.ghost, #market-panel .btn.ghost, #scoreboard-panel .btn.ghost,
+#shop-panel .btn.ghost, #settings-panel .btn.ghost, #overlay-pause .btn.ghost,
+#overlay-end .btn.ghost, #replay-bar .btn.ghost, #overlay-bestiary .btn.ghost,
+#overlay-countdown .btn.ghost, .dialog-card .btn.ghost {
+  background: transparent;
+  border-color: var(--h-border);
+  color: var(--h-muted);
+}
+#hud-panel .btn.ghost:hover, #market-panel .btn.ghost:hover,
+#scoreboard-panel .btn.ghost:hover, #shop-panel .btn.ghost:hover,
+#settings-panel .btn.ghost:hover, #overlay-pause .btn.ghost:hover,
+#overlay-end .btn.ghost:hover, #replay-bar .btn.ghost:hover,
+#overlay-bestiary .btn.ghost:hover, #overlay-countdown .btn.ghost:hover,
+.dialog-card .btn.ghost:hover { background: var(--h-card-2); color: var(--h-fg); border-color: var(--h-border-hover); }
+/* acción destructiva (abandonar / vender fusión): rojo tenue, NUNCA compite con
+   el primario ámbar */
+#hud-panel .btn.danger, #settings-panel .btn.danger, #overlay-pause .btn.danger,
+.dialog-card .btn.danger {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  color: var(--h-danger);
+}
+#hud-panel .btn.danger:hover, #settings-panel .btn.danger:hover,
+#overlay-pause .btn.danger:hover, .dialog-card .btn.danger:hover {
+  background: rgba(248, 113, 113, 0.2);
+  border-color: rgba(248, 113, 113, 0.7);
+}
+/* pistas muted dentro de los paneles de juego: zinc neutro, no el --fg-dim
+   azulado antiguo */
+#hud-panel .hint, #market-panel .hint, #scoreboard-panel .hint, #shop-panel .hint,
+#settings-panel .hint, #overlay-pause .hint, #overlay-end .hint, #replay-bar .hint {
+  color: var(--h-muted);
+}
+
 /* ---------- cuenta regresiva (inicio / reanudación) ---------- */
-#overlay-countdown { background: rgba(4, 6, 12, 0.55); z-index: 60; }
+#overlay-countdown { background: rgba(6, 6, 8, 0.55); z-index: 60; }
 .countdown-box { text-align: center; }
-#countdown-label { color: var(--accent-hi); font-size: 1.3rem; font-weight: 700; margin-bottom: 10px; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6); }
+#countdown-label {
+  color: var(--h-accent-hi);
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 10px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+}
+/* número grande NEUTRO (el ámbar se reserva a la etiqueta/acento): halo cálido
+   muy tenue + sombra dura para leerse sobre cualquier mapa */
 #countdown-num {
   font-size: clamp(6rem, 26vw, 13rem);
-  font-weight: 900;
+  font-weight: 800;
   line-height: 1;
-  color: var(--fg);
-  text-shadow: 0 0 40px var(--accent2), 0 6px 24px rgba(0, 0, 0, 0.7);
+  letter-spacing: -0.03em;
+  color: var(--h-fg);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 48px rgba(242, 177, 0, 0.28), 0 6px 24px rgba(0, 0, 0, 0.75);
 }
 #countdown-num.pop { animation: countdown-pop 0.9s ease-out; }
 #countdown-cancel { margin-top: 18px; }
@@ -1728,32 +1888,40 @@ html, body {
 }
 
 /* ---------- botón de premovimiento (mejora sin oro suficiente) ---------- */
+/* estado "en espera" (aún no hay oro): azul apagado semántico. Al ARMARSE
+   (.active, mejora encolada) vira a ámbar — el acento marca "listo para gastar". */
 .btn.premove {
-  background: linear-gradient(180deg, rgba(79, 195, 247, 0.22), rgba(79, 195, 247, 0.1));
-  color: var(--accent2);
-  border: 1px solid var(--accent2);
+  background: rgba(96, 165, 250, 0.14);
+  color: #93c5fd;
+  border: 1px solid rgba(96, 165, 250, 0.5);
   box-shadow: none;
 }
 .btn.premove.active {
-  background: rgba(255, 179, 0, 0.16);
-  color: var(--accent-hi);
-  border-color: var(--accent);
+  background: rgba(242, 177, 0, 0.16);
+  color: var(--h-accent-hi);
+  border-color: var(--h-accent);
 }
 
-/* ---------- bestiario ---------- */
+/* ---------- bestiario / guía ---------- */
 .overlay-close {
   position: absolute;
-  top: 10px; right: 12px;
+  top: 12px; right: 14px;
+  width: 32px; height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
-  border: none;
-  color: var(--fg-dim);
-  font-size: 1.4rem;
+  border: 1px solid transparent;
+  border-radius: var(--h-radius-sm);
+  color: var(--h-muted);
+  font-size: 1.15rem;
   line-height: 1;
   cursor: pointer;
-  padding: 4px 6px;
+  padding: 0;
   margin: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
-.overlay-close:hover { color: var(--fg); }
+.overlay-close:hover { color: var(--h-fg); background: var(--h-card-2); border-color: var(--h-border); }
 .overlay-card.bestiary-card {
   width: min(900px, 95vw);
   max-height: 90vh;
@@ -1761,7 +1929,7 @@ html, body {
   text-align: left;
   padding: 24px;
 }
-.bestiary-card > h2 { text-align: left; }
+.bestiary-card > h2 { text-align: left; font-size: 1.4rem; }
 .bestiary-grid {
   display: grid;
   gap: 10px;
@@ -1769,60 +1937,101 @@ html, body {
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
 }
 .enemy-card {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 12px;
+  background: var(--h-card-2);
+  border: 1px solid var(--h-border);
+  border-radius: var(--h-radius-lg);
+  padding: 11px 13px;
+  transition: border-color 0.15s ease;
 }
-.enemy-card.boss { border-color: rgba(239, 83, 80, 0.6); background: rgba(239, 83, 80, 0.06); }
+.enemy-card:hover { border-color: var(--h-border-hover); }
+.enemy-card.boss { border-color: rgba(248, 113, 113, 0.5); background: rgba(248, 113, 113, 0.06); }
 .ecard-head { display: flex; align-items: center; gap: 8px; }
 .ecard-head .eicon { font-size: 1.6rem; line-height: 1; }
-.ecard-head .ename { font-weight: 700; font-size: 1rem; }
+.ecard-head .ename { font-weight: 600; font-size: 0.98rem; color: var(--h-fg); }
 .etraits { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 6px; }
 .etrait {
   font-size: 0.68rem;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border);
-  color: var(--fg-dim);
+  background: var(--h-card-2);
+  border: 1px solid var(--h-border);
+  color: var(--h-muted);
   white-space: nowrap;
 }
-.etrait.boss { background: rgba(239, 83, 80, 0.18); color: #ff8a80; border-color: transparent; }
-.etrait.air { background: rgba(92, 107, 192, 0.22); color: #9fa8da; border-color: transparent; }
-.etrait.immune { background: rgba(66, 165, 245, 0.18); color: #90caf9; border-color: transparent; }
-.edesc { font-size: 0.8rem; line-height: 1.35; margin: 4px 0 8px; color: var(--fg); }
-.estats { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.78rem; color: var(--fg-dim); }
+.etrait.boss { background: rgba(248, 113, 113, 0.16); color: #fca5a5; border-color: transparent; }
+.etrait.air { background: rgba(129, 140, 248, 0.18); color: #a5b4fc; border-color: transparent; }
+.etrait.immune { background: rgba(96, 165, 250, 0.16); color: #93c5fd; border-color: transparent; }
+.edesc { font-size: 0.8rem; line-height: 1.4; margin: 4px 0 8px; color: var(--h-fg); }
+.estats { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.78rem; color: var(--h-muted); font-variant-numeric: tabular-nums; }
 .estats span { white-space: nowrap; }
 /* ---------- guía: pestañas, élites y recetas de fusión ---------- */
-.guide-tabs { display: flex; gap: 8px; margin-top: 12px; }
-.guide-tabs .tab { padding: 8px 6px; font-size: 0.88rem; }
+/* Segmentado moderno: la clase .tab aquí NO estaba estilada (solo en
+   #screen-home), así que las pestañas salían como botones grises del navegador
+   y sin estado activo. Ahora hablan el mismo idioma que las pestañas de la
+   portada — barra contenedora + pill activo zinc (nunca ámbar: el acento se
+   reserva). */
+.guide-tabs {
+  display: flex;
+  gap: 2px;
+  margin-top: 14px;
+  padding: 3px;
+  background: var(--h-card-2);
+  border: 1px solid var(--h-border);
+  border-radius: var(--h-radius-sm);
+}
+.guide-tabs .tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--h-muted);
+  padding: 8px 6px;
+  font-weight: 500;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.guide-tabs .tab:hover { color: var(--h-fg); }
+.guide-tabs .tab.active {
+  background: #232326;
+  color: var(--h-fg);
+  border-color: var(--h-border-hover);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
 .guide-intro { margin-top: 16px; }
-.guide-intro h3 { font-size: 1.02rem; margin-bottom: 4px; }
+.guide-intro h3 { font-size: 1.02rem; margin-bottom: 4px; color: var(--h-fg); }
 .guide-intro .edesc { margin: 4px 0; }
 #guide-elites .bestiary-grid { margin-top: 10px; }
 .fusion-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .fusion-card {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 12px;
+  background: var(--h-card-2);
+  border: 1px solid var(--h-border);
+  border-radius: var(--h-radius-lg);
+  padding: 11px 13px;
+  transition: border-color 0.15s ease;
 }
-.fusion-recipe { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 700; font-size: 0.92rem; }
-.fusion-recipe .fplus { color: var(--fg-dim); font-weight: 800; }
+.fusion-card:hover { border-color: var(--h-border-hover); }
+.fusion-recipe { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; font-size: 0.92rem; color: var(--h-fg); }
+.fusion-recipe .fplus { color: var(--h-muted-2); font-weight: 700; }
 .fusion-recipe .fresult { font-size: 1rem; }
 
 /* ---------- guía: pestaña Atajos (teclas editables) ---------- */
 .key-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
-.shortcut-msg { font-size: 0.82rem; color: var(--fg-dim); min-height: 1.1em; }
+.shortcut-msg { font-size: 0.82rem; color: var(--h-muted); min-height: 1.1em; }
 .key-group { margin-top: 16px; }
 .key-group-title {
-  font-weight: 700;
-  font-size: 0.9rem;
-  color: var(--accent-hi);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--h-muted-2);
   padding-bottom: 6px;
   margin-bottom: 6px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--h-border);
 }
 .key-row {
   display: flex;
@@ -1830,86 +2039,90 @@ html, body {
   justify-content: space-between;
   gap: 10px;
   padding: 6px 4px;
-  border-bottom: 1px solid rgba(44, 56, 84, 0.5);
+  border-bottom: 1px solid var(--h-border);
 }
 .key-row:last-child { border-bottom: none; }
-.key-name { font-size: 0.86rem; color: var(--fg); }
-.key-row.info .key-name { color: var(--fg-dim); min-width: 42%; }
-.key-static { font-size: 0.78rem; color: var(--fg-dim); text-align: right; }
+.key-name { font-size: 0.86rem; color: var(--h-fg); }
+.key-row.info .key-name { color: var(--h-muted); min-width: 42%; }
+.key-static { font-size: 0.78rem; color: var(--h-muted); text-align: right; }
+/* tecla como "keycap": mono, hairline y un borde inferior más grueso que da el
+   relieve físico de una tecla, sin salirse de la paleta */
 .key-btn {
   min-width: 2.6rem;
   padding: 5px 10px;
   font-size: 0.82rem;
-  font-weight: 800;
-  font-family: inherit;
-  color: var(--fg);
-  background: var(--bg3);
-  border: 1px solid var(--border);
+  font-weight: 700;
+  font-family: var(--h-mono);
+  color: var(--h-fg);
+  background: #202023;
+  border: 1px solid var(--h-border);
   border-bottom-width: 3px;
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
   cursor: pointer;
   white-space: nowrap;
-  transition: transform 0.05s ease, border-color 0.1s ease;
+  transition: transform 0.05s ease, border-color 0.12s ease, background 0.12s ease;
 }
-.key-btn:hover { border-color: var(--accent2); }
+.key-btn:hover { border-color: var(--h-border-hover); background: #26262a; }
 .key-btn:active { transform: translateY(1px); border-bottom-width: 1px; }
 .key-btn.capturing {
-  color: var(--accent-hi);
-  border-color: var(--accent);
-  background: rgba(255, 179, 0, 0.14);
+  color: var(--h-accent-hi);
+  border-color: var(--h-accent);
+  background: rgba(242, 177, 0, 0.14);
   min-width: 9.5rem;
 }
 /* ---------- guía: pestaña de TORRES ---------- */
 .tower-card .ticon-wrap { display: inline-flex; align-items: center; justify-content: center; width: 1.8rem; height: 1.8rem; }
 .tower-card .ticon-wrap .tsprite2 { display: none; width: 1.8rem; height: 1.8rem; object-fit: contain; }
 .tower-card .ticon-wrap .eicon { font-size: 1.6rem; line-height: 1; }
-.tcosts { font-size: 0.76rem; color: var(--fg-dim); margin: 2px 0 6px; }
-.tcosts .tdim, .tfuse.tdim, .edesc.tdim { color: var(--fg-dim); opacity: 0.75; }
+.tcosts { font-size: 0.76rem; color: var(--h-muted); margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
+.tcosts .tdim, .tfuse.tdim, .edesc.tdim { color: var(--h-muted-2); opacity: 0.85; }
 .tspec-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 6px; }
 .tspec {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 8px;
+  background: var(--h-card-2);
+  border: 1px solid var(--h-border);
+  border-radius: var(--h-radius-sm);
+  padding: 7px 9px;
 }
-.tspec-head { font-size: 0.82rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.tspec-head { font-size: 0.82rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--h-fg); }
 .tspec .edesc { margin: 3px 0; font-size: 0.76rem; }
-.tspec-cost { font-size: 0.72rem; font-weight: 700; color: var(--accent-hi); white-space: nowrap; }
-.tspec-r2 { font-size: 0.74rem; color: var(--fg-dim); border-top: 1px dashed var(--border); padding-top: 4px; margin-top: 2px; }
-.tfuse { font-size: 0.76rem; line-height: 1.4; margin-top: 6px; color: var(--fg); }
+.tspec-cost { font-size: 0.72rem; font-weight: 700; color: var(--h-accent-hi); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tspec-r2 { font-size: 0.74rem; color: var(--h-muted); border-top: 1px dashed var(--h-border); padding-top: 4px; margin-top: 2px; }
+.tfuse { font-size: 0.76rem; line-height: 1.4; margin-top: 6px; color: var(--h-fg); }
 
 /* ---------- F5.1 · matriz ataque × armadura (guía + fichas) ---------- */
-/* ficha de enemigo: tipo de ARMADURA con su identidad como subtítulo */
+/* La matriz codifica DATOS de juego reales (fuerte/débil), así que conserva sus
+   colores semánticos (verde/rojo/azul) — pero afinados a tonos modernos y con
+   los contenedores en hairline zinc. */
 .earmor { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 6px 0 2px; }
 .earmor-badge {
   font-size: 0.74rem;
-  font-weight: 700;
+  font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;
   white-space: nowrap;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border);
-  color: var(--fg);
+  background: var(--h-card-2);
+  border: 1px solid var(--h-border);
+  color: var(--h-fg);
 }
-.earmor-badge.armor-ligera { background: rgba(174, 213, 129, 0.16); border-color: transparent; color: #c5e1a5; }
-.earmor-badge.armor-media { background: rgba(255, 255, 255, 0.08); border-color: transparent; color: var(--fg); }
-.earmor-badge.armor-blindada { background: rgba(120, 144, 156, 0.24); border-color: transparent; color: #cfd8dc; }
-.earmor-badge.armor-colosal { background: rgba(239, 83, 80, 0.18); border-color: transparent; color: #ff8a80; }
-.earmor-id { font-size: 0.72rem; color: var(--fg-dim); line-height: 1.3; }
+.earmor-badge.armor-ligera { background: rgba(163, 230, 53, 0.16); border-color: transparent; color: #bef264; }
+.earmor-badge.armor-media { background: rgba(255, 255, 255, 0.08); border-color: transparent; color: var(--h-fg); }
+.earmor-badge.armor-blindada { background: rgba(148, 163, 184, 0.24); border-color: transparent; color: #cbd5e1; }
+.earmor-badge.armor-colosal { background: rgba(248, 113, 113, 0.18); border-color: transparent; color: #fca5a5; }
+.earmor-id { font-size: 0.72rem; color: var(--h-muted); line-height: 1.3; }
 
 /* ficha de torre: tipo de ATAQUE + fuerte/débil vs */
 .tmatch { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 2px 0 4px; }
-.etrait.atk { background: rgba(79, 195, 247, 0.18); color: #90caf9; border-color: transparent; font-weight: 700; }
-.tmatch-vs { font-size: 0.74rem; color: var(--fg-dim); line-height: 1.3; }
+.etrait.atk { background: rgba(96, 165, 250, 0.18); color: #93c5fd; border-color: transparent; font-weight: 600; }
+.tmatch-vs { font-size: 0.74rem; color: var(--h-muted); line-height: 1.3; }
 
 /* aviso destacado (Balista de Cielo: solo aire) */
 .twarn {
   font-size: 0.76rem;
   line-height: 1.4;
-  color: #ffd7a6;
-  background: rgba(255, 152, 0, 0.12);
-  border: 1px solid rgba(255, 152, 0, 0.4);
-  border-radius: 8px;
+  color: var(--h-accent-hi);
+  background: rgba(242, 177, 0, 0.1);
+  border: 1px solid rgba(242, 177, 0, 0.35);
+  border-radius: var(--h-radius-sm);
   padding: 5px 8px;
   margin: 2px 0 6px;
 }
@@ -1918,19 +2131,19 @@ html, body {
 .matrix-wrap { overflow-x: auto; margin: 10px 0 4px; -webkit-overflow-scrolling: touch; }
 .matrix-table { border-collapse: collapse; width: 100%; min-width: 360px; font-size: 0.8rem; }
 .matrix-table th, .matrix-table td {
-  border: 1px solid var(--border);
+  border: 1px solid var(--h-border);
   padding: 6px 8px;
   text-align: center;
   white-space: nowrap;
 }
-.matrix-table thead th { background: rgba(255, 255, 255, 0.04); color: var(--fg-dim); font-weight: 700; }
-.matrix-table th.m-corner { text-align: left; font-size: 0.68rem; color: var(--fg-dim); font-weight: 600; }
-.matrix-table th.m-row { text-align: left; background: rgba(255, 255, 255, 0.04); color: var(--fg); }
+.matrix-table thead th { background: var(--h-card-2); color: var(--h-muted); font-weight: 600; }
+.matrix-table th.m-corner { text-align: left; font-size: 0.68rem; color: var(--h-muted-2); font-weight: 600; }
+.matrix-table th.m-row { text-align: left; background: var(--h-card-2); color: var(--h-fg); }
 .matrix-table .m-ico { margin-right: 4px; }
-.matrix-table td { font-weight: 800; color: var(--fg); }
-.m-strong { background: rgba(102, 187, 106, 0.22); color: #b9f6ca !important; }
-.m-weak { background: rgba(239, 83, 80, 0.2); color: #ff8a80 !important; }
-.m-neutral { color: var(--fg-dim) !important; }
+.matrix-table td { font-weight: 700; color: var(--h-fg); }
+.m-strong { background: rgba(52, 211, 153, 0.2); color: #6ee7b7 !important; }
+.m-weak { background: rgba(248, 113, 113, 0.2); color: #fca5a5 !important; }
+.m-neutral { color: var(--h-muted) !important; }
 .matrix-legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
 .matrix-legend .m-chip {
   font-size: 0.72rem;
@@ -1950,6 +2163,27 @@ html, body {
   .matrix-table th, .matrix-table td { padding: 5px 6px; }
 }
 
+/* ---------- fin de partida: titular dramático ---------- */
+/* No hay clase victoria/derrota en el DOM (screens.ts solo cambia el texto),
+   PERO la victoria siembra confeti: `:has(.confetti)` es el gancho para el
+   trato celebratorio. Sin :has (webviews viejos) todo cae en el trato SOBRIO
+   por defecto — degradación segura hacia la derrota. */
+#end-title {
+  font-size: clamp(1.9rem, 6vw, 2.6rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  margin-bottom: 6px;
+  color: var(--h-fg);
+}
+#end-sub { color: var(--h-muted); font-size: 0.92rem; line-height: 1.45; }
+/* victoria: el titular se enciende en ámbar con un halo cálido — el ÚNICO sitio
+   del fin de partida donde el acento se despliega en grande, a propósito */
+#overlay-end:has(.confetti) #end-title {
+  color: var(--h-accent-hi);
+  text-shadow: 0 0 32px rgba(242, 177, 0, 0.45);
+}
+
 /* podio de fin de partida */
 #end-podium {
   display: flex;
@@ -1959,35 +2193,38 @@ html, body {
   margin: 18px 0 6px;
 }
 .podium-col { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 110px; }
-.podium-col .pname { font-weight: 700; font-size: 0.85rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.podium-col .pdmg { font-size: 0.7rem; color: var(--fg-dim); }
+.podium-col .pname { font-weight: 600; font-size: 0.85rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--h-fg); }
+.podium-col .pdmg { font-size: 0.7rem; color: var(--h-muted); font-variant-numeric: tabular-nums; }
 .podium-col .pblock {
   width: 100%;
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--h-radius-sm) var(--h-radius-sm) 0 0;
   display: grid;
   place-items: center;
   font-size: 1.5rem;
-  background: linear-gradient(180deg, var(--bg3), var(--bg2));
-  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--h-border);
   border-bottom: none;
 }
-.podium-col.p1 .pblock { height: 76px; background: linear-gradient(180deg, rgba(255, 213, 79, 0.35), rgba(255, 179, 0, 0.12)); border-color: rgba(255, 213, 79, 0.5); }
+/* 1er puesto en ámbar (marcador, coherente con récords de la portada) */
+.podium-col.p1 .pblock { height: 76px; background: linear-gradient(180deg, rgba(255, 205, 69, 0.3), rgba(242, 177, 0, 0.08)); border-color: rgba(255, 205, 69, 0.45); }
 .podium-col.p2 .pblock { height: 56px; }
 .podium-col.p3 .pblock { height: 42px; }
 
 #end-stats { margin-top: 14px; }
-#end-stats table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+#end-stats table { width: 100%; border-collapse: collapse; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
 #end-stats th {
-  color: var(--fg-dim);
-  font-size: 0.72rem;
+  color: var(--h-muted-2);
+  font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
+  font-weight: 600;
   padding: 6px;
   text-align: right;
 }
 #end-stats th:first-child, #end-stats td:first-child { text-align: left; }
-#end-stats td { padding: 7px 6px; text-align: right; border-top: 1px solid var(--border); }
-#end-stats .mvp { color: var(--accent-hi); font-weight: 800; }
+#end-stats td { padding: 8px 6px; text-align: right; border-top: 1px solid var(--h-border); color: var(--h-fg); }
+#end-stats .mvp { color: var(--h-accent-hi); font-weight: 700; }
+#end-stats .mvp td { background: rgba(242, 177, 0, 0.06); }
 
 /* confeti de victoria */
 .confetti {
@@ -2205,16 +2442,17 @@ html, body {
   bottom: 16px;
   transform: translateX(-50%);
   width: min(680px, calc(100% - 24px));
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  background: var(--hud-glass-strong);
+  border: 1px solid var(--hud-glass-border);
+  border-radius: var(--h-radius-lg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
   padding: 10px 12px;
   z-index: 30;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
 }
 #replay-warn {
-  color: var(--accent-hi);
+  color: var(--h-accent-hi);
   font-size: 0.82rem;
   margin-bottom: 8px;
   text-align: center;
@@ -2226,13 +2464,13 @@ html, body {
 }
 .replay-controls #replay-seek {
   flex: 1;
-  accent-color: var(--accent);
+  accent-color: var(--h-accent);
   cursor: pointer;
 }
 .replay-time {
   font-variant-numeric: tabular-nums;
   font-size: 0.82rem;
-  color: var(--fg-dim);
+  color: var(--h-muted);
   white-space: nowrap;
 }
 
@@ -2373,20 +2611,21 @@ html, body {
   text-align: left;
   animation: dialog-card-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
-.dialog-msg { font-size: 1rem; line-height: 1.45; white-space: pre-line; }
+.dialog-msg { font-size: 1rem; line-height: 1.45; white-space: pre-line; color: var(--h-fg); }
 .dialog-linkrow { display: flex; gap: 8px; margin-top: 16px; }
 .dialog-link-input {
   flex: 1;
   min-width: 0;
-  background: rgba(10, 14, 24, 0.7);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--fg);
+  background: var(--h-card-2);
+  border: 1px solid var(--h-border);
+  border-radius: var(--h-radius-sm);
+  color: var(--h-fg);
   padding: 10px 12px;
   font-size: 0.85rem;
   outline: none;
+  transition: border-color 0.15s ease;
 }
-.dialog-link-input:focus { border-color: var(--accent2); }
+.dialog-link-input:focus { border-color: var(--h-border-hover); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .dialog-actions .btn { margin-top: 0; }
 @keyframes dialog-bg-in { from { opacity: 0; } }

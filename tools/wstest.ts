@@ -292,6 +292,11 @@ async function main(): Promise<void> {
   //   reclamar ocupada rechazada, liberación al salir, y el reclamo viaja al GameInit.
   await doorScenario();
 
+  // 9.8 · F9d · PUERTAS CERRABLES (ajuste del anfitrión): no-anfitrión rechazado,
+  //   cerrar una reclamada rechazado, cerrar todas normalizado (≥1 abierta),
+  //   reclamar una cerrada rechazado, y los cierres viajan al GameInit.
+  await closedDoorsScenario();
+
   // 10. Repetición (replay): partida corta que TERMINA (sin defensa) e incluye la
   //     reconexión de Beto. Al recibir game_over con `replay`, reconstruimos con el
   //     motor puro y comparamos el estado final con el de la partida real (leído de
@@ -414,10 +419,11 @@ async function spectatorZoneScenario(): Promise<void> {
 }
 
 // Escenario dedicado: F9b · SELECCIÓN DE PUERTA POR COLOR. En un mapa multi-ruta
-// (ochopuertas, 8 rutas): (1) reclamar una puerta libre viaja en lobby_state; (2)
-// reclamar una puerta ocupada por otro se rechaza; (3) al salir el jugador su
-// puerta se LIBERA (otro la reclama después); (4) el reclamo viaja al GameInit
-// (para el estandarte del color del dueño en el spawn durante la partida).
+// (granconcilio, 9 rutas — antes «ochopuertas», renombrado en F9c): (1) reclamar
+// una puerta libre viaja en lobby_state; (2) reclamar una puerta ocupada por otro
+// se rechaza; (3) al salir el jugador su puerta se LIBERA (otro la reclama
+// después); (4) el reclamo viaja al GameInit (para el estandarte del color del
+// dueño en el spawn durante la partida).
 async function doorScenario(): Promise<void> {
   console.log('\n— F9b · Selección de puerta por color —');
   const ana = new TestClient('DoorAna', wsUrl({ create: true }));
@@ -426,7 +432,7 @@ async function doorScenario(): Promise<void> {
     type: 'create_room',
     name: 'Ana',
     token: 'tok-door-ana',
-    settings: { mapId: 'ochopuertas', mode: 'classic', difficulty: 'normal' },
+    settings: { mapId: 'granconcilio', mode: 'classic', difficulty: 'normal' },
   });
   const aj = await ana.waitFor('room_joined');
   await ana.waitFor('lobby_state');
@@ -496,6 +502,123 @@ async function doorScenario(): Promise<void> {
 
   ana.ws.close();
   cyd.ws.close();
+  await sleep(200);
+}
+
+// Escenario dedicado: F9d · PUERTAS CERRABLES. En granconcilio (9 rutas), el
+// ANFITRIÓN cierra puertas vía set_settings.closedDoors y el server valida todo:
+// (a) un no-anfitrión no puede tocar los ajustes; (b) cerrar una puerta RECLAMADA
+// se rechaza con mensaje claro; (c) cerrar TODAS se normaliza dejando ≥1 abierta;
+// (d) reclamar una puerta CERRADA se rechaza; (e) los cierres viajan al GameInit.
+async function closedDoorsScenario(): Promise<void> {
+  console.log('\n— F9d · Puertas cerrables (ajuste del anfitrión) —');
+  const base = { mode: 'classic' as const, difficulty: 'normal' as const };
+  const ana = new TestClient('CloseAna', wsUrl({ create: true }));
+  await ana.open();
+  ana.send({
+    type: 'create_room',
+    name: 'Ana',
+    token: 'tok-close-ana',
+    settings: { mapId: 'granconcilio', ...base },
+  });
+  const aj = await ana.waitFor('room_joined');
+  await ana.waitFor('lobby_state');
+
+  const ben = new TestClient('CloseBen', wsUrl({ code: aj.code }));
+  await ben.open();
+  ben.send({ type: 'join_room', name: 'Ben', token: 'tok-close-ben', code: aj.code });
+  await ben.waitFor('room_joined');
+  await ana.waitFor('lobby_state');
+
+  // (a) un NO-anfitrión intenta cerrar puertas → error y ajustes intactos
+  ben.send({ type: 'set_settings', settings: { mapId: 'granconcilio', ...base, closedDoors: [1, 2] } });
+  const noHost = await ben.waitFor('error');
+  assert(/anfitri/i.test(noHost.msg), `set_settings de un no-anfitrión se rechaza ("${noHost.msg}")`);
+
+  // (b) Ben reclama la puerta 3; Ana intenta CERRARLA → rechazo con mensaje claro
+  ben.send({ type: 'claim_door', door: 3 });
+  for (;;) {
+    const lb = await ana.waitFor('lobby_state');
+    if (lb.players.some((p) => p.door === 3)) break;
+  }
+  ana.send({ type: 'set_settings', settings: { mapId: 'granconcilio', ...base, closedDoors: [3] } });
+  const claimedErr = await ana.waitFor('error');
+  assert(/reclam/i.test(claimedErr.msg), `cerrar una puerta RECLAMADA se rechaza ("${claimedErr.msg}")`);
+
+  // (c) Ana cierra la 0 y la 1 (libres) → viajan normalizadas en lobby_state
+  ana.send({ type: 'set_settings', settings: { mapId: 'granconcilio', ...base, closedDoors: [1, 0, 1] } });
+  for (;;) {
+    const lb = await ana.waitFor('lobby_state');
+    if (JSON.stringify(lb.settings.closedDoors) === '[0,1]') {
+      assert(true, 'cerrar puertas libres viaja en lobby_state.settings.closedDoors (normalizado [0,1])');
+      break;
+    }
+  }
+
+  // (d) Ben intenta RECLAMAR la puerta cerrada 1 → rechazo
+  ben.send({ type: 'claim_door', door: 1 });
+  const closedErr = await ben.waitFor('error');
+  assert(/cerrada/i.test(closedErr.msg), `reclamar una puerta CERRADA se rechaza ("${closedErr.msg}")`);
+
+  // (e) cerrar TODAS → el server normaliza dejando al menos 1 abierta. La 3 sigue
+  // reclamada por Ben, así que primero la libera (si no, sería el rechazo (b)).
+  ben.send({ type: 'claim_door', door: null });
+  for (;;) {
+    const lb = await ana.waitFor('lobby_state');
+    if (!lb.players.some((p) => p.door === 3)) break;
+  }
+  ana.send({ type: 'set_settings', settings: { mapId: 'granconcilio', ...base, closedDoors: [0, 1, 2, 3, 4, 5, 6, 7, 8] } });
+  for (;;) {
+    const lb = await ana.waitFor('lobby_state');
+    if (lb.settings.closedDoors && lb.settings.closedDoors.length === 8) {
+      assert(!lb.settings.closedDoors.includes(8), `cerrar las 9 deja la puerta 9 abierta (${JSON.stringify(lb.settings.closedDoors)})`);
+      break;
+    }
+  }
+
+  // cambiar de MAPA limpia los cierres (como limpia los reclamos)
+  ana.send({ type: 'set_settings', settings: { mapId: 'concilio', ...base, closedDoors: [0, 1, 2, 3, 4, 5, 6, 7] } });
+  for (;;) {
+    const lb = await ana.waitFor('lobby_state');
+    if (lb.settings.mapId === 'concilio') {
+      assert(lb.settings.closedDoors === undefined, 'cambiar de mapa LIMPIA los cierres arrastrados');
+      break;
+    }
+  }
+
+  // (f) volver a granconcilio, cerrar [0,1] y EMPEZAR: los cierres viajan al GameInit
+  ana.send({ type: 'set_settings', settings: { mapId: 'granconcilio', ...base } });
+  await ana.waitFor('lobby_state');
+  ana.send({ type: 'set_settings', settings: { mapId: 'granconcilio', ...base, closedDoors: [0, 1] } });
+  await ana.waitFor('lobby_state');
+  ben.send({ type: 'set_ready', ready: true });
+  for (;;) {
+    const lb = await ana.waitFor('lobby_state');
+    if (lb.players.find((p) => !p.isHost)?.ready === true) break;
+  }
+  ana.send({ type: 'start_game' });
+  await ana.waitFor('countdown');
+  const init = await ana.waitFor('game_started', 6000);
+  assert(JSON.stringify(init.init.closedDoors) === '[0,1]', `los cierres viajan al GameInit (${JSON.stringify(init.init.closedDoors)})`);
+  // …y la sim los respeta: tras llamar la oleada, ningún enemigo NACE en las
+  // puertas cerradas (se valida la PRIMERA posición vista de cada enemigo contra
+  // los spawns de las rutas 0/1 — con puertas abiertas siempre nacen ahí también).
+  ana.send({ type: 'cmd', cmd: { kind: 'call_wave' } });
+  await sleep(6000);
+  const map = getMap('granconcilio');
+  const closedSpawns = [0, 1].map((p) => map.paths[p][0]);
+  const firstSeen = new Map<number, [number, number]>();
+  for (const t of ana.ticks) {
+    for (const e of t.snap.enemies) if (!firstSeen.has(e[0])) firstSeen.set(e[0], [e[2], e[3]]);
+  }
+  const nearClosed = [...firstSeen.values()].filter(([x, y]) =>
+    closedSpawns.some(([sc, sr]) => Math.hypot(x - (sc + 0.5), y - (sr + 0.5)) < 2),
+  );
+  assert(firstSeen.size > 0, `la oleada spawnea con puertas cerradas (${firstSeen.size} enemigos vistos)`);
+  assert(nearClosed.length === 0, `ningún enemigo nace en las puertas CERRADAS 0/1 (${nearClosed.length} vistos ahí)`);
+
+  ana.ws.close();
+  ben.ws.close();
   await sleep(200);
 }
 

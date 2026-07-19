@@ -315,6 +315,11 @@ export interface EnemyState {
   // ATTACK_TYPE_ORDER). Al llegar a ADAPT_HITS de un tipo, ese tipo pega ×(1−ADAPT_RESIST)
   // para siempre. Solo se alimenta si el enemigo lleva el afijo (resto: ceros).
   adaptHits: [number, number, number, number];
+  // --- F9d · AL FINAL ---
+  // Compensación de densidad que este enemigo lleva encima (1 = ninguna). Las
+  // CRÍAS de spawnOnDeath/explosivo la HEREDAN (su hp fresco se comprime igual)
+  // para que una oleada densificada no infle el presupuesto vía nacimientos.
+  denseTune: number;
 }
 
 export interface TowerState {
@@ -443,6 +448,12 @@ export interface SpawnEntry {
   // Afinado a mano del calendario clásico: multiplica el hp base de ESTA entrada
   // (antes de élite/campeón). Ausente = 1.
   hpTune?: number;
+  // --- F9d · densidad por ruta abierta ---
+  // Compensación de la oleada DENSIFICADA (< 1): con R rutas abiertas la cantidad
+  // escala ×doorDensityMult(R) y cada unidad comprime su hp Y su botín ×denseTune
+  // (= cantidadBase/cantidadFinal) para que el presupuesto y el oro TOTALES por
+  // oleada queden ≈iguales. Jefes y campeones NUNCA lo llevan. Ausente = 1.
+  denseTune?: number;
 }
 
 export interface WaveComp {
@@ -499,6 +510,18 @@ export interface GameState {
   // Reparaciones de la fortaleza compradas por el EQUIPO (solo infinito/horda):
   // en infinito +1 vida; en horda +1 de aforo de saturación. Escala ×REPAIR_COST_STEP.
   repairsBought: number;
+  // --- F9d · PUERTAS CERRADAS (ajuste de sala, fijo toda la partida) ---
+  // Índices de ruta CERRADOS (canónicos: válidos, únicos, ordenados; SIEMPRE queda
+  // ≥1 abierta — los normaliza createGame con sanitizeClosedDoors). La sim reparte
+  // los spawns SOLO entre las rutas abiertas. Vive en el estado (no en el ctx)
+  // porque los replays/guardados deben reproducirlo (viaja en ReplayData/SaveData).
+  closedDoors: number[];
+  // F9d · compensación del BONO de fin de oleada: al densificar, los botines que
+  // el suelo «mínimo 1» infla (round(botín·denseTune) = 0 → paga 1) acumulan aquí
+  // su exceso (1 − botín·real) durante los spawns de la oleada ACTIVA; al terminar
+  // la oleada se descuenta del bono de equipo (÷ jugadores) y se resetea. En mapas
+  // sin densificar es SIEMPRE 0 (ni un tick cambia). Determinista: pura aritmética.
+  waveBonusComp: number;
 }
 
 // ---------- Comandos (cliente -> sim) ----------
@@ -576,6 +599,10 @@ export interface ReplayData {
   // MODO TURBO ⚡ (issue #14): la reconstrucción DEBE conocerlo (los multiplicadores
   // y los interludios cambian el estado). Opcional al final → replays previos = false.
   turbo?: boolean;
+  // F9d · PUERTAS CERRADAS de la sala: cambian el reparto de spawns y la densidad,
+  // así que la reconstrucción DEBE conocerlas. Opcional al final → replays previos
+  // (y salas sin cierres) = todas abiertas.
+  closedDoors?: number[];
 }
 
 // ---------- Guardar / cargar partida (issue #12) ----------
@@ -614,6 +641,9 @@ export interface SaveData {
   // MODO TURBO ⚡ (issue #14): igual que en ReplayData, el fast-forward al reanudar
   // tiene que reconstruir con el mismo turbo. Opcional al final → guardados previos = false.
   turbo?: boolean;
+  // F9d · PUERTAS CERRADAS: igual que en ReplayData — reanudar debe reconstruir
+  // con el mismo reparto de spawns. Opcional al final → guardados previos = [].
+  closedDoors?: number[];
 }
 
 // ---------- Eventos (sim -> clientes, efímeros por tick) ----------

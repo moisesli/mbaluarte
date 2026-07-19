@@ -2,6 +2,7 @@ import type { Difficulty, GameMode, GameState, PlayerState } from '../types.js';
 import {
   CLASSIC_WAVES,
   FIRST_INTERLUDE_SEC,
+  sanitizeClosedDoors,
   START_GOLD,
   START_LIVES,
   START_WOOD,
@@ -9,6 +10,7 @@ import {
   TURBO_INTERLUDE_MULT,
   WOOD_PRICE_BASE,
 } from '../constants.js';
+import { MAPS } from '../balance/maps.js';
 
 export interface NewPlayerInput {
   id: string;
@@ -40,8 +42,14 @@ export function createGame(
   // false en horda, aunque el llamador pase true. Así toda la sim puede leer
   // state.turbo sin repetir la excepción de la horda.
   turbo = false,
+  // F9d · PUERTAS CERRADAS (ajuste de sala): opcional, igual que turbo. Se
+  // NORMALIZA aquí como defensa en profundidad (sanitizeSettings ya lo hizo en el
+  // RoomDO, pero replays/guardados/herramientas entran directo por createGame):
+  // solo mapas multi-puerta, índices válidos/únicos/ordenados, ≥1 ruta abierta.
+  closedDoors: number[] = [],
 ): GameState {
   const turboActive = turbo && mode !== 'horde';
+  const pathCount = MAPS.find((m) => m.id === mapId)?.paths.length ?? 1;
   return {
     tick: 0,
     mapId,
@@ -82,5 +90,8 @@ export function createGame(
     // y reparaciones de la fortaleza (coste ×1.5 compuesto; solo infinito/horda)
     boomsBought: 0,
     repairsBought: 0,
+    // F9d · puertas cerradas (canónicas) + compensación del bono por densidad
+    closedDoors: sanitizeClosedDoors(pathCount, closedDoors),
+    waveBonusComp: 0,
   };
 }

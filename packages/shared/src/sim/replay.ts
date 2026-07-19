@@ -35,6 +35,9 @@ export function replayInit(data: ReplayData): ReplaySim {
     // MODO TURBO ⚡: la reconstrucción debe conocerlo (cambia botín/bono/madera/
     // interludios); ausente en replays previos → false por defecto.
     data.turbo ?? false,
+    // F9d · PUERTAS CERRADAS: cambian el reparto de spawns y la densidad — la
+    // reconstrucción debe usar las mismas; ausente en replays previos → ninguna.
+    data.closedDoors ?? [],
   );
   const ctx = makeSimContext(map, makePlacementContext(map));
   return { state, ctx };

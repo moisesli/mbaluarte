@@ -758,6 +758,25 @@ html, body {
 .door-chip.mine .door-owner { color: #34d399; }
 .door-chip.taken { opacity: 0.7; }
 .door-chip[disabled] { cursor: not-allowed; }
+/* F9d · puerta CERRADA por el anfitrión: chip apagado y tachado (por ahí no
+   saldrán monstruos). El botón 🚫/🔓 solo lo ve el anfitrión, pegado al chip. */
+.door-list li { display: inline-flex; align-items: center; gap: 3px; }
+.door-chip.closed { opacity: 0.55; background: transparent; border-style: dashed; }
+.door-chip.closed .door-num { text-decoration: line-through; }
+.door-chip.closed .door-owner { color: #ef5350; }
+.door-toggle {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--h-border);
+  background: var(--h-card-2);
+  color: var(--h-fg);
+  font-size: 0.72rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.door-toggle:hover { border-color: #ef5350; }
 .kick-btn, .cede-btn, .spectate-btn, .ban-btn {
   flex-shrink: 0;
   width: 24px; height: 24px;

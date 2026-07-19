@@ -1307,11 +1307,39 @@ function drawMapAnimations(gs: GameStore, now: number): void {
   for (const p of gs.init.players) {
     if (p.door !== undefined && p.door >= 0 && p.door < map.paths.length) doorColor[p.door] = p.color;
   }
+  // F9d · puertas CERRADAS por el anfitrión (viajan en el GameInit): el portal se
+  // pinta APAGADO — disco gris sin espiral ni pulso, con una reja de barrotes.
+  const closedDoors = new Set(gs.init.closedDoors ?? []);
   for (let pi = 0; pi < map.paths.length; pi++) {
     const path = map.paths[pi];
     const [sc, sr] = path[0];
     const x = toX(sc + 0.5);
     const y = toY(sr + 0.5);
+    if (closedDoors.has(pi)) {
+      // portal apagado: piedra gris + reja (estático a propósito: nada vivo ahí)
+      g.fillStyle = 'rgba(52,52,62,0.92)';
+      g.beginPath();
+      g.arc(x, y, s * 0.4, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = 'rgba(20,20,26,0.9)';
+      g.lineWidth = Math.max(1, s * 0.05);
+      g.stroke();
+      // barrotes verticales + travesaño (legible incluso en zoom lejano)
+      g.strokeStyle = '#8a8f9c';
+      g.lineWidth = Math.max(1.5, s * 0.07);
+      g.lineCap = 'round';
+      for (const dx of [-0.22, 0, 0.22]) {
+        g.beginPath();
+        g.moveTo(x + s * dx, y - s * 0.3);
+        g.lineTo(x + s * dx, y + s * 0.3);
+        g.stroke();
+      }
+      g.beginPath();
+      g.moveTo(x - s * 0.32, y);
+      g.lineTo(x + s * 0.32, y);
+      g.stroke();
+      continue;
+    }
     const own = doorColor[pi];
     g.save();
     g.translate(x, y);

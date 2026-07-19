@@ -15,7 +15,7 @@ import { ENEMIES } from '../balance/enemies.js';
 import { TOWERS, towerTargetsAir } from '../balance/towers.js';
 import { AFFIXES } from '../balance/affixes.js';
 import { attackTypeOf, fusionOf, statsOf, towerFires } from '../balance/fusions.js';
-import { generateWave, waveBountyMult, waveHpMult } from '../balance/waves.js';
+import { generateWave, openPathIndices, waveBountyMult, waveHpMult } from '../balance/waves.js';
 import {
   ADAPT_HITS,
   ADAPT_RESIST,
@@ -144,6 +144,7 @@ function spawnEnemy(
     dmgBy: {},
     champion: false,
     adaptHits: [0, 0, 0, 0],
+    denseTune: 1, // F9d · compensación de densidad (la fija stepWaves si aplica)
   };
   state.enemies.push(enemy);
   return enemy;
@@ -276,9 +277,12 @@ function killEnemy(
   // Orden de multiplicadores (un solo redondeo al final):
   //   base × bountyMult (oleada/élite/bendición) × aura Alquimista × Piedra Filosofal.
   const poisonMult = viaPoison && tower ? (statsOf(tower).poisonBountyMult ?? 1) : 1;
-  const bounty = Math.round(def.bounty * enemy.bountyMult * alch.mult * poisonMult);
+  // F9d · BOTÍN MÍNIMO 1: la compensación de densidad (bountyMult ×denseTune)
+  // puede dejar el producto < 0.5 en morralla (larvas) y el round pagaría 0.
+  // Sin densidad el producto nunca baja de 1 → el max() es un no-op exacto.
+  const bounty = Math.max(1, Math.round(def.bounty * enemy.bountyMult * alch.mult * poisonMult));
   // parte del botín que puso el aura del Alquimista (vs el mismo botín sin ella)
-  const alchExtra = alch.tower ? Math.max(0, bounty - Math.round(def.bounty * enemy.bountyMult * poisonMult)) : 0;
+  const alchExtra = alch.tower ? Math.max(0, bounty - Math.max(1, Math.round(def.bounty * enemy.bountyMult * poisonMult))) : 0;
   let killerName = '';
   if (tower) {
     tower.kills += 1;
@@ -342,6 +346,18 @@ function killEnemy(
       });
       // los hijos heredan el escalado de bounty del padre
       child.bountyMult = enemy.bountyMult;
+      // F9d · y su compensación de densidad: una oleada densificada pare ×mult
+      // más crías, así que cada cría comprime su hp fresco igual que el padre
+      // (si no, los nacimientos inflarían el presupuesto). Su botín redondeado
+      // también entra a la compensación del bono (mismo criterio que stepWaves).
+      // Con denseTune=1 (todo mapa de 1-3 rutas) este bloque no ejecuta nada.
+      if (enemy.denseTune !== 1) {
+        child.denseTune = enemy.denseTune;
+        child.hp = Math.max(1, Math.round(child.hp * enemy.denseTune));
+        child.maxHp = child.hp;
+        const pay = ENEMIES[child.type].bounty * child.bountyMult;
+        state.waveBonusComp += Math.max(1, Math.round(pay)) - Math.round(pay / child.denseTune) * child.denseTune;
+      }
     }
   }
 }
@@ -1204,7 +1220,17 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
     if (state.pendingWave === null) {
       // F9a (v19) · el modo decide la fuente: clásico = calendario fijo de 36;
       // infinito/horda = generador por presupuesto + rotación de campeones.
-      const gen = generateWave(state, state.wave + 1, connectedCount(state), ctx.map.paths.length, state.mode);
+      // F9d · PUERTAS CERRADAS: los spawns se reparten SOLO entre las rutas
+      // abiertas y la densidad escala con su número (con todas abiertas y ≤3
+      // rutas el resultado es byte-idéntico al de siempre).
+      const gen = generateWave(
+        state,
+        state.wave + 1,
+        connectedCount(state),
+        ctx.map.paths.length,
+        state.mode,
+        openPathIndices(ctx.map.paths.length, state.closedDoors),
+      );
       state.pendingWave = gen.entries;
       state.pendingBoss = gen.hasBoss;
       state.pendingBossType = gen.bossType;
@@ -1262,6 +1288,15 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
         enemy.hp = Math.round(enemy.hp * entry.hpTune);
         enemy.maxHp = enemy.hp;
       }
+      // F9d · compensación de densidad (solo oleadas densificadas; nunca jefes ni
+      // campeones — buildEntries no la pone ahí): hp y botín POR UNIDAD ÷ mult,
+      // ANTES de élite/campeón para que sus multiplicadores compongan encima.
+      if (entry.denseTune !== undefined && entry.denseTune !== 1) {
+        enemy.denseTune = entry.denseTune;
+        enemy.hp = Math.max(1, Math.round(enemy.hp * entry.denseTune));
+        enemy.maxHp = enemy.hp;
+        enemy.bountyMult *= entry.denseTune;
+      }
       if (entry.elite) makeElite(enemy, entry.affixes ?? []);
       // F9a (v19) · CAMPEÓN 👑: mini-jefe de pelotón (nunca élite a la vez — el
       // generador no mezcla ambos; defensa en profundidad: elite ya aplicado no rompe)
@@ -1278,6 +1313,18 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
       if (entry.invisible && !ENEMIES[entry.type].boss) enemy.invisible = true;
       // F9a (v19) · afijo de JEFE telegrafiado (solo entra en entradas de jefe)
       if (entry.bossAffix && ENEMIES[entry.type].boss) applyBossAffix(enemy, entry.bossAffix);
+      // F9d · compensación del BONO por el REDONDEO del botín densificado: el pago
+      // por baja es entero (round + suelo 1), así que la morralla barata paga «1»
+      // igual con ⅓ del botín que con el botín entero — ×3 unidades = oro inflado.
+      // Cada unidad densificada acumula su diferencia EXACTA contra lo que su
+      // porción de oleada base habría pagado: max(1, round(pago)) − round(pago
+      // base)·denseTune. La suma (puede ser ±) se descuenta del bono de fin de
+      // oleada → el ORO TOTAL por oleada queda ≈igual. Solo corre en unidades
+      // densificadas: en el resto de partidas es un no-op absoluto.
+      if (enemy.denseTune !== 1) {
+        const pay = ENEMIES[entry.type].bounty * enemy.bountyMult;
+        state.waveBonusComp += Math.max(1, Math.round(pay)) - Math.round(pay / enemy.denseTune) * enemy.denseTune;
+      }
       state.spawnCooldown = state.spawnQueue.length > 0 ? state.spawnQueue[0].delay : 0;
     }
   }
@@ -1289,11 +1336,20 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
     state.spawnQueue.length === 0 && (state.mode === 'horde' || state.enemies.length === 0);
   if (waveCleared) {
     // el bono se multiplica en las oleadas bendecidas (riesgo/recompensa) y, en el
-    // MODO TURBO ⚡, por TURBO_WAVE_BONUS_MULT (economía comprimida)
-    const bonus = Math.round(
-      (WAVE_BONUS_BASE + state.wave * WAVE_BONUS_PER_WAVE) *
-        state.blessedBonusMult *
-        (state.turbo ? TURBO_WAVE_BONUS_MULT : 1),
+    // MODO TURBO ⚡, por TURBO_WAVE_BONUS_MULT (economía comprimida).
+    // F9d · y se le DESCUENTA (÷ jugadores) el desvío de redondeo acumulado por
+    // los botines densificados (waveBonusComp, puede ser ± — si el redondeo pagó
+    // de menos, el bono lo devuelve; 0 en el resto de partidas → mismo bono de
+    // siempre, ni un tick cambia).
+    const comp = state.waveBonusComp !== 0 ? Math.round(state.waveBonusComp / state.players.length) : 0;
+    state.waveBonusComp = 0;
+    const bonus = Math.max(
+      0,
+      Math.round(
+        (WAVE_BONUS_BASE + state.wave * WAVE_BONUS_PER_WAVE) *
+          state.blessedBonusMult *
+          (state.turbo ? TURBO_WAVE_BONUS_MULT : 1),
+      ) - comp,
     );
     state.blessedBonusMult = 1;
     for (const p of state.players) {

@@ -428,6 +428,7 @@ console.log('\n=== F5.1 · Banco ANTIAÉREO · flujo 100% aéreo (100 s, wave 18
       affixes: [], speedMult: 0, armorBonus: 0, regenBonus: 0, dodgeBonus: -1, slowResist: 0, radiusMult: 1,
       auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0, spellImmune: false, stunTowerId: 0, lastWpIdx: 1,
       armorShredUntil: 0, invisible: false, detected: false, dmgBy: {},
+      champion: false, adaptHits: [0, 0, 0, 0], denseTune: 1,
     });
     const [cx, cy] = nearestBuildCell('sendero', 8.5, 2.5);
     st.towers.push({
@@ -607,6 +608,7 @@ console.log('\n=== Mercado de madera: ciclos de ida y vuelta (no debe ser rentab
     affixes: [], speedMult: 0, armorBonus: 0, regenBonus: 0, dodgeBonus: 0, slowResist: 0, radiusMult: 1,
     auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0, spellImmune: false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0,
     invisible: false, detected: false, dmgBy: {},
+      champion: false, adaptHits: [0, 0, 0, 0], denseTune: 1,
   });
   const p = st.players[0];
   p.gold = 10000; p.wood = 100;

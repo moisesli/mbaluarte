@@ -13,6 +13,7 @@ import {
   BALANCE_VERSION,
   GAME_SPEEDS,
   MAX_PLAYERS,
+  MULTI_DOOR_MIN,
   PLAYER_COLORS,
   TICK_MS,
   TOWER_ORDER,
@@ -99,10 +100,9 @@ type JoinResult =
 
 const CHAT_MAX = 200;
 const MAX_SPECTATORS = 8;
-// F9b · nº mínimo de rutas para habilitar la selección de puerta por color (los
-// mapas «tipo Green TD» con un carril por jugador). Debe coincidir con el umbral
-// del cliente (screens.ts).
-const MULTI_DOOR_MIN = 4;
+// F9b/F9d · el nº mínimo de rutas para tener «puertas» (reclamo y cierre) ahora
+// vive en @td/shared (MULTI_DOOR_MIN): lo comparten sanitizeSettings, este DO y
+// el lobby del cliente — una sola fuente de verdad.
 // segundos de cuenta regresiva antes de iniciar o reanudar la partida
 const COUNTDOWN_SEC = 3;
 // código de cierre de socket cuando el anfitrión expulsa a un jugador (el cliente
@@ -176,7 +176,7 @@ export class RoomDO {
   private speed = 1;
   // ---- grabación de la repetición (replay) de la partida en curso ----
   private replaySeed = 0;
-  private replayInit: { mapId: string; mode: RoomSettings['mode']; difficulty: RoomSettings['difficulty']; turbo: boolean; players: { id: string; name: string; color: string }[] } | null = null;
+  private replayInit: { mapId: string; mode: RoomSettings['mode']; difficulty: RoomSettings['difficulty']; turbo: boolean; closedDoors: number[]; players: { id: string; name: string; color: string }[] } | null = null;
   private replayLog: ReplayEntry[] = [];
   // issue #12 · partida CARGADA de un guardado, esperando en el lobby de carga.
   // Mientras no-null y sin `game`, la sala está en modo «reanudar guardado».
@@ -263,8 +263,9 @@ export class RoomDO {
       this.code = (url.searchParams.get('code') ?? '').toUpperCase();
       this.savedGame = clean;
       // conservar el turbo del guardado para que el lobby de carga muestre el ⚡ y la
-      // reanudación arranque en modo turbo (sanitizeSettings lo ignora en horda igual)
-      this.settings = sanitizeSettings({ mapId: clean.mapId, mode: clean.mode, difficulty: clean.difficulty, turbo: clean.turbo });
+      // reanudación arranque en modo turbo (sanitizeSettings lo ignora en horda igual).
+      // F9d · ídem con las puertas cerradas (una revancha en la misma sala las hereda).
+      this.settings = sanitizeSettings({ mapId: clean.mapId, mode: clean.mode, difficulty: clean.difficulty, turbo: clean.turbo, closedDoors: clean.closedDoors });
       return new Response('ok');
     }
 
@@ -718,6 +719,10 @@ export class RoomDO {
       mode: this.game!.mode,
       difficulty: this.game!.difficulty,
       turbo: this.game!.turbo, // MODO TURBO ⚡: el cliente pinta el distintivo ⚡ en el HUD
+      // F9d · puertas CERRADAS de la partida (de la sim, la fuente normalizada):
+      // el renderer pinta esos portales APAGADOS. También sale bien en partidas
+      // CARGADAS (la sim reconstruida lleva las del guardado).
+      ...(this.game!.closedDoors.length > 0 ? { closedDoors: this.game!.closedDoors } : {}),
       players: this.game!.players.map((p) => {
         const door = doorById.get(p.id);
         return { id: p.id, name: p.name, color: p.color, ...(door !== undefined ? { door } : {}) };
@@ -740,6 +745,8 @@ export class RoomDO {
       // MODO TURBO ⚡: ya normalizado por sanitizeSettings (false en horda); createGame
       // lo vuelve a normalizar como defensa
       this.settings.turbo,
+      // F9d · puertas cerradas de la sala (createGame las renormaliza como defensa)
+      this.settings.closedDoors ?? [],
     );
     this.simCtx = makeSimContext(map, makePlacementContext(map));
     this.pendingCmds = [];
@@ -766,6 +773,7 @@ export class RoomDO {
       mode: this.settings.mode,
       difficulty: this.settings.difficulty,
       turbo: this.game.turbo, // el valor YA normalizado por createGame (false en horda)
+      closedDoors: this.game.closedDoors, // F9d · el valor YA normalizado (canónico)
       players: this.game.players.map((p) => ({ id: p.id, name: p.name, color: p.color })),
     };
     this.replayLog = [];
@@ -800,6 +808,8 @@ export class RoomDO {
       victory: false,
       wave: save.wave,
       turbo: save.turbo ?? false, // MODO TURBO ⚡: reconstruir con el mismo turbo del guardado
+      // F9d · puertas cerradas del guardado: mismo reparto de spawns al reanudar
+      ...(save.closedDoors ? { closedDoors: save.closedDoors } : {}),
     };
     const sim = makeReplaySim(rdata);
     const target = save.tick;
@@ -817,7 +827,9 @@ export class RoomDO {
 
     // 2) continuar la GRABACIÓN: el log del archivo + lo nuevo = historial completo
     this.replaySeed = save.seed;
-    this.replayInit = { mapId: save.mapId, mode: save.mode, difficulty: save.difficulty, turbo: save.turbo ?? false, players: save.players };
+    // F9d · closedDoors: las CANÓNICAS de la sim reconstruida (createGame ya las
+    // renormalizó), no las crudas del archivo — futuros saves/replays heredan bien.
+    this.replayInit = { mapId: save.mapId, mode: save.mode, difficulty: save.difficulty, turbo: save.turbo ?? false, closedDoors: sim.state.closedDoors, players: save.players };
     this.replayLog = save.log.slice();
 
     // 3) identidades: cada jugador conectado toma su slot reclamado o, si es
@@ -933,6 +945,9 @@ export class RoomDO {
       salt,
       slots,
       turbo: init.turbo, // MODO TURBO ⚡: el guardado conserva el turbo para reanudar igual
+      // F9d · puertas cerradas: el guardado las conserva para reanudar con el
+      // mismo reparto de spawns (solo si hay — formato estable para saves viejos)
+      ...(init.closedDoors.length > 0 ? { closedDoors: init.closedDoors } : {}),
     };
     this.sendTo(ws, { type: 'save_info', save });
   }
@@ -987,6 +1002,8 @@ export class RoomDO {
       victory: g.over?.victory ?? false,
       wave: g.wave,
       turbo: g.turbo, // MODO TURBO ⚡: el replay tiene que reconstruir con el mismo turbo
+      // F9d · puertas cerradas: mismo motivo (cambian spawns/densidad). Solo si hay.
+      ...(g.closedDoors.length > 0 ? { closedDoors: g.closedDoors } : {}),
     };
   }
 
@@ -1271,16 +1288,46 @@ export class RoomDO {
 
     switch (msg.type) {
       case 'set_settings': {
-        if (!player.isHost || this.game) break;
+        if (this.game) break;
+        // F9d · rechazo EXPLÍCITO al no-anfitrión (antes se ignoraba en silencio):
+        // con las puertas cerrables los ajustes ganaron poder de sala y un cliente
+        // manipulado debe recibir un no claro, no un lobby que «no reacciona».
+        if (!player.isHost) {
+          this.send(player, { type: 'error', msg: 'Solo el anfitrión puede cambiar los ajustes' });
+          break;
+        }
         const wasPublic = this.settings.public === true;
         const prevMapId = this.settings.mapId;
-        this.settings = sanitizeSettings(msg.settings);
+        const next = sanitizeSettings(msg.settings);
+        // F9d · NO se puede cerrar una puerta RECLAMADA por un jugador: rechazo
+        // con mensaje claro y SIN aplicar nada (el anfitrión debe pedirle que la
+        // libere, o el jugador soltarla — la coordinación es social, no forzada).
+        // Solo aplica si el mapa no cambió (al cambiar, reclamos y cierres se
+        // limpian juntos más abajo, así que no hay conflicto posible).
+        if (next.mapId === prevMapId && next.closedDoors && next.closedDoors.length > 0) {
+          const conflict = this.players.find(
+            (p) => p.door !== undefined && next.closedDoors!.includes(p.door),
+          );
+          if (conflict) {
+            this.send(player, {
+              type: 'error',
+              msg: `No puedes cerrar la puerta ${conflict.door! + 1}: la reclamó ${conflict.name}`,
+            });
+            break;
+          }
+        }
+        this.settings = next;
         // pública → privada: salir de la lista al instante (no esperar la poda)
         if (wasPublic && !this.settings.public) this.unlistPublic();
         // F9b · cambiar de MAPA invalida los reclamos de puerta (los índices de
         // ruta ya no corresponden): liberarlos todos para no arrastrar reclamos
         // fantasma de un mapa a otro con distinto nº de rutas.
-        if (prevMapId !== this.settings.mapId) for (const p of this.players) p.door = undefined;
+        // F9d · y lo MISMO con los cierres: el cliente manda los ajustes enteros
+        // (con los cierres del mapa anterior a cuestas) — se descartan aquí.
+        if (prevMapId !== this.settings.mapId) {
+          for (const p of this.players) p.door = undefined;
+          delete this.settings.closedDoors;
+        }
         // cambiar la configuración invalida los «Listo»: que el equipo reconfirme
         for (const p of this.players) if (!p.isHost) p.ready = false;
         this.broadcastLobby();
@@ -1430,6 +1477,12 @@ export class RoomDO {
         }
         if (!Number.isInteger(door) || door < 0 || door >= map.paths.length) break; // índice inválido
         if (player.door === door) break; // ya es la suya: nada que hacer
+        // F9d · no reclamar una puerta CERRADA por el anfitrión (por ahí no
+        // saldrán monstruos: reclamarla sería un estandarte sobre una reja)
+        if (this.settings.closedDoors?.includes(door)) {
+          this.send(player, { type: 'error', msg: 'Esa puerta está cerrada' });
+          break;
+        }
         // no reclamar una puerta que otro jugador ya tiene
         if (this.players.some((p) => p !== player && p.door === door)) {
           this.send(player, { type: 'error', msg: 'Esa puerta ya está reclamada' });

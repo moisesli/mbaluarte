@@ -1,5 +1,6 @@
 import {
   MAPS,
+  MULTI_DOOR_MIN,
   type EndStats,
   type HighscoreEntry,
   type MapDef,
@@ -17,9 +18,10 @@ const DIFF_LABELS: Record<string, string> = { easy: 'Fácil', normal: 'Normal', 
 const DIFF_EMOJI: Record<string, string> = { easy: '😊', normal: '🙂', hard: '😈' };
 const MODE_LABELS: Record<string, string> = { classic: 'Clásico', endless: 'Infinito', horde: 'Horda 🌀' };
 
-// F9b · nº mínimo de rutas para habilitar la selección de puerta por color.
-// Debe coincidir con MULTI_DOOR_MIN del RoomDO (apps/worker/src/room-do.ts).
-const DOOR_MIN_ROUTES = 4;
+// F9b/F9d · nº mínimo de rutas para habilitar puertas (reclamo y cierre): ahora
+// viene de @td/shared (MULTI_DOOR_MIN) — la misma constante que usan
+// sanitizeSettings y el RoomDO, imposible de desincronizar.
+const DOOR_MIN_ROUTES = MULTI_DOOR_MIN;
 
 // colores de las miniaturas por tema (versión compacta de las paletas del renderer)
 const MINI_THEME: Record<MapDef['theme'], { bg: string; path: string; blocked: string }> = {
@@ -48,7 +50,9 @@ export function homeError(msg: string): void {
 // `doorColors`: F9b · color reclamado por puerta (índice de ruta), para teñir la
 // entrada correspondiente con el color del jugador que la reclamó. undefined en
 // las entradas sin reclamo (se pintan del morado por defecto).
-function drawMiniMap(canvas: HTMLCanvasElement, map: MapDef, doorColors?: (string | undefined)[]): void {
+// `closedDoors`: F9d · puertas CERRADAS por el anfitrión — su entrada se pinta
+// gris apagado con una cruz (por ahí no saldrán monstruos).
+function drawMiniMap(canvas: HTMLCanvasElement, map: MapDef, doorColors?: (string | undefined)[], closedDoors?: number[]): void {
   const W = 180;
   const H = Math.round((W * map.gridH) / map.gridW);
   canvas.width = W;
@@ -83,10 +87,30 @@ function drawMiniMap(canvas: HTMLCanvasElement, map: MapDef, doorColors?: (strin
     c.fill();
   }
   // entradas (morado, o el color de quien reclamó la puerta) y salidas (dorado)
+  const closedSet = new Set(closedDoors ?? []);
   for (let i = 0; i < map.paths.length; i++) {
     const path = map.paths[i];
     const [sc, sr] = path[0];
     const [ec, er] = path[path.length - 1];
+    // F9d · puerta CERRADA: gris apagado + cruz (nada de morado «vivo»)
+    if (closedSet.has(i)) {
+      c.fillStyle = '#4a4a55';
+      c.beginPath();
+      c.arc((sc + 0.5) * s, (sr + 0.5) * s, s * 0.5, 0, Math.PI * 2);
+      c.fill();
+      c.strokeStyle = 'rgba(230,230,235,0.85)';
+      c.lineWidth = Math.max(1, s * 0.14);
+      const r = s * 0.3;
+      c.beginPath();
+      c.moveTo((sc + 0.5) * s - r, (sr + 0.5) * s - r);
+      c.lineTo((sc + 0.5) * s + r, (sr + 0.5) * s + r);
+      c.moveTo((sc + 0.5) * s + r, (sr + 0.5) * s - r);
+      c.lineTo((sc + 0.5) * s - r, (sr + 0.5) * s + r);
+      c.stroke();
+      c.fillStyle = '#ffd54f';
+      c.fillRect((ec + 0.1) * s, (er + 0.1) * s, s * 0.8, s * 0.8);
+      continue;
+    }
     const claimed = doorColors?.[i];
     c.fillStyle = claimed ?? '#9575cd';
     c.beginPath();
@@ -111,6 +135,8 @@ function renderMapCards(
   // F9b · colores de puerta reclamada (por índice de ruta), solo para el mapa
   // SELECCIONADO: tiñe sus entradas con el color de cada jugador que reclamó.
   doorColors?: (string | undefined)[],
+  // F9d · puertas CERRADAS del mapa seleccionado (gris + cruz en la miniatura)
+  closedDoors?: number[],
 ): void {
   const box = $(containerId);
   box.innerHTML = '';
@@ -120,7 +146,7 @@ function renderMapCards(
     card.className = `map-card${map.id === selectedId ? ' selected' : ''}`;
     card.disabled = disabled;
     const mini = document.createElement('canvas');
-    drawMiniMap(mini, map, map.id === selectedId ? doorColors : undefined);
+    drawMiniMap(mini, map, map.id === selectedId ? doorColors : undefined, map.id === selectedId ? closedDoors : undefined);
     card.appendChild(mini);
     const name = document.createElement('span');
     name.className = 'map-name';
@@ -159,6 +185,9 @@ function doorColorsFor(map: MapDef | undefined): (string | undefined)[] | undefi
 
 // lista de puertas reclamables. Cada chip: clic para reclamar la libre o liberar
 // la propia; las de otros quedan deshabilitadas. Solo jugadores (no espectadores).
+// F9d · estado CERRADA 🚫: el ANFITRIÓN cierra/abre puertas LIBRES con el botón
+// 🚫/🔓 del chip (por ahí no saldrán monstruos; una reclamada no ofrece cerrar y
+// una cerrada no se puede reclamar). Los demás la ven cerrada y deshabilitada.
 function renderDoors(map: MapDef | undefined): void {
   const box = $('lobby-doors-box');
   const list = $('lobby-doors');
@@ -169,24 +198,35 @@ function renderDoors(map: MapDef | undefined): void {
   }
   box.hidden = false;
   const players = store.lobby.players;
+  const closed = new Set(store.lobby.settings.closedDoors ?? []);
   const ownerByDoor = new Map<number, (typeof players)[number]>();
   for (const p of players) if (p.door !== undefined) ownerByDoor.set(p.door, p);
   list.innerHTML = map.paths
     .map((_, i) => {
       const owner = ownerByDoor.get(i);
       const mine = owner?.id === store.playerId;
-      const state = mine ? 'mine' : owner ? 'taken' : 'free';
+      const isClosed = closed.has(i) && !owner; // defensa: una reclamada jamás se pinta cerrada
+      const state = isClosed ? 'closed' : mine ? 'mine' : owner ? 'taken' : 'free';
       const dotStyle = owner
         ? `background:${owner.color};color:${owner.color}`
         : 'background:transparent;color:#6b7280;box-shadow:none;border:1.5px solid #6b7280';
-      const owned = owner ? `${escapeHtml(owner.name)}${mine ? ' (tú)' : ''}` : 'Libre';
-      const disabled = owner && !mine ? ' disabled' : '';
+      const owned = isClosed ? '🚫 Cerrada' : owner ? `${escapeHtml(owner.name)}${mine ? ' (tú)' : ''}` : 'Libre';
+      // cerrada: nadie la reclama (el server también lo rechaza); ajena: no se roba
+      const disabled = isClosed || (owner && !mine) ? ' disabled' : '';
+      // F9d · palanca del ANFITRIÓN: cerrar una libre / reabrir una cerrada.
+      // Nunca en puertas reclamadas (primero que el dueño la libere) ni en la
+      // última abierta (el server la reabriría igual: siempre queda ≥1).
+      const canClose = store.isHost && !owner && (isClosed || map.paths.length - closed.size > 1);
+      const toggle = canClose
+        ? `<button type="button" class="door-toggle" data-close="${i}" title="${isClosed ? 'Reabrir la puerta' : 'Cerrar la puerta (no saldrán monstruos)'}" aria-label="${isClosed ? 'Reabrir' : 'Cerrar'} puerta ${i + 1}">${isClosed ? '🔓' : '🚫'}</button>`
+        : '';
       return `<li>
         <button type="button" class="door-chip ${state}" data-door="${i}"${disabled}>
           <span class="player-dot" style="${dotStyle}"></span>
           <span class="door-num">Puerta ${i + 1}</span>
           <span class="door-owner">${owned}</span>
         </button>
+        ${toggle}
       </li>`;
     })
     .join('');
@@ -561,7 +601,17 @@ export function initLobby(): void {
 
   // F9b · reclamar/liberar puerta (delegación): clic en la propia la libera; clic
   // en una libre la reclama. Las de otros están deshabilitadas (no roban puerta).
+  // F9d · el botón 🚫/🔓 del anfitrión cierra/reabre la puerta: viaja como un
+  // ajuste de sala más (set_settings.closedDoors) y el server lo valida entero.
   $('lobby-doors').addEventListener('click', (e) => {
+    const closeBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-close]');
+    if (closeBtn && store.isHost) {
+      const door = Number(closeBtn.dataset.close);
+      const current = store.lobby.settings.closedDoors ?? [];
+      const next = current.includes(door) ? current.filter((d) => d !== door) : [...current, door];
+      sendSettings({ closedDoors: next });
+      return;
+    }
     const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-door]');
     if (!btn || btn.disabled) return;
     const door = Number(btn.dataset.door);
@@ -660,7 +710,7 @@ export function renderLobby(): void {
 
   const selectedMap = MAPS.find((m) => m.id === settings.mapId);
   const doorColors = doorColorsFor(selectedMap);
-  renderMapCards('lobby-maps', settings.mapId, !store.isHost, (id) => sendSettings({ mapId: id }), doorColors);
+  renderMapCards('lobby-maps', settings.mapId, !store.isHost, (id) => sendSettings({ mapId: id }), doorColors, settings.closedDoors);
   $('lobby-map-desc').textContent = mapDesc(settings.mapId);
   // F9b · lista de puertas reclamables (solo mapas multi-ruta; oculta si no)
   renderDoors(selectedMap);

@@ -49,6 +49,12 @@ import {
   classicWave,
   CRIT_MULT,
   DIFF_HP_MULT,
+  BLESSED_BOUNTY_MULT,
+  DOOR_DENSITY_UNIT_CAP,
+  doorDensityMult,
+  MULTI_DOOR_MIN,
+  openPathIndices,
+  sanitizeClosedDoors,
   ELITE_LEVEL_CAP_CLASSIC,
   ELITE_LEVEL_GOLD,
   ELITE_LEVEL_WOOD,
@@ -142,8 +148,9 @@ function mkEnemy(type: EnemyTypeId, over: Partial<EnemyState> = {}): EnemyState 
     spellImmune: def.spellImmune ?? false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0,
     invisible: false, detected: false, dmgBy: {},
     champion: false, adaptHits: [0, 0, 0, 0], // F9a (v19)
+    denseTune: 1, // F9d
     ...over,
-  };
+  } as EnemyState;
 }
 function mkTower(type: TowerTypeId, over: Partial<TowerState> = {}): TowerState {
   return {
@@ -747,6 +754,7 @@ console.log('— Regresión: las crías de spawnOnDeath sobreviven a un golpe de
     poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
     dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
     spellImmune: false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0, invisible: false, detected: false, dmgBy: {},
+    champion: false, adaptHits: [0, 0, 0, 0], denseTune: 1,
   };
   st.enemies.push(slime);
   const cannon: TowerState = {
@@ -789,6 +797,7 @@ console.log('— Estandarte: refuerza el daño de las torres cercanas (sin apila
       poisonSrc: 0, bountyMult: 1, elite: false, affixes: [], speedMult: 1, armorBonus: 0, regenBonus: 0,
       dodgeBonus: 0, slowResist: 0, radiusMult: 1, auraRadius: 0, auraHps: 0, deathSpawn: 0, laps: 0,
       spellImmune: false, stunTowerId: 0, lastWpIdx: 1, armorShredUntil: 0, invisible: false, detected: false, dmgBy: {},
+      champion: false, adaptHits: [0, 0, 0, 0], denseTune: 1,
     };
     st.enemies.push(enemy);
     const archer: TowerState = {
@@ -3697,6 +3706,324 @@ console.log('— F9a · Monstruos nuevos: aura de celeridad y presencia en el po
     const nuevos = ['gargoyle', 'harpy', 'stalker', 'runebrat', 'bannerman', 'knight', 'mammoth'].filter((t) => seen.has(t));
     assert(nuevos.length >= 6, `los monstruos nuevos entran al generador del endless (${nuevos.join(',')})`);
   }
+}
+
+// ==================== F9d · PUERTAS CERRABLES + DENSIDAD POR RUTA ABIERTA ====================
+
+console.log('— F9d · sanitizeSettings/sanitizeClosedDoors: normalización de puertas cerradas —');
+{
+  // solo mapas multi-puerta (≥ MULTI_DOOR_MIN rutas): en sendero se descarta todo
+  const s1 = sanitizeSettings({ mapId: 'sendero', mode: 'classic', difficulty: 'normal', closedDoors: [0] });
+  assert(s1.closedDoors === undefined, 'en un mapa de 1 ruta closedDoors se descarta');
+  const s2 = sanitizeSettings({ mapId: 'calzada', mode: 'classic', difficulty: 'normal', closedDoors: [0] });
+  assert(s2.closedDoors === undefined, `en un mapa de 2 rutas (< ${MULTI_DOOR_MIN}) también se descarta`);
+  // índices inválidos/duplicados/no enteros fuera; el resto queda ORDENADO (canónico)
+  const s3 = sanitizeSettings({
+    mapId: 'granconcilio', mode: 'classic', difficulty: 'normal',
+    closedDoors: [8, 1, 1, 4, 99, -3, 2.5, ('x' as unknown) as number],
+  });
+  assert(JSON.stringify(s3.closedDoors) === '[1,4,8]', `se filtra y ordena canónico ([1,4,8] ≠ ${JSON.stringify(s3.closedDoors)})`);
+  // cerrarlo TODO se normaliza: SIEMPRE queda al menos 1 abierta (la de índice más alto)
+  const s4 = sanitizeSettings({ mapId: 'granconcilio', mode: 'classic', difficulty: 'normal', closedDoors: [0, 1, 2, 3, 4, 5, 6, 7, 8] });
+  assert(JSON.stringify(s4.closedDoors) === '[0,1,2,3,4,5,6,7]', `cerrar las 9 deja 8 cerradas y la 9.ª abierta (${JSON.stringify(s4.closedDoors)})`);
+  // no-array / basura → sin cierres
+  assert(sanitizeSettings({ mapId: 'granconcilio', mode: 'classic', difficulty: 'normal', closedDoors: ('hola' as unknown) as number[] }).closedDoors === undefined, 'basura no-array → sin cierres');
+  // createGame renormaliza como defensa en profundidad (replays/guardados entran directo)
+  const g = createGame('granconcilio', 'classic', 'normal', 1, [{ id: 'p1', name: 'A', color: '#fff' }], false, [5, 5, -1, 20, 3]);
+  assert(JSON.stringify(g.closedDoors) === '[3,5]', `createGame normaliza closedDoors ([3,5] ≠ ${JSON.stringify(g.closedDoors)})`);
+  const gAll = createGame('granconcilio', 'classic', 'normal', 1, [{ id: 'p1', name: 'A', color: '#fff' }], false, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  assert(gAll.closedDoors.length === 8, 'createGame también garantiza ≥1 ruta abierta');
+  assert(JSON.stringify(openPathIndices(9, gAll.closedDoors)) === '[8]', 'openPathIndices deja la ruta 8 abierta');
+  const gSend = createGame('sendero', 'classic', 'normal', 1, [{ id: 'p1', name: 'A', color: '#fff' }], false, [0]);
+  assert(gSend.closedDoors.length === 0, 'createGame en mapa de 1 ruta: sin cierres');
+}
+
+console.log('— F9d · reparto de spawns SOLO por rutas abiertas, determinista —');
+{
+  // el generador reparte round-robin EXCLUSIVAMENTE entre las abiertas
+  const g1 = generateWave({ rng: 909 }, 20, 2, 9, 'endless', [0, 2, 5]);
+  const used = new Set(g1.entries.map((e) => e.pathIdx));
+  assert([...used].every((p) => p === 0 || p === 2 || p === 5), `todas las entradas van por rutas abiertas ({${[...used].join(',')}} ⊆ {0,2,5})`);
+  assert(used.size === 3, 'el round-robin cubre las 3 rutas abiertas');
+  // determinista: misma semilla → mismas entradas
+  const g2 = generateWave({ rng: 909 }, 20, 2, 9, 'endless', [0, 2, 5]);
+  assert(JSON.stringify(g1) === JSON.stringify(g2), 'el reparto por abiertas es DETERMINISTA');
+  // BYTE-IDÉNTICO con puertas todas abiertas en mapas chicos: pasar openPaths
+  // explícito equivale EXACTO a la firma vieja (clásico y endless, 1 y 2 rutas)
+  let identical = true;
+  for (let w = 1; w <= 36; w++) {
+    const a1 = JSON.stringify(generateWave({ rng: 4000 + w }, w, 2, 1, 'classic'));
+    const a2 = JSON.stringify(generateWave({ rng: 4000 + w }, w, 2, 1, 'classic', [0]));
+    const b1 = JSON.stringify(generateWave({ rng: 5000 + w }, w, 3, 2, 'endless'));
+    const b2 = JSON.stringify(generateWave({ rng: 5000 + w }, w, 3, 2, 'endless', [0, 1]));
+    if (a1 !== a2 || b1 !== b2) identical = false;
+  }
+  assert(identical, 'con 1-2 rutas abiertas el generador es BYTE-IDÉNTICO al previo (36 oleadas comparadas)');
+  // EXENCIONES: campeones y jefes no se densifican
+  const c9 = generateWave({ rng: 31 }, 16, 2, 9, 'classic', [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  const c3 = generateWave({ rng: 31 }, 16, 2, 9, 'classic', [0, 1, 2]);
+  assert(c9.champion && c9.entries.length === c3.entries.length, `los CAMPEONES no se densifican (${c9.entries.length} == ${c3.entries.length})`);
+  assert(c9.entries.every((e) => e.denseTune === undefined), 'las entradas de campeón no llevan denseTune');
+  const b9 = generateWave({ rng: 77 }, 36, 2, 9, 'classic', [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  const bossEntries = b9.entries.filter((e) => ENEMIES[e.type].boss);
+  const escortEntries = b9.entries.filter((e) => !ENEMIES[e.type].boss);
+  assert(bossEntries.length === 1 && bossEntries[0].denseTune === undefined, 'el JEFE no lleva denseTune (exento)');
+  assert(escortEntries.every((e) => e.denseTune !== undefined && e.denseTune < 1), 'la escolta del jefe SÍ se densifica y compensa');
+  // HORDA exenta de la densidad (su derrota es por CONTEO — HORDE_CAP): mismas
+  // unidades con 9 abiertas que con 3, solo cambia el reparto de rutas.
+  const h9 = generateWave({ rng: 88 }, 9, 2, 9, 'horde', [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  const h3 = generateWave({ rng: 88 }, 9, 2, 9, 'horde', [0, 1, 2]);
+  assert(h9.entries.length === h3.entries.length, `la HORDA no se densifica (${h9.entries.length} == ${h3.entries.length}: el aforo de saturación manda)`);
+  assert(h9.entries.every((e) => e.denseTune === undefined), 'las entradas de horda no llevan denseTune');
+  assert(new Set(h9.entries.map((e) => e.pathIdx)).size === 9, 'pero la horda SÍ reparte por las 9 abiertas');
+}
+
+console.log('— F9d · replays/guardados respetan las puertas cerradas —');
+{
+  const map = getMap('granconcilio');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const closed = [0, 1, 2, 3, 4, 5]; // abiertas 6,7,8 (R=3 ⇒ densidad ×1)
+  const mk = () => {
+    const st = createGame('granconcilio', 'classic', 'normal', 246810, [{ id: 'p1', name: 'A', color: '#fff' }], false, closed);
+    st.lives = 1e9;
+    st.maxLives = 1e9;
+    st.interludeLeft = 2;
+    return st;
+  };
+  const st = mk();
+  const seenPaths = new Set<number>();
+  for (let i = 0; i < TICK_RATE * 45; i++) {
+    stepGame(st, simCtx, []);
+    for (const e of st.enemies) seenPaths.add(e.pathIdx);
+  }
+  assert(seenPaths.size > 0 && [...seenPaths].every((p) => p >= 6), `en partida solo spawnean las rutas abiertas ({${[...seenPaths].join(',')}} ⊆ {6,7,8})`);
+  // identidad de replay: la reconstrucción CON closedDoors reproduce el estado exacto
+  const rdata: ReplayData = {
+    v: BALANCE_VERSION, seed: 246810, mapId: 'granconcilio', mode: 'classic', difficulty: 'normal',
+    players: [{ id: 'p1', name: 'A', color: '#fff' }], log: [], finalTick: st.tick, victory: false, wave: st.wave,
+    closedDoors: closed,
+  };
+  // ojo: el estado de la prueba arrancó con lives/interludeLeft trucados; rehacemos
+  // la partida real (sin trucos) para comparar contra su reconstrucción limpia
+  const real = createGame('granconcilio', 'classic', 'normal', 246810, [{ id: 'p1', name: 'A', color: '#fff' }], false, closed);
+  for (let i = 0; i < TICK_RATE * 60; i++) stepGame(real, simCtx, []);
+  const rebuilt = replayTo({ ...rdata, finalTick: real.tick, wave: real.wave }, real.tick);
+  assert(
+    rebuilt.rng === real.rng && rebuilt.enemies.length === real.enemies.length &&
+      JSON.stringify(rebuilt.enemies.map((e) => [e.id, e.pathIdx, Math.round(e.x * 100), Math.round(e.y * 100)])) ===
+        JSON.stringify(real.enemies.map((e) => [e.id, e.pathIdx, Math.round(e.x * 100), Math.round(e.y * 100)])),
+    `la reconstrucción con closedDoors es IDÉNTICA (rng ${rebuilt.rng} == ${real.rng}, ${rebuilt.enemies.length} enemigos)`,
+  );
+  // …y SIN closedDoors el reparto es OTRO (garantiza que el campo de veras manda)
+  const wrong = replayTo({ ...rdata, finalTick: real.tick, wave: real.wave, closedDoors: undefined }, real.tick);
+  assert(
+    wrong.enemies.some((e) => e.pathIdx < 6),
+    'sin closedDoors la reconstrucción reparte por TODAS las rutas (el campo es imprescindible)',
+  );
+  // validateSaveData: acepta la forma canónica y rechaza las adulteradas
+  const baseSave = {
+    kind: 'fortaleza-save', v: BALANCE_VERSION, seed: 1, mapId: 'granconcilio', mode: 'classic', difficulty: 'normal',
+    tick: 10, wave: 1, salt: 'ab12', players: [{ id: 'p1', name: 'A', color: '#fff' }],
+    slots: [{ id: 'p1', name: 'A', color: '#fff', tokenHash: '' }], log: [],
+  };
+  assert(validateSaveData({ ...baseSave, closedDoors: [0, 4] }).ok, 'validateSaveData acepta closedDoors canónico');
+  assert(!validateSaveData({ ...baseSave, closedDoors: [4, 0] }).ok, 'rechaza closedDoors desordenado (no canónico)');
+  assert(!validateSaveData({ ...baseSave, closedDoors: [0, 0, 4] }).ok, 'rechaza duplicados');
+  assert(!validateSaveData({ ...baseSave, closedDoors: [0, 99] }).ok, 'rechaza índices fuera de rango');
+  assert(!validateSaveData({ ...baseSave, closedDoors: [0, 1, 2, 3, 4, 5, 6, 7, 8] }).ok, 'rechaza cerrar TODAS las rutas');
+  assert(validateSaveData({ ...baseSave }).ok, 'sin closedDoors sigue siendo válido (guardados previos)');
+}
+
+console.log('— F9d · compensación exacta: hp/botín por unidad y suelo «mínimo 1» —');
+{
+  const map = getMap('granconcilio');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  // entrada densificada artesanal (tune 1/3): hp y botín comprimidos, crías incluidas
+  const st = createGame('granconcilio', 'endless', 'normal', 1357, [{ id: 'p1', name: 'A', color: '#fff' }]);
+  st.wave = 3;
+  st.waveState = 'active';
+  st.pendingWave = [];
+  st.spawnQueue = [
+    { type: 'larva', delay: 0, pathIdx: 0, denseTune: 1 / 3 },
+    { type: 'slime', delay: 2, pathIdx: 0, denseTune: 1 / 3 },
+  ];
+  st.spawnCooldown = 0;
+  st.lives = 1e9;
+  st.maxLives = 1e9;
+  stepGame(st, simCtx, []);
+  const larva = st.enemies.find((e) => e.type === 'larva')!;
+  const fullHp = Math.round(ENEMIES.larva.hp * waveHpMult(3, 'normal', 1));
+  assert(larva.maxHp === Math.max(1, Math.round(fullHp / 3)), `hp comprimido ÷3 (${larva.maxHp} de ${fullHp})`);
+  assert(Math.abs(larva.bountyMult - waveBountyMult(3, 'endless') / 3) < 1e-9, `botín comprimido ÷3 (bountyMult ${larva.bountyMult.toFixed(3)})`);
+  // compensación EXACTA contra la oleada base: max(1, round(pago)) − round(pago base)·tune
+  const larvaPay = ENEMIES.larva.bounty * larva.bountyMult;
+  const larvaComp = Math.max(1, Math.round(larvaPay)) - Math.round(larvaPay * 3) / 3;
+  assert(larvaPay < 0.5 && Math.abs(st.waveBonusComp - larvaComp) < 1e-9,
+    `el redondeo del botín acumula su desvío en waveBonusComp (${st.waveBonusComp.toFixed(3)} == ${larvaComp.toFixed(3)})`);
+  // el kill de la larva paga EXACTAMENTE 1 (mínimo), no 0
+  st.towers.push(mkTower('archer', { id: 9901, cx: Math.max(0, map.paths[0][0][0] - 1), cy: map.paths[0][0][1] + 1 }));
+  const goldBefore = st.players[0].gold;
+  for (let i = 0; i < TICK_RATE * 30 && st.enemies.some((e) => e.type === 'larva'); i++) stepGame(st, simCtx, []);
+  const larvaDead = !st.enemies.some((e) => e.type === 'larva');
+  assert(larvaDead && st.players[0].gold >= goldBefore + 1, `la baja densificada paga ≥1 de oro (${(st.players[0].gold - goldBefore).toFixed(1)})`);
+  // crías: el slime densificado pare slimelets TAMBIÉN comprimidos
+  for (let i = 0; i < TICK_RATE * 60 && !st.enemies.some((e) => e.type === 'slimelet'); i++) stepGame(st, simCtx, []);
+  const lets = st.enemies.filter((e) => e.type === 'slimelet');
+  const letFull = Math.round(ENEMIES.slimelet.hp * waveHpMult(3, 'normal', 1));
+  assert(lets.length > 0 && lets.every((l) => l.maxHp === Math.max(1, Math.round(letFull / 3)) && l.denseTune === 1 / 3),
+    `las crías heredan la compresión (${lets[0]?.maxHp} de ${letFull})`);
+  // y el bono de fin de oleada DESCUENTA la compensación acumulada
+  {
+    const st2 = createGame('sendero', 'classic', 'normal', 1358, [{ id: 'p1', name: 'A', color: '#fff' }]);
+    st2.wave = 3;
+    st2.waveState = 'active';
+    st2.pendingWave = [];
+    st2.spawnQueue = [];
+    st2.enemies = [];
+    st2.waveBonusComp = 7.4; // exceso simulado
+    const evs = stepGame(st2, makeSimContext(getMap('sendero'), makePlacementContext(getMap('sendero'))), []);
+    const we = evs.find((e) => e.e === 'wave_end') as Extract<GameEvent, { e: 'wave_end' }>;
+    const expected = Math.max(0, WAVE_BONUS_BASE + 3 * WAVE_BONUS_PER_WAVE - Math.round(7.4));
+    assert(we !== undefined && we.bonus === expected, `el bono descuenta la compensación (${we?.bonus} == ${expected})`);
+    assert(st2.waveBonusComp === 0, 'la compensación se consume al fin de oleada');
+  }
+}
+
+console.log('— F9d · densidad NEUTRA en presupuesto y oro (granconcilio R=9 vs R=3) —');
+// Corre SOLO los spawns de la oleada `w` (sin torres, vidas infinitas) y agrega
+// unidades / hp total / botín esperado (mismo redondeo que killEnemy, sin extras).
+function spawnWaveProbe(closedDoors: number[], w: number, seed: number): {
+  units: number; hp: number; gold: number; blessed: boolean; bonusComp: number; peak: number;
+} {
+  const map = getMap('granconcilio');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('granconcilio', 'classic', 'normal', seed, [
+    { id: 'p1', name: 'A', color: '#fff' },
+    { id: 'p2', name: 'B', color: '#000' },
+  ], false, closedDoors);
+  st.wave = w - 1;
+  st.waveState = 'interlude';
+  st.interludeLeft = 2; // 1 tick para generar (y leer la telegrafía) + 1 para arrancar
+  st.lives = 1e9;
+  st.maxLives = 1e9;
+  const seen = new Set<number>();
+  let units = 0;
+  let hp = 0;
+  let gold = 0;
+  let blessed = false;
+  let peak = 0;
+  let guard = 0;
+  // (cast: TS «recuerda» la asignación de arriba y no ve la mutación de stepGame)
+  while (((st.waveState as string) !== 'active' || st.spawnQueue.length > 0) && guard++ < TICK_RATE * 600) {
+    stepGame(st, simCtx, []);
+    if (st.waveState === 'interlude' && st.nextWaveBlessed) blessed = true;
+    if (st.enemies.length > peak) peak = st.enemies.length;
+    for (const e of st.enemies) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      units += 1;
+      hp += e.maxHp;
+      gold += Math.max(1, Math.round(ENEMIES[e.type].bounty * e.bountyMult));
+    }
+  }
+  return { units, hp, gold, blessed, bonusComp: st.waveBonusComp, peak };
+}
+{
+  let maxHpDev = 0;
+  let maxGoldDev = 0;
+  let worstHpWave = 0;
+  let worstGoldWave = 0;
+  const rows: string[] = [];
+  let sum3Hp = 0;
+  let sum9Hp = 0;
+  let sum3Gold = 0;
+  let sum9Gold = 0;
+  for (let w = 1; w <= 36; w++) {
+    const base = spawnWaveProbe([0, 1, 2, 3, 4, 5], w, 8600 + w); // R=3 ⇒ densidad ×1 (referencia)
+    const dense = spawnWaveProbe([], w, 8600 + w); // R=9 ⇒ densidad plena (con rampa)
+    // el oro efectivo de la oleada = botines pagados − compensación del bono.
+    // La bendición sale de OTRO punto del RNG en cada lado (consumo distinto):
+    // se normaliza su ×1.5 de botín para comparar manzanas con manzanas.
+    const bGoldRaw = base.gold - base.bonusComp;
+    const dGoldRaw = dense.gold - dense.bonusComp;
+    const bGold = base.blessed ? bGoldRaw / BLESSED_BOUNTY_MULT : bGoldRaw;
+    const dGold = dense.blessed ? dGoldRaw / BLESSED_BOUNTY_MULT : dGoldRaw;
+    const hpDev = Math.abs(dense.hp / base.hp - 1);
+    const goldDev = Math.abs(dGold / bGold - 1);
+    sum3Hp += base.hp;
+    sum9Hp += dense.hp;
+    sum3Gold += bGold;
+    sum9Gold += dGold;
+    if (hpDev > maxHpDev) {
+      maxHpDev = hpDev;
+      worstHpWave = w;
+    }
+    if (goldDev > maxGoldDev) {
+      maxGoldDev = goldDev;
+      worstGoldWave = w;
+    }
+    rows.push(
+      `w${String(w).padStart(2)} · uds ${String(base.units).padStart(3)}→${String(dense.units).padStart(3)} · ` +
+        `hp ${String(base.hp).padStart(6)}→${String(dense.hp).padStart(6)} (${((dense.hp / base.hp - 1) * 100).toFixed(1).padStart(5)}%) · ` +
+        `oro ${String(Math.round(bGold)).padStart(4)}→${String(Math.round(dGold)).padStart(4)} (${((dGold / bGold - 1) * 100).toFixed(1).padStart(5)}%)` +
+        `${dense.blessed !== base.blessed ? ' ⭐' : ''}`,
+    );
+  }
+  for (const r of rows) console.log(`   ${r}`);
+  console.log(
+    `   TOTAL 36 oleadas · hp ${sum3Hp}→${sum9Hp} (${((sum9Hp / sum3Hp - 1) * 100).toFixed(2)}%) · ` +
+      `oro ${Math.round(sum3Gold)}→${Math.round(sum9Gold)} (${((sum9Gold / sum3Gold - 1) * 100).toFixed(2)}%)`,
+  );
+  assert(maxHpDev <= 0.05, `presupuesto (hp) NEUTRO por oleada: peor desvío ${(maxHpDev * 100).toFixed(1)}% (w${worstHpWave}) ≤ 5%`);
+  assert(maxGoldDev <= 0.05, `oro NEUTRO por oleada: peor desvío ${(maxGoldDev * 100).toFixed(1)}% (w${worstGoldWave}) ≤ 5%`);
+  assert(Math.abs(sum9Hp / sum3Hp - 1) <= 0.02 && Math.abs(sum9Gold / sum3Gold - 1) <= 0.02, 'los TOTALES de la partida quedan a ±2%');
+}
+
+console.log('— F9d · muchedumbre pico y rendimiento (granconcilio 9 vs 4 abiertas, sin defensa) —');
+function crowdProbe(closedDoors: number[], wavesTarget: number): { peak: number; peakWave: number; ticks: number; ms: number } {
+  const map = getMap('granconcilio');
+  const simCtx = makeSimContext(map, makePlacementContext(map));
+  const st = createGame('granconcilio', 'classic', 'normal', 424242, [
+    { id: 'p1', name: 'A', color: '#fff' },
+    { id: 'p2', name: 'B', color: '#000' },
+  ], false, closedDoors);
+  st.lives = 1e9;
+  st.maxLives = 1e9;
+  let peak = 0;
+  let peakWave = 0;
+  let ticks = 0;
+  const t0 = performance.now();
+  while (!st.over && st.wave <= wavesTarget && ticks < TICK_RATE * 60 * 120) {
+    const cmds: PlayerCommand[] =
+      st.waveState === 'interlude' && st.interludeLeft > TICK_RATE * 2
+        ? [{ playerId: 'p1', cmd: { kind: 'call_wave' } }]
+        : [];
+    stepGame(st, simCtx, cmds);
+    ticks += 1;
+    if (st.enemies.length > peak) {
+      peak = st.enemies.length;
+      peakWave = st.wave;
+    }
+    if (st.wave >= wavesTarget && st.waveState === 'interlude') break;
+  }
+  return { peak, peakWave, ticks, ms: performance.now() - t0 };
+}
+{
+  const nine = crowdProbe([], 36);
+  const four = crowdProbe([0, 1, 2, 3, 4], 36); // 5 cerradas ⇒ 4 abiertas
+  console.log(
+    `   9 abiertas: pico ${nine.peak} enemigos vivos (w${nine.peakWave}) · ${nine.ticks} ticks en ${nine.ms.toFixed(0)}ms (${((nine.ticks / nine.ms) * 1000).toFixed(0)} t/s)`,
+  );
+  console.log(
+    `   4 abiertas: pico ${four.peak} enemigos vivos (w${four.peakWave}) · ${four.ticks} ticks en ${four.ms.toFixed(0)}ms (${((four.ticks / four.ms) * 1000).toFixed(0)} t/s)`,
+  );
+  assert(nine.peak <= DOOR_DENSITY_UNIT_CAP + 60, `el pico con 9 abiertas queda acotado (${nine.peak} ≤ ${DOOR_DENSITY_UNIT_CAP + 60})`);
+  assert(nine.ticks / nine.ms > 1, `la sim aguanta la muchedumbre (>1000 ticks/s reales: ${((nine.ticks / nine.ms) * 1000).toFixed(0)})`);
+  assert(doorDensityMult(9, 99) === 3 && doorDensityMult(4, 99) === 1.35 && doorDensityMult(3, 99) === 1 && doorDensityMult(1, 99) === 1,
+    'doorDensityMult: ×3 con 9 abiertas, ×1.35 con 4, ×1 con ≤3');
+  assert(doorDensityMult(9, 1) === 1.25 && doorDensityMult(9, 4) === 2 && doorDensityMult(9, 8) === 3,
+    'la RAMPA entra suave: ×1.25 en la o1, ×2 en la o4, plena desde la o8');
+  assert(sanitizeClosedDoors(9, [0, 1, 2, 3, 4]).length === 5, 'sanitizeClosedDoors directo (5 cerradas válidas)');
 }
 
 console.log('— Determinismo: misma semilla + mismos comandos → mismo estado —');

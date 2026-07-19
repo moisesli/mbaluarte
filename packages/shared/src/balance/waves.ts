@@ -11,6 +11,8 @@ import {
   CLASSIC_BOUNTY_COMP,
   CLASSIC_WAVES,
   DIFF_HP_MULT,
+  DOOR_DENSITY_UNIT_CAP,
+  doorDensityMult,
   ELITE_MIN_WAVE,
   ELITE_TWO_AFFIX_WAVE,
   ENDLESS_BOUNTY_CAP,
@@ -187,15 +189,24 @@ export function waveHasBoss(wave: number, mode: GameMode = 'endless'): boolean {
 // tamaño de la oleada — en una oleada de 4 tanques, un élite ×2.6 ya es un
 // mini-jefe; con la fórmula del generador (pensada para 15-20 unidades baratas)
 // salían oleadas-muro. Sin límite = comportamiento del generador de siempre.
+// `countMult` (F9d): en oleadas DENSIFICADAS los élites escalan ×densidad — su hp
+// va comprimido ×denseTune como el del resto, así count×mult · hp÷mult mantiene
+// el presupuesto élite ≈ igual al de la oleada base (neutralidad). Con 1 (todos
+// los mapas de 1-3 rutas) la fórmula es EXACTAMENTE la de siempre.
 function rollElites(
   state: RngState,
   wave: number,
   normal: EnemyTypeId[],
   maxElites = Infinity,
+  countMult = 1,
 ): Map<number, AffixId[]> {
   const eliteAffixes = new Map<number, AffixId[]>();
   if (wave >= ELITE_MIN_WAVE && normal.length > 0) {
-    const count = Math.min(normal.length, 1 + Math.floor((wave - ELITE_MIN_WAVE) / 3), maxElites);
+    const count = Math.min(
+      normal.length,
+      Math.round((1 + Math.floor((wave - ELITE_MIN_WAVE) / 3)) * countMult),
+      maxElites,
+    );
     const numAffixes = wave >= ELITE_TWO_AFFIX_WAVE ? 2 : 1;
     const chosen = new Set<number>();
     for (let n = 0; n < count; n++) {
@@ -225,12 +236,14 @@ function rollElites(
 
 // Ensambla las SpawnEntry finales a partir de la lista ordenada + flags de oleada.
 // Compartido por el generador y el calendario. Consume RNG solo para el jitter de
-// espaciado (determinista).
+// espaciado (determinista). `paths` (F9d): índices de ruta ABIERTOS por los que se
+// reparte la oleada en round-robin — con todas abiertas, paths[i % paths.length]
+// es EXACTAMENTE el `i % pathCount` de siempre (ni un tick cambia).
 function buildEntries(
   state: RngState,
   wave: number,
   ordered: EnemyTypeId[],
-  pathCount: number,
+  paths: number[],
   opts: {
     eliteAffixes: Map<number, AffixId[]>;
     immune: boolean;
@@ -242,23 +255,29 @@ function buildEntries(
     bossAffix: AffixId | null;
     hpTune?: number;
     gapOverride?: number; // F9a · espaciado fijo del calendario (sanadores/portaestandartes)
+    // F9d · oleada densificada: compensación por unidad (hp y botín ÷) y divisor
+    // del espaciado (÷mult: la oleada con ×mult unidades dura LO MISMO que la base
+    // — sin él, una partida en granconcilio tardaba el triple). Nunca en jefes.
+    denseTune?: number;
+    gapDiv?: number;
   },
 ): SpawnEntry[] {
   // Espaciado entre spawns: más denso en oleadas altas. Los campeones marchan
   // espaciados (1.2 s): son pocos y gordos — que se lean uno a uno.
   const baseGap = Math.max(0.28, 0.85 - wave * 0.018);
+  const gapDiv = opts.gapDiv ?? 1;
   return ordered.map((type, i) => {
     const isBoss = ENEMIES[type].boss ?? false;
     const gap = isBoss
       ? 1.5
       : opts.champion
         ? 1.2
-        : (opts.gapOverride ?? baseGap) * (0.75 + rand(state) * 0.5);
+        : ((opts.gapOverride ?? baseGap) / gapDiv) * (0.75 + rand(state) * 0.5);
     const affixes = opts.eliteAffixes.get(i);
     return {
       type,
       delay: Math.max(2, Math.round(gap * TICK_RATE)),
-      pathIdx: pathCount > 1 ? i % pathCount : 0,
+      pathIdx: paths.length > 1 ? paths[i % paths.length] : (paths[0] ?? 0),
       ...(affixes ? { elite: true, affixes } : {}),
       ...(opts.immune ? { immune: true } : {}),
       ...(opts.blessed && opts.blessedAffix ? { blessed: true, blessedAffix: opts.blessedAffix } : {}),
@@ -271,6 +290,8 @@ function buildEntries(
       ...(isBoss && opts.bossAffix ? { bossAffix: opts.bossAffix } : {}),
       // F9a · afinado del calendario clásico (toda la oleada)
       ...(opts.hpTune !== undefined && opts.hpTune !== 1 ? { hpTune: opts.hpTune } : {}),
+      // F9d · compensación de densidad: NUNCA en el jefe (exento por diseño)
+      ...(opts.denseTune !== undefined && opts.denseTune !== 1 && !isBoss ? { denseTune: opts.denseTune } : {}),
     };
   });
 }
@@ -298,24 +319,28 @@ function rollBossAffix(state: RngState, wave: number, hasBoss: boolean, mode: Ga
 // F9a (v19) · oleada del CALENDARIO CLÁSICO: una especie temática, cantidad fija
 // escalada por jugadores, con jefe/campeones/afinado según la tabla. Los élites y
 // la bendición siguen operando encima (son variantes de la MISMA especie, así que
-// el tema monoespecie se conserva).
+// el tema monoespecie se conserva). `openPaths` (F9d): rutas abiertas — la
+// cantidad escala ×doorDensityMult(R) con hp/botín comprimidos (neutro), los
+// CAMPEONES y el JEFE quedan exentos.
 function generateCalendarWave(
   state: RngState,
   cal: CalendarWave,
   wave: number,
   playerCount: number,
-  pathCount: number,
+  openPaths: number[],
 ): GeneratedWave {
   const scale = 1 + 0.3 * (playerCount - 1);
   const immune = isImmuneWave(wave);
   const invisible = isInvisibleWave(wave, 'classic');
+  const density = doorDensityMult(openPaths.length, wave);
 
   if (cal.champion) {
     // CAMPEONES 👑: pelotón sin escolta. La cantidad escala suave con los
     // jugadores (la vida ya escala ×1.4 por jugador extra en waveHpMult).
+    // F9d: EXENTOS de la densidad por ruta (ya son pocos a propósito).
     const count = Math.max(3, Math.min(6, Math.round(cal.count * (1 + 0.15 * (playerCount - 1)))));
     const ordered = Array.from({ length: count }, () => cal.type);
-    const entries = buildEntries(state, wave, ordered, pathCount, {
+    const entries = buildEntries(state, wave, ordered, openPaths, {
       eliteAffixes: new Map(), // los campeones no son élites: son su propio arquetipo
       immune,
       blessed: false,
@@ -342,13 +367,26 @@ function generateCalendarWave(
     };
   }
 
-  const count = Math.max(1, Math.round(cal.count * scale));
+  // F9d · densidad por ruta abierta: cantidad ×density (tope de unidades) y
+  // compensación denseTune = baseN/finalN con las cantidades REALES redondeadas
+  // (presupuesto y oro totales ≈iguales aunque el redondeo/tope muerda).
+  const baseCount = Math.max(1, Math.round(cal.count * scale));
+  const count = density > 1 ? Math.min(DOOR_DENSITY_UNIT_CAP, Math.max(1, Math.round(baseCount * density))) : baseCount;
+  const denseTune = count !== baseCount ? baseCount / count : 1;
   const normal: EnemyTypeId[] = Array.from({ length: count }, () => cal.type);
   const bosses: EnemyTypeId[] = cal.boss ? [cal.boss] : [];
   const ordered = [...normal, ...bosses];
 
-  // élites capados a ~1 por cada 5 unidades (mínimo 1): ver rollElites
-  const eliteAffixes = rollElites(state, wave, normal, Math.max(1, Math.floor(normal.length / 5)));
+  // élites capados a ~1 por cada 5 unidades BASE (mínimo 1): ver rollElites. F9d:
+  // ambos topes escalan ×densidad (los élites densificados llevan hp comprimido,
+  // así count×mult · hp÷mult deja su presupuesto ≈ igual al de la oleada base).
+  const eliteAffixes = rollElites(
+    state,
+    wave,
+    normal,
+    Math.round(Math.max(1, Math.floor(baseCount / 5)) * (count / baseCount)),
+    count / baseCount,
+  );
   const bossAffix = rollBossAffix(state, wave, bosses.length > 0, 'classic');
 
   // Oleada bendecida: mismo dado que el generador (no en inmunes ni jefes).
@@ -362,7 +400,7 @@ function generateCalendarWave(
     }
   }
 
-  const entries = buildEntries(state, wave, ordered, pathCount, {
+  const entries = buildEntries(state, wave, ordered, openPaths, {
     eliteAffixes,
     immune,
     blessed,
@@ -372,6 +410,8 @@ function generateCalendarWave(
     bossAffix,
     hpTune: cal.hpTune,
     gapOverride: cal.gap,
+    denseTune,
+    gapDiv: count / baseCount,
   });
   const { comp, flying } = summarize(ordered, cal.boss ?? null);
   return {
@@ -391,11 +431,13 @@ function generateCalendarWave(
 
 // F9a (v19) · oleada de CAMPEONES del generador (infinito/horda): especie elegida
 // por el RNG entre las elegibles, cantidad 3-6 creciendo con la profundidad.
+// F9d: EXENTA de la densidad por ruta (los campeones ya son pocos a propósito);
+// solo respeta el reparto por rutas ABIERTAS.
 function generateChampionWave(
   state: RngState,
   wave: number,
   playerCount: number,
-  pathCount: number,
+  openPaths: number[],
 ): GeneratedWave {
   const candidates = CHAMPION_SPECIES.filter((t) => ENEMIES[t].minWave <= wave);
   const type = candidates.length > 0 ? pick(state, candidates) : 'brute';
@@ -406,7 +448,7 @@ function generateChampionWave(
   const ordered = Array.from({ length: count }, () => type);
   const immune = isImmuneWave(wave); // nunca coincide por cadencia; defensa en profundidad
   const invisible = isInvisibleWave(wave); // ídem
-  const entries = buildEntries(state, wave, ordered, pathCount, {
+  const entries = buildEntries(state, wave, ordered, openPaths, {
     eliteAffixes: new Map(),
     immune,
     blessed: false,
@@ -431,24 +473,39 @@ function generateChampionWave(
   };
 }
 
+// F9d · índices de ruta ABIERTOS de un mapa de `pathCount` rutas dadas las
+// puertas cerradas (lista canónica de sanitizeClosedDoors). Defensa en
+// profundidad: si el resultado quedara vacío, se abren todas (la sim jamás debe
+// quedarse sin rutas por las que spawnear).
+export function openPathIndices(pathCount: number, closedDoors: number[]): number[] {
+  const open: number[] = [];
+  for (let i = 0; i < pathCount; i++) if (!closedDoors.includes(i)) open.push(i);
+  return open.length > 0 ? open : Array.from({ length: pathCount }, (_, i) => i);
+}
+
 // Genera la oleada `wave` para un mapa con `pathCount` caminos.
 // F9a (v19) · `mode` decide la fuente: CLÁSICO usa el calendario fijo de 36;
 // infinito/horda conservan el generador por presupuesto (+ rotación de campeones).
 // El parámetro es opcional (default endless) para no romper herramientas/llamadores.
+// F9d · `openPaths`: índices de ruta ABIERTOS (puertas cerrables). Los spawns se
+// reparten SOLO entre ellos y la densidad escala con su número (doorDensityMult).
+// Ausente = todas abiertas — con R ≤ 3 el resultado es BYTE-IDÉNTICO al previo.
 export function generateWave(
   state: RngState,
   wave: number,
   playerCount: number,
   pathCount: number,
   mode: GameMode = 'endless',
+  openPaths?: number[],
 ): GeneratedWave {
+  const paths = openPaths && openPaths.length > 0 ? openPaths : Array.from({ length: pathCount }, (_, i) => i);
   if (mode === 'classic') {
     const cal = classicWave(wave);
-    if (cal) return generateCalendarWave(state, cal, wave, playerCount, pathCount);
+    if (cal) return generateCalendarWave(state, cal, wave, playerCount, paths);
     // fuera del calendario (no debería ocurrir en clásico de 36): cae al generador
   }
   if (mode !== 'classic' && isChampionWave(wave, mode)) {
-    return generateChampionWave(state, wave, playerCount, pathCount);
+    return generateChampionWave(state, wave, playerCount, paths);
   }
 
   const picks: EnemyTypeId[] = [];
@@ -504,6 +561,27 @@ export function generateWave(
   // Ordenar: mezcla aleatoria pero con el jefe al final
   const normal = picks.filter((t) => !ENEMIES[t].boss);
   const bosses = picks.filter((t) => ENEMIES[t].boss);
+
+  // F9d · densidad por ruta abierta: la escolta/oleada normal se REPLICA hasta
+  // ×doorDensityMult(R) (tope de unidades), SIN consumir RNG (copias en
+  // round-robin de la lista base — la mezcla de después ya las dispersa), y cada
+  // unidad comprime hp/botín ×denseTune = baseN/finalN (presupuesto y oro ≈
+  // iguales). Los JEFES quedan exentos (ni cantidad ni vida). Con density = 1
+  // (todos los mapas de 1-3 rutas) este bloque no ejecuta NADA: byte-idéntico.
+  // HORDA EXENTA (hallazgo adversarial): su derrota es por CONTEO de vivos
+  // (HORDE_CAP), no por presupuesto — triplicar unidades (aunque pesen ⅓)
+  // triplicaría la presión sobre el aforo y rompería la neutralidad justo en su
+  // condición de derrota. La horda multi-puerta conserva el reparto por rutas
+  // ABIERTAS (las puertas cerradas funcionan igual), solo que sin densificar.
+  const density = mode === 'horde' ? 1 : doorDensityMult(paths.length, wave);
+  let denseTune = 1;
+  if (density > 1 && normal.length > 0) {
+    const baseN = normal.length;
+    const target = Math.min(DOOR_DENSITY_UNIT_CAP, Math.round(baseN * density));
+    for (let i = baseN; i < target; i++) normal.push(normal[i % baseN]);
+    denseTune = baseN / normal.length;
+  }
+
   for (let i = normal.length - 1; i > 0; i--) {
     const j = Math.floor(rand(state) * (i + 1));
     [normal[i], normal[j]] = [normal[j], normal[i]];
@@ -511,8 +589,9 @@ export function generateWave(
   const ordered = [...normal, ...bosses];
 
   // Élites: unos pocos enemigos normales suben de categoría con 1-2 afijos.
-  // Índices dentro de `normal` (los jefes nunca son élite).
-  const eliteAffixes = rollElites(state, wave, normal);
+  // Índices dentro de `normal` (los jefes nunca son élite). F9d: su número
+  // escala ×densidad real (hp comprimido ⇒ presupuesto élite ≈ igual).
+  const eliteAffixes = rollElites(state, wave, normal, Infinity, denseTune > 0 ? 1 / denseTune : 1);
 
   // Inmunidad mágica: oleadas múltiplos de 5 desde la 10. Todos los enemigos (y
   // élites) de esta oleada son inmunes a magia. Se decide DESPUÉS de las élites
@@ -542,7 +621,7 @@ export function generateWave(
   // en oleadas inmunes ni de jefe (lo garantiza isInvisibleWave).
   const invisible = isInvisibleWave(wave, mode);
 
-  const entries = buildEntries(state, wave, ordered, pathCount, {
+  const entries = buildEntries(state, wave, ordered, paths, {
     eliteAffixes,
     immune,
     blessed,
@@ -550,6 +629,8 @@ export function generateWave(
     invisible,
     champion: false,
     bossAffix,
+    denseTune,
+    gapDiv: denseTune > 0 ? 1 / denseTune : 1,
   });
 
   const { comp, flying } = summarize(ordered, bossType);

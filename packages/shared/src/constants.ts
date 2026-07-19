@@ -284,6 +284,66 @@ export const VITAL_LIVES_MIN = 25;
 // CERTEZA (nada esquiva) y el pico de burst que dispara ejecuciones porcentuales.
 export const CRIT_MULT = 1.75;
 
+// ---------- F9d · PUERTAS CERRABLES + DENSIDAD POR RUTA ABIERTA ----------
+// Nº mínimo de rutas para que un mapa tenga «puertas» (reclamo por color F9b y
+// cierre de puertas F9d). ÚNICA fuente de verdad: la comparten sanitizeSettings,
+// el RoomDO (claim_door/set_settings) y el lobby del cliente (screens.ts).
+export const MULTI_DOOR_MIN = 4;
+
+// Densidad por ruta ABIERTA (F9d, feedback directo: «hay muy pocos monstruos» en
+// El Gran Concilio — el calendario reparte el count entre 9 rutas y cada carril
+// queda desierto). Con R rutas abiertas la CANTIDAD de una oleada escala
+//   ×min(CAP, 1 + STEP·(R − BASE))   (R ≤ BASE ⇒ ×1: los 9 mapas de 1-3 rutas
+// quedan EXACTAMENTE como están — verificado tick a tick en simtest), y el HP y
+// el botín POR UNIDAD se comprimen ÷(la misma razón) para que el presupuesto y el
+// oro TOTALES por oleada queden ≈iguales (dificultad y economía NEUTRAS). La
+// elección STEP=0.35/BASE=3 hace mult ≈ R/3: cada carril abierto queda tan
+// poblado como el carril de un mapa de 3 rutas (concilio ×1.7, granconcilio ×3).
+// Campeones 👑 y JEFES quedan EXENTOS (un jefe es un jefe; los campeones ya son
+// pocos a propósito): ni su cantidad ni su vida se tocan. La HORDA también queda
+// EXENTA (solo hereda el reparto por rutas abiertas): su derrota es por CONTEO
+// de vivos (HORDE_CAP) y densificar el conteo rompería esa neutralidad.
+export const DOOR_DENSITY_BASE_ROUTES = 3;
+export const DOOR_DENSITY_STEP = 0.35;
+export const DOOR_DENSITY_CAP = 3;
+// RAMPA por oleada: la densidad plena entra progresivamente (×min(full, 1+0.25·w)
+// → full ×3 desde la oleada 8). PORQUÉ: las oleadas 1-9 del clásico son LECCIONES
+// calibradas para pocas unidades; triplicar la o1 en un mapa de 9 puertas convertía
+// el arranque en una avalancha injugable para equipos chicos (y el smoke de bots
+// en granconcilio moría en la o2 en vez de la ~o3 esperada). Con la rampa, el
+// early game conserva su curva y la marea crece hasta la densidad plena.
+export const DOOR_DENSITY_WAVE_RAMP = 0.25;
+// Tope duro de unidades no-jefe por oleada tras densificar (rendimiento: el
+// endless profundo con presupuesto alto ×3 llegaría a ~600 spawns por oleada).
+// La compensación de HP usa la razón REAL baseN/finalN, así que topar la cantidad
+// NO rompe la neutralidad del presupuesto (solo deja de crecer la muchedumbre).
+export const DOOR_DENSITY_UNIT_CAP = 260;
+
+// multiplicador de cantidad según rutas abiertas y oleada (helper de sim/pruebas)
+export function doorDensityMult(openRoutes: number, wave = 99): number {
+  if (openRoutes <= DOOR_DENSITY_BASE_ROUTES) return 1;
+  const full = Math.min(DOOR_DENSITY_CAP, 1 + DOOR_DENSITY_STEP * (openRoutes - DOOR_DENSITY_BASE_ROUTES));
+  return Math.min(full, 1 + DOOR_DENSITY_WAVE_RAMP * wave);
+}
+
+// Normaliza una lista de puertas cerradas para un mapa de `pathCount` rutas.
+// Fuente única (la usan sanitizeSettings, createGame y validateSaveData):
+//  · solo mapas multi-puerta (≥ MULTI_DOOR_MIN rutas) — el resto queda sin cierres;
+//  · índices enteros válidos, únicos y ORDENADOS (forma canónica, determinista);
+//  · SIEMPRE al menos 1 ruta abierta: si el cliente pide cerrarlo todo se
+//    recortan cierres por el FINAL (queda abierta la puerta de índice más alto).
+export function sanitizeClosedDoors(pathCount: number, closed: unknown): number[] {
+  if (pathCount < MULTI_DOOR_MIN || !Array.isArray(closed)) return [];
+  const seen = new Set<number>();
+  for (const d of closed) {
+    if (typeof d === 'number' && Number.isInteger(d) && d >= 0 && d < pathCount) seen.add(d);
+  }
+  const out = [...seen].sort((a, b) => a - b);
+  // nunca cerrar TODAS: recortar por el final hasta dejar al menos 1 abierta
+  while (out.length >= pathCount) out.pop();
+  return out;
+}
+
 // orden estable de los tipos de ataque (índice de los contadores del Adaptativo)
 export const ATTACK_TYPE_ORDER: AttackTypeId[] = ['fisico', 'perforante', 'asedio', 'magico'];
 

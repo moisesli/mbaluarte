@@ -15,7 +15,7 @@ import { AFFIX_ORDER, affixMask } from './balance/affixes.js';
 import { TOWER_ORDER } from './balance/towers.js';
 import { MAPS } from './balance/maps.js';
 import { boomCost, repairCost } from './sim/commands.js';
-import { BALANCE_VERSION, MAX_PLAYERS, TICK_RATE } from './constants.js';
+import { BALANCE_VERSION, MAX_PLAYERS, sanitizeClosedDoors, TICK_RATE } from './constants.js';
 
 // ---------- Lobby / sala ----------
 
@@ -32,6 +32,14 @@ export interface RoomSettings {
   // economía de bucle es otro animal). Opcional; sanitizeSettings lo normaliza
   // (por defecto OFF, y SIEMPRE OFF en horda). Las partidas turbo no puntúan récords.
   turbo?: boolean;
+  // F9d · PUERTAS CERRADAS (ajuste del ANFITRIÓN, solo en el lobby): índices de
+  // ruta por los que NO saldrán monstruos («si somos 4, cierro las otras»). Solo
+  // mapas multi-puerta (≥ MULTI_DOOR_MIN rutas); sanitizeClosedDoors lo normaliza
+  // (válidos, únicos, ordenados, SIEMPRE ≥1 abierta). El RoomDO además rechaza
+  // cerrar una puerta RECLAMADA y limpia los cierres al cambiar de mapa (como los
+  // reclamos). La sim reparte los spawns solo entre las abiertas y densifica la
+  // oleada según cuántas queden (dificultad neutra — ver constants.ts F9d).
+  closedDoors?: number[];
 }
 
 export interface LobbyPlayer {
@@ -62,7 +70,21 @@ export function sanitizeSettings(s: Partial<RoomSettings> | undefined): RoomSett
   // punto de aplicación coherente. Normalizarlo aquí es la fuente única de verdad:
   // la sala nunca guarda turbo en horda y el lobby/lista pública lo reflejan bien.
   const turbo = s?.turbo === true && mode !== 'horde';
-  return { mapId, mode, difficulty, public: s?.public === true, turbo };
+  // F9d · puertas cerradas: normalización estructural contra el mapa YA saneado
+  // (solo multi-puerta, índices válidos/únicos/ordenados, ≥1 abierta). La regla
+  // que exige estado de sala (no cerrar una RECLAMADA) vive en el RoomDO.
+  const closedDoors = sanitizeClosedDoors(
+    MAPS.find((m) => m.id === mapId)?.paths.length ?? 1,
+    s?.closedDoors,
+  );
+  return {
+    mapId,
+    mode,
+    difficulty,
+    public: s?.public === true,
+    turbo,
+    ...(closedDoors.length > 0 ? { closedDoors } : {}),
+  };
 }
 
 // issue #12 · info del lobby de una partida CARGADA (guardado). Viaja en
@@ -378,6 +400,10 @@ export interface GameInit {
   // ausente. Viaja aquí (no en el snapshot ni en la sim) para que el cliente pinte
   // el estandarte del color del dueño en el spawn de esa ruta durante la partida.
   players: { id: string; name: string; color: string; door?: number }[];
+  // F9d · puertas CERRADAS de la partida (índices de ruta; ausente = ninguna).
+  // Viaja aquí (fijo toda la partida — el reparto real vive en la sim) para que
+  // el renderer pinte el portal APAGADO con reja en las rutas sin monstruos.
+  closedDoors?: number[];
   youAre: string;
 }
 
@@ -454,6 +480,20 @@ export function validateSaveData(x: unknown): ValidateSaveResult {
   }
   if (typeof d.wave !== 'number' || !Number.isInteger(d.wave) || d.wave < 0) return bad('Guardado corrupto (oleada).');
   if (typeof d.salt !== 'string' || d.salt.length === 0 || d.salt.length > 128) return bad('Guardado corrupto (sal).');
+  // F9d · puertas cerradas (opcional): forma canónica EXACTA contra el mapa ya
+  // validado — sanitizeClosedDoors es la única fuente de verdad, así que un
+  // guardado legítimo siempre coincide consigo mismo saneado; cualquier
+  // adulteración (índices fuera de rango, duplicados, todo cerrado) se rechaza.
+  if (d.closedDoors !== undefined) {
+    const pathCount = MAPS.find((m) => m.id === d.mapId)?.paths.length ?? 1;
+    if (
+      !Array.isArray(d.closedDoors) ||
+      d.closedDoors.length > pathCount ||
+      JSON.stringify(sanitizeClosedDoors(pathCount, d.closedDoors)) !== JSON.stringify(d.closedDoors)
+    ) {
+      return bad('Guardado corrupto (puertas cerradas).');
+    }
+  }
   if (!Array.isArray(d.players) || d.players.length === 0 || d.players.length > MAX_PLAYERS) {
     return bad('Guardado corrupto (jugadores).');
   }

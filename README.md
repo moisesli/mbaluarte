@@ -1,167 +1,113 @@
 # 🏰 Fortaleza — Tower Defense Cooperativo
 
-Tower defense multijugador en tiempo real para jugar en familia. Servidor autoritativo,
-render en Canvas (cero React en el juego), salas con código de 4 letras, chat,
-reconexión automática y estadísticas de fin de partida.
+Tower defense multijugador en tiempo real, para jugar con amigos en el navegador o
+**dentro de Discord** (Activity). Servidor autoritativo en Cloudflare, render en Canvas
+(cero frameworks en el juego), salas con código de 4 letras, chat, reconexión automática,
+repeticiones, guardado de partida y tabla de récords global.
+
+**Jugar:** https://fortaleza-td.bezenti.com — o desde Discord: canal de voz → 🚀 actividades → Fortaleza TD
+(todo el canal cae automáticamente en la misma sala, con su nombre de Discord).
 
 ## Cómo funciona (arquitectura)
 
-- **`packages/shared`** — el corazón: tipos, protocolo, balance (torres/enemigos/oleadas/mapas)
-  y la **simulación completa**. Es TypeScript puro sin I/O: recibe estado + comandos y avanza un tick.
-- **`apps/server`** — Node + `ws`. Corre la simulación autoritativa a **15 ticks/s** por sala,
-  valida cada comando (nadie puede hacer trampa desde el cliente) y difunde snapshots compactos.
-  Ideal para un VPS.
-- **`apps/worker`** — el mismo juego para **Cloudflare Workers + Durable Objects**: cada sala es
-  un Durable Object que reutiliza *exactamente* la simulación de `packages/shared`. El Worker sirve
-  el cliente estático y enruta cada WebSocket a la sala por su código. Sin servidor que administrar.
-- **`apps/client`** — Vite + TypeScript vanilla. El juego se dibuja en un `<canvas>` interpolando
-  entre snapshots (el HUD es DOM normal). Partículas, audio procedural WebAudio y soporte táctil.
+- **`packages/shared`** — el corazón: tipos, protocolo, balance (torres/enemigos/oleadas/mapas/calendario)
+  y la **simulación completa, determinista** (enteros + RNG con seed; nada de `Math.random`/`Date`).
+  TypeScript puro sin I/O: recibe estado + comandos y avanza un tick. El determinismo es lo que hace
+  posibles las repeticiones, el guardado (seed + log de comandos) y la validación anti-trampas.
+- **`apps/worker`** — **Cloudflare Workers + Durable Objects** (único backend). Cada sala es un
+  Durable Object que corre la simulación autoritativa a 15 ticks/s, valida cada comando y ajuste de
+  sala **server-side** (nadie hace trampa desde el cliente: ni comandos, ni settings, ni guardados
+  adulterados) y difunde snapshots compactos. El Worker sirve además el cliente estático (SPA),
+  `/api/*` (récords, salas públicas, Discord OAuth) y enruta cada WebSocket a su sala por código.
+- **`apps/client`** — Vite + TypeScript vanilla. El juego se dibuja en `<canvas>` interpolando entre
+  snapshots (el HUD es DOM). Partículas, audio y **música procedural adaptativa** por WebAudio,
+  soporte táctil completo y modo espectador. El SDK de Discord se carga solo dentro de Discord
+  (chunk aparte).
 
-El cliente **nunca** envía estado, solo intenciones (`colocar torre en (x,y)`). Por eso no puede
-pasar lo del juego anterior: aunque haya 300 monstruos, el cliente solo pinta un canvas y el
-servidor solo manda ~15 mensajes/s. El cliente es agnóstico del backend: crea la sala conectándose
-a `/ws?create=1` (el backend asigna un código libre) y se une con `/ws?code=XXXX`.
+El cliente **nunca** envía estado, solo intenciones (`colocar torre en (x,y)`); el servidor re-valida
+todo. Crea sala con `/ws?create=1` (el backend asigna código) y se une con `/ws?code=XXXX`.
 
-## Contenido
+## Contenido (balance v19)
 
-- **8 torres** con 3 niveles y **2 especializaciones al máximo nivel** (16 ramas): p. ej. el Arquero
-  se vuelve *Ballesta Repetidora* (triple disparo) o *Arco Largo*; el Hielo, *Glaciar* o *Escarcha
-  Eterna* (aura que ralentiza sin disparar); el Francotirador, *Cañón de Riel* (remata malheridos);
-  la Mina, *Tesorería* o *Casa de Moneda* (reparte oro a todo el equipo). Las especializaciones se
-  ven claramente más poderosas (corona, brillo y efectos propios).
-- **12 enemigos**: goblins, corredores, brutos, murciélagos (¡voladores!), blindados, chamanes
-  que curan, larvas en enjambre, troles que regeneran, babosos que se dividen, espectros que
-  esquivan y el **Gólem Ancestral** (jefe cada 10 oleadas).
-- **Enemigos élite con afijos** (desde la oleada 4): más vida y recompensa, con 1-2 modificadores
-  visibles — veloz, coraza, regenerador, vampírico (cura a los cercanos), escurridizo, gélido
-  (resiste el hielo) y explosivo (suelta crías al morir). Cada oleada se juega distinta.
-- **7 mapas** en 5 temas (bosque, desierto, nieve, volcán y cueva de cristal): El Sendero,
-  Las Tenazas (¡dos caminos!), La Espiral, La Encrucijada (24×14, rutas que se cruzan),
-  El Volcán (26×15), El Gran Laberinto (28×16, gigante) y El Delta (¡tres entradas!).
-- Modos **Clásico** (20 oleadas) e **Infinito** (con tabla de récords), 3 dificultades,
-  y **velocidad x1/x2/x3** controlada por el anfitrión.
-- Co-op de hasta 8: vidas compartidas, oro individual, bonus por llamar la oleada antes,
-  pausa del anfitrión, chat y pantalla final con podio y MVP. Con la partida en curso
-  nadie nuevo puede entrar (la reconexión de los que ya jugaban sí funciona).
-- **Gráficos vectoriales procedurales** en canvas: torres con torretas que rotan y retroceden,
-  12 enemigos animados, partículas ambientales por tema (nieve, brasas…), estelas y screen shake.
-- **Pensado para el celular**: cámara con zoom (pellizco/rueda) y paneo (arrastrar), doble toque
-  para reencuadrar, colocación de torres en dos toques con confirmación, HUD adaptativo.
-- **Ping cooperativo**: mantén pulsado el mapa (o usa el botón 📍) para marcar un punto a tu equipo,
-  con el color de cada jugador — para coordinar sin escribir.
+- **14 torres** con 3 niveles, **especializaciones excluyentes** al máximo (el Arquero y el Estandarte
+  tienen 3 ramas; el resto 2), **Rango ★★** con identidades propias (shred de armadura, ejecución por
+  % de vida, crecimiento permanente…) y **Veteranía**: niveles 5→10 para torres en su cúspide, pagando
+  oro **y madera** (en Infinito/Horda el tope se abre — el pozo del oro tardío).
+- **11 fusiones curadas** estilo Element TD: dos torres especializadas y pegadas se funden en un arma
+  única (Gran Bertha, Ojo de Asedio, Tormenta de Riel…).
+- **Matriz de combate 4×4**: ataques físico/perforante/asedio/mágico contra armaduras
+  ligera/media/blindada/colosal — el mono-build muere; la cartera diversificada gana.
+- **26 especies de enemigos** (voladores, evasores, sanadores, spell-immunes, portaestandartes que
+  aceleran a los suyos, colosales…), **élites con afijos**, **campeones 👑** (pelotones de mini-jefes)
+  y **jefes con afijo con nombre** telegrafiado ("☠ Gólem Adaptativo") — el Adaptativo gana
+  resistencia al tipo de daño que más recibe.
+- **Clásico = calendario fijo de 36 oleadas** al estilo Green TD: cada oleada es una especie con su
+  contrajuego, aéreas/inmunes/campeones en niveles fijos y públicos (pestaña 📅 en la Guía), jefe-muro
+  en la 36. **Infinito** y **Horda** (bucle de saturación) con récords; **Turbo ⚡**, 3 dificultades y
+  velocidad ×1/×2/×3 del anfitrión. En Infinito/Horda se puede **reparar la fortaleza** (coste
+  escalado brutal).
+- **11 mapas** en 5 temas — de El Sendero (20×12) a **El Gran Concilio (52×60, 9 puertas)**:
+  transcripción fiel del mapa original de Green TD (geometría extraída del `.w3x`). En mapas
+  multi-puerta: **reclama tu puerta por color** (tu cámara nace ahí, tu portal gira con tu color),
+  el anfitrión puede **cerrar puertas** sin dueño (los monstruos salen solo por las abiertas) y la
+  **densidad escala por ruta abierta** con presupuesto neutro (más bichos, misma dificultad).
+- **Cámara**: encuadre cover sin bandas muertas, zoom/pan (rueda, pellizco, arrastre, **flechas**),
+  minimapa con **radar de fugas** (la puerta que fuga parpadea en rojo) y mapas gigantes con
+  `viewCap` — no ves el tablero entero: se juega navegando, como el Green TD original.
+- Co-op de hasta 8: vidas compartidas, oro individual con bono por llamar antes, mercado de madera,
+  tienda, ping cooperativo, espectadores que sugieren torres, expulsar/vetar, **continuar en otro
+  dispositivo**, guardar/cargar partida y **repeticiones** con seek.
+- **Rendimiento para máquinas débiles**: sprites de enemigos precacheados por especie (×3.5 medido) y
+  **modo ligero autoadaptativo** (baja calidad solo si el frame se sostiene lento; selector en Ajustes).
 
 ## Desarrollo
 
 ```bash
 pnpm install
-pnpm dev          # servidor en :3000 + Vite en :5173 (abre http://localhost:5173)
+pnpm dev          # worker con Durable Objects reales en :8787 + Vite en :5173
 ```
 
 ## Pruebas
 
 ```bash
-pnpm check        # typecheck de los 4 paquetes (shared, server, client, worker)
-pnpm simtest      # simula una partida completa con bots + verifica determinismo
-pnpm build && pnpm start &
-pnpm wstest       # test end-to-end real: 2 clientes WS, sala, torre, oleada, reconexión
-# el wstest sirve para ambos backends:
-#   Node:  pnpm build && pnpm start &  ;  pnpm wstest
-#   Worker: pnpm cf:dev &  ;  PORT=8787 pnpm wstest
+pnpm check        # typecheck (shared, client, worker)
+pnpm simtest      # partida completa con bots + determinismo + asserts de balance
+SIMTEST_SEED=123456846 pnpm simtest   # barrer otras seeds sin tocar código
+pnpm cf:dev &     # worker real en :8787…
+pnpm wstest       # …test end-to-end: salas, comandos, puertas, guardado, Discord
 ```
 
-## Producción (Node)
+## Deploy (Cloudflare Workers + Durable Objects)
+
+Sin servidor que administrar; corre en el edge. Configuración en
+[`apps/worker/wrangler.jsonc`](apps/worker/wrangler.jsonc) (dominio, KV de récords, Durable Objects).
 
 ```bash
-pnpm build        # cliente → apps/client/dist, servidor → apps/server/dist/server.js
-pnpm start        # todo en http://localhost:3000 (sirve el cliente y el WebSocket)
+npx wrangler login   # una vez
+pnpm cf:dev          # probar en local (:8787)
+pnpm cf:deploy       # compila el cliente y sube el Worker
 ```
 
-Variables: `PORT` (default 3000), `TD_DATA_DIR` (récords, default `./data`).
+Secretos opcionales (`npx wrangler secret put …` en `apps/worker/`, o el dashboard):
+- `DISCORD_CLIENT_SECRET` — habilita la **Discord Activity** (el Client ID público va en `vars`).
+- `ADMIN_TOKEN` — habilita `/api/admin/announce` (avisar a los conectados antes de un deploy).
 
-## Deploy en Cloudflare (Workers + Durable Objects)
-
-Sin servidor que administrar; corre en el edge global. Cada sala es un Durable Object.
-
-```bash
-# una vez: iniciar sesión en Cloudflare
-npx wrangler login
-
-# probar en local (arranca el Worker con Durable Objects reales en http://localhost:8787)
-pnpm cf:dev
-
-# desplegar (compila el cliente y sube el Worker)
-pnpm cf:deploy
-```
-
-La configuración está en [`apps/worker/wrangler.jsonc`](apps/worker/wrangler.jsonc). El Worker sirve el
-cliente (`apps/client/dist`) como SPA y maneja `/ws` y `/api/*`.
-
-**Récords (opcional).** El leaderboard usa KV; si no lo configuras, el juego funciona igual pero sin
-tabla de récords. Para activarlo:
-
-```bash
-npx wrangler kv namespace create SCORES   # copia el id que imprime
-```
-
-y descomenta el bloque `kv_namespaces` en `wrangler.jsonc` pegando ese id.
-
-**Notas / límites.** Mientras hay jugadores conectados a una sala, su Durable Object se mantiene en
-memoria (se factura por tiempo activo, no por hibernación); para partidas en familia es baratísimo.
-Si **todos** los jugadores se desconectan a la vez, la sala se libera (como si el servidor se
-reiniciara) — mientras quede al menos uno conectado, la reconexión de los demás funciona.
-
-## Deploy en Hetzner (Ubuntu/Debian)
-
-```bash
-# en el VPS (una vez): Node 22+ y pnpm
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
-corepack enable
-
-# subir el proyecto (o git clone) y compilar
-cd /opt && sudo git clone <tu-repo> fortaleza-td && cd fortaleza-td
-pnpm install && pnpm build
-```
-
-**systemd** — `/etc/systemd/system/fortaleza.service`:
-
-```ini
-[Unit]
-Description=Fortaleza TD
-After=network.target
-
-[Service]
-WorkingDirectory=/opt/fortaleza-td
-ExecStart=/usr/bin/node apps/server/dist/server.js
-Environment=PORT=3000
-Restart=always
-User=www-data
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl enable --now fortaleza
-```
-
-**Caddy** (TLS automático + WebSocket sin config extra) — `/etc/caddy/Caddyfile`:
-
-```
-fortaleza.tudominio.com {
-    reverse_proxy localhost:3000
-}
-```
-
-Con Nginx: recuerda `proxy_set_header Upgrade $http_upgrade;` y `Connection "upgrade";` en `/ws`.
+Mientras haya jugadores conectados la sala vive en memoria; si todos se van a la vez, se libera por
+inactividad. Las salas y récords sobreviven deploys normales; las partidas en curso se interrumpen
+(por eso el aviso previo — o pide a los jugadores guardar).
 
 ## Balancear el juego
 
-Todo el balance vive en `packages/shared/src/balance/` (torres, enemigos, oleadas, mapas).
-Cambiar números ahí no toca ninguna lógica. Después de tocar balance: `pnpm simtest` te dice
-si el juego sigue siendo ganable con bots tontos.
+Todo el balance vive en `packages/shared/src/balance/` (torres, fusiones, enemigos, oleadas, afijos,
+**calendar.ts** con el calendario clásico, mapas). Cambiar números ahí no toca lógica. Regla de oro:
+si el cambio altera el COMPORTAMIENTO de la sim, sube `BALANCE_VERSION` en `constants.ts` (invalida
+replays/guardados viejos a propósito). Después de tocar balance: `pnpm simtest` — el bot debe seguir
+ganando la seed de referencia.
 
 ## Añadir un mapa
 
-Agrega una entrada en `packages/shared/src/balance/maps.ts`: grilla, waypoints del camino
-(segmentos horizontales/verticales entre esquinas) y celdas decorativas. Aparece solo en los
-selectores.
+Entrada nueva en `packages/shared/src/balance/maps.ts`: grilla, rutas por waypoints (segmentos
+horizontales/verticales; multi-ruta soportado — los tramos compartidos deben ser celda-idénticos),
+decoración `blocked`, y opcionalmente `viewCap` (máximo de celdas visibles: el mapa se juega
+navegando). Con ≥4 rutas se activan solas las puertas (reclamo por color y cierre del anfitrión).
+Aparece automáticamente en los selectores; `pnpm simtest` valida la estructura.

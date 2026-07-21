@@ -1659,7 +1659,7 @@ console.log('— F4.2 · Trampa de púas: SOLO se coloca sobre el camino —');
   assert(placementError(map, ctx, [], off[0], off[1], 'archer') === null, 'una torre normal SÍ va fuera del camino');
 }
 
-console.log('— F9a · Barril explosivo NERFEADO: borra morralla (daño con TOPE); tanques/jefes sobreviven —');
+console.log('— v20 · Barril explosivo: elimina la infantería (normal/élite); campeones al TOPE y jefes con asedio —');
 {
   const map = getMap('sendero');
   const simCtx = makeSimContext(map, makePlacementContext(map));
@@ -1667,19 +1667,22 @@ console.log('— F9a · Barril explosivo NERFEADO: borra morralla (daño con TOP
   st.nextId = 8000; st.wave = 1; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
 
   // barril en una celda del camino (fila 2 de «sendero»); alrededor (o1, 1 jugador
-  // → tope = BOOM_HP_CAP_BASE × 1 = 100 de daño VERDADERO):
+  // → tope del mordisco a campeones = BOOM_HP_CAP_BASE × 1 = 100):
   //  - un bruto INMUNE tanque (100k hp) PISANDO la celda: dispara la detonación
-  //    pero SOBREVIVE con 100k−100 (el nerf F9a: ya no hay eliminación universal)
-  //  - un goblin (32 hp) DENTRO del radio → muere (morralla ≤ tope, aun inmune)
+  //    y MUERE (v20: la infantería —normal o élite— se elimina como el barril
+  //    original; el control del abuso vive en el precio ×1.3 de equipo)
+  //  - un bruto CAMPEÓN 👑 (100k) DENTRO del radio → SOBREVIVE con 100k−100
+  //  - un goblin (32 hp) DENTRO del radio → muere (aun inmune: daño verdadero)
   //  - un GÓLEM (jefe) DENTRO del radio → recibe 240−6 de armadura (sin cambios)
   //  - un goblin FUERA del radio (4 celdas) → intacto
   const barrel = mkTower('boom', { id: 3400, cx: 8, cy: 2, level: 1, spec: -1, charges: 1, invested: 90 });
   st.towers.push(barrel);
   const brute = mkEnemy('brute', { id: 2500, hp: 100000, maxHp: 100000, spellImmune: true, speedMult: 0, x: 8.5, y: 2.5, wpIdx: 1 });
+  const champ = mkEnemy('brute', { id: 2504, hp: 100000, maxHp: 100000, champion: true, speedMult: 0, x: 8.0, y: 2.5, wpIdx: 1 });
   const near = mkEnemy('goblin', { id: 2501, hp: 32, maxHp: 32, spellImmune: true, speedMult: 0, x: 10.0, y: 2.5, wpIdx: 1 });
   const boss = mkEnemy('golem', { id: 2503, hp: 100000, maxHp: 100000, speedMult: 0, x: 9.5, y: 2.5, wpIdx: 1 });
   const far = mkEnemy('goblin', { id: 2502, hp: 32, maxHp: 32, speedMult: 0, x: 12.5, y: 2.5, wpIdx: 1 });
-  st.enemies.push(brute, near, boss, far);
+  st.enemies.push(brute, champ, near, boss, far);
 
   let sawSplash = false;
   let sawPoof = false;
@@ -1688,11 +1691,12 @@ console.log('— F9a · Barril explosivo NERFEADO: borra morralla (daño con TOP
     if (ev.e === 'hit' && ev.kind === 'splash' && ev.r >= 1.5) sawSplash = true;
     if (ev.e === 'sell' && ev.refund === 0) sawPoof = true;
   }
+  assert(!st.enemies.some((e) => e.id === 2500), 'v20 · el tanque de infantería (élite incluido) MUERE con el barril, como el original');
   assert(
-    st.enemies.some((e) => e.id === 2500) && brute.hp === 100000 - 100,
-    `F9a · el tanque de 100k SOBREVIVE con daño al TOPE (perdió ${(100000 - brute.hp).toFixed(0)} == 100)`,
+    st.enemies.some((e) => e.id === 2504) && champ.hp === 100000 - 100,
+    `v20 · el CAMPEÓN 👑 sobrevive con mordisco al TOPE (perdió ${(100000 - champ.hp).toFixed(0)} == 100)`,
   );
-  assert(!st.enemies.some((e) => e.id === 2501), 'la morralla DENTRO del radio muere (aun inmune: daño verdadero ≤ tope)');
+  assert(!st.enemies.some((e) => e.id === 2501), 'la morralla DENTRO del radio muere (aun inmune: daño verdadero)');
   // jefe: NO se elimina — recibe el daño del barril como ASEDIO (matriz F5.1
   // ×1.0 vs colosal: neutro, los jefes son cosa del perforante): 240 − 6 de
   // armadura del Gólem = 234 (el número clásico, intacto).

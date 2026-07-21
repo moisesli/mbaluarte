@@ -397,5 +397,9 @@ export const PLAYER_COLORS = [
 // Gélida), nerf del Barril (coste de equipo ×1.3 + daño con tope), niveles 5→10
 // post-élite, Reparar Fortaleza (infinito/horda), Poder Vital y Estandarte del
 // Vencedor (CRÍTICO determinista + Certeza) — invalida guardados/replays de v18
-export const BALANCE_VERSION = 19;
+// v20: el Barril recupera la eliminación total de la infantería (normal y élite);
+// el control del abuso queda SOLO en el precio ×1.3 de equipo. Campeones 👑 al
+// mordisco con tope y jefes con su asedio clásico — decisión del usuario tras
+// probar el nerf v19 en producción.
+export const BALANCE_VERSION = 20;
 export const PROTOCOL_VERSION = 1;

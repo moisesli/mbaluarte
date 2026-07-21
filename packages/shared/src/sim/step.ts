@@ -1442,12 +1442,13 @@ function stepTraps(state: GameState, ctx: SimContext, events: GameEvent[]): void
         const bx = trap.cx + 0.5;
         const by = trap.cy + 0.5;
         const splash = lvl.splash ?? 1.5;
-        // F9a (v19) · NERF: el barril ya no ELIMINA todo no-jefe — hace daño
-        // VERDADERO porcentual con TOPE: min(vida MÁXIMA, BOOM_HP_CAP_BASE ×
-        // curva actual). Traducción: borra a la morralla (vida BASE ≤ 100, élites
-        // pequeños incluidos) pero los tanques, los élites gordos y los CAMPEONES
-        // sobreviven con un mordisco de ~100×curva. El tope escala con waveHpMult
-        // para que su ROL (limpia-morralla de pánico) sea constante toda la partida.
+        // v20 · el barril recupera su fantasía COMPLETA contra la infantería
+        // (decisión del usuario tras probar el nerf v19): ELIMINA a todo melee
+        // normal/élite — el control del abuso vive en el PRECIO (×1.3 compuesto
+        // por equipo), no en el daño. Solo la realeza resiste: los CAMPEONES 👑
+        // reciben un mordisco verdadero al tope (BOOM_HP_CAP_BASE × curva) y los
+        // JEFES su asedio clásico. El tope escala con waveHpMult para que el
+        // mordisco a campeones sea proporcional toda la partida.
         const boomCap = Math.round(
           BOOM_HP_CAP_BASE * waveHpMult(Math.max(1, state.wave), state.difficulty, connectedCount(state)),
         );
@@ -1459,12 +1460,15 @@ function stepTraps(state: GameState, ctx: SimContext, events: GameEvent[]): void
               // los JEFES no se eliminan: reciben el daño del barril (asedio, con
               // armadura — la matriz F5.1 aplica ×1.0 vs colosal, neutro a propósito)
               damageEnemy(state, ctx, e, lvl.damage, false, trap.id, events, 0, 0, 0, attackTypeOf(trap));
-            } else {
-              // Daño VERDADERO (perfora, attackType null — fuera de matriz y del
-              // afijo Adaptativo): 100% de la vida máxima… hasta el tope. La
-              // morralla muere aunque esté a tope; lo gordo pierde `boomCap`.
+            } else if (e.champion) {
+              // CAMPEÓN 👑: no se elimina — mordisco VERDADERO al tope (perfora,
+              // attackType null: fuera de matriz y del afijo Adaptativo).
               const dmg = Math.max(1, Math.min(Math.ceil(e.maxHp), boomCap));
               damageEnemy(state, ctx, e, dmg, true, trap.id, events, 0, 0, 0, null);
+            } else {
+              // infantería (normal o élite): eliminada — daño verdadero por el
+              // 100% de su vida máxima, como el barril original.
+              damageEnemy(state, ctx, e, Math.ceil(e.maxHp), true, trap.id, events, 0, 0, 0, null);
             }
           }
         }

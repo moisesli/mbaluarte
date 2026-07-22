@@ -122,6 +122,15 @@ const IDLE_CLOSE_MS = 30 * 60_000;
 const IDLE_WARN_MS = IDLE_CLOSE_MS - 2 * 60_000;
 const IDLE_CLOSE_CODE = 4001;
 
+// RESILIENCIA DEL BUCLE DE SIM: el tick corre dentro de un setInterval; una
+// excepción NO capturada del sim ahí reventaba el callback y podía tumbar el
+// Durable Object entero → TODOS perdían la conexión de golpe («la sala se cae de
+// la nada», intermitente). El tick ahora va en try/catch. Si un tick falla, se
+// registra con contexto (observabilidad → tail de Cloudflare) y se salta; si
+// fallan MAX_TICK_ERRORS SEGUIDOS el estado es irrecuperable y se aborta la
+// partida con gracia (todos al lobby) en vez de dejar la sala congelada o caída.
+const MAX_TICK_ERRORS = 4;
+
 // issue #12 · saneado de identidades venidas de un archivo de guardado (no
 // confiable): nombre acotado en longitud y sin caracteres de control; color
 // limitado a un patrón hex (evita inyección en style="..."). Igual criterio que
@@ -174,6 +183,9 @@ export class RoomDO {
   private kicked = new Set<string>();
   private paused = false;
   private speed = 1;
+  // fallos CONSECUTIVOS del tick de sim: se reinicia a 0 en cada tick sano; al
+  // llegar a MAX_TICK_ERRORS la partida se aborta con gracia (ver tick/abortGame)
+  private tickErrors = 0;
   // ---- grabación de la repetición (replay) de la partida en curso ----
   private replaySeed = 0;
   private replayInit: { mapId: string; mode: RoomSettings['mode']; difficulty: RoomSettings['difficulty']; turbo: boolean; closedDoors: number[]; players: { id: string; name: string; color: string }[] } | null = null;
@@ -962,28 +974,103 @@ export class RoomDO {
 
   private tick(): void {
     // el chequeo de inactividad corre también con la partida EN PAUSA (una pausa
-    // eterna con la pestaña abierta era justo el caso que facturaba sin fin)
-    this.checkIdle();
-    if (!this.game || !this.simCtx || this.paused) return;
-    const cmds = this.pendingCmds;
-    this.pendingCmds = [];
-    const wasOver = this.game.over !== null;
-    // grabar los comandos con el TICK DE SIM en que se aplican: a x2/x3 solo se
-    // aplican en el PRIMER stepGame de la ráfaga, así que todos llevan game.tick de
-    // ANTES de ese primer paso (los siguientes pasos van sin comandos).
-    const cmdTick = this.game.tick;
-    for (const c of cmds) this.replayLog.push({ t: cmdTick, kind: 'cmd', playerId: c.playerId, cmd: c.cmd });
-    const events = stepGame(this.game, this.simCtx, cmds);
-    for (let i = 1; i < this.speed && !this.game.over; i++) {
-      events.push(...stepGame(this.game, this.simCtx, []));
+    // eterna con la pestaña abierta era justo el caso que facturaba sin fin).
+    // Fuera del try de la sim: es su propia preocupación y NUNCA debe saltarse.
+    try {
+      this.checkIdle();
+    } catch (err) {
+      console.error('[room] checkIdle lanzó', err);
     }
-    this.broadcast({ type: 'tick', t: this.game.tick, snap: buildSnap(this.game), events });
+    if (!this.game || !this.simCtx || this.paused) return;
 
-    // latido del directorio durante la partida (throttle interno de 10 s):
-    // mantiene fresca la oleada que muestra la lista de salas públicas
-    this.reportPublic();
+    // TODA la simulación va en try/catch: sin esto, una excepción del sim en el
+    // setInterval tumbaba el Durable Object y desconectaba a toda la sala.
+    try {
+      const cmds = this.pendingCmds;
+      this.pendingCmds = [];
+      const wasOver = this.game.over !== null;
+      // grabar los comandos con el TICK DE SIM en que se aplican: a x2/x3 solo se
+      // aplican en el PRIMER stepGame de la ráfaga, así que todos llevan game.tick de
+      // ANTES de ese primer paso (los siguientes pasos van sin comandos).
+      const cmdTick = this.game.tick;
+      for (const c of cmds) this.replayLog.push({ t: cmdTick, kind: 'cmd', playerId: c.playerId, cmd: c.cmd });
+      const events = stepGame(this.game, this.simCtx, cmds);
+      for (let i = 1; i < this.speed && !this.game.over; i++) {
+        events.push(...stepGame(this.game, this.simCtx, []));
+      }
+      this.broadcast({ type: 'tick', t: this.game.tick, snap: buildSnap(this.game), events });
 
-    if (this.game.over && !wasOver) this.endGame();
+      // latido del directorio durante la partida (throttle interno de 10 s):
+      // mantiene fresca la oleada que muestra la lista de salas públicas
+      this.reportPublic();
+
+      if (this.game.over && !wasOver) this.endGame();
+      this.tickErrors = 0; // el tick salió limpio: se reinicia la racha de fallos
+    } catch (err) {
+      this.tickErrors++;
+      // registro con CONTEXTO para dar con la causa raíz desde el tail de
+      // Cloudflare (el bug es raro → necesitamos el estado exacto que lo dispara)
+      const g = this.game;
+      console.error(
+        `[room] EXCEPCIÓN en tick — mapa ${g?.mapId} modo ${g?.mode} oleada ${g?.wave} ` +
+          `tick ${g?.tick} enemigos ${g?.enemies.length} turbo ${g?.turbo} ` +
+          `puertas-cerradas [${g?.closedDoors.join(',')}] fallo ${this.tickErrors}/${MAX_TICK_ERRORS}`,
+        err,
+      );
+      // varios fallos seguidos = estado corrupto que volverá a lanzar cada tick:
+      // abortar con gracia (todos al lobby) en vez de dejar la sala congelada.
+      if (this.tickErrors >= MAX_TICK_ERRORS) this.abortGame();
+    }
+  }
+
+  // Aborta la partida por fallo irrecuperable del bucle de sim: detiene el bucle y
+  // devuelve a TODOS al lobby con un aviso, en vez de dejar la sala congelada o
+  // que la excepción tumbe el Durable Object. NO puntúa ni graba replay: el estado
+  // puede estar corrupto y volvería a lanzar. Todo defensivo (try por si el propio
+  // estado corrupto lanza al leerlo).
+  private abortGame(): void {
+    if (this.loop) clearInterval(this.loop);
+    this.loop = null;
+    this.paused = false;
+    this.tickErrors = 0;
+    // stats mínimos y válidos, leídos a la defensiva: si `this.game` está corrupto
+    // y lanza, caemos al esqueleto vacío. game_over lo entienden todos los clientes
+    // (viejos y nuevos), así que devuelve al lobby sin cambiar el protocolo.
+    let stats: EndStats;
+    try {
+      const g = this.game!;
+      stats = {
+        victory: false,
+        wave: g.wave,
+        totalWaves: g.totalWaves,
+        mapId: g.mapId,
+        mode: g.mode,
+        difficulty: g.difficulty,
+        players: g.players.map((p) => ({
+          id: p.id,
+          name: p.name,
+          color: p.color,
+          kills: p.stats.kills,
+          damage: Math.round(p.stats.damage),
+          goldEarned: Math.round(p.stats.goldEarned),
+          goldSpent: Math.round(p.stats.goldSpent),
+          towersBuilt: p.stats.towersBuilt,
+        })),
+      };
+    } catch {
+      stats = { victory: false, wave: this.finishedWave, totalWaves: 0, mapId: '', mode: 'classic', difficulty: 'normal', players: [] };
+    }
+    this.game = null;
+    this.simCtx = null;
+    try {
+      this.broadcast({ type: 'chat', from: '⚠️', color: '#ef5350', text: 'La partida sufrió un error y tuvo que detenerse. Vuelven al lobby.' });
+      this.broadcast({ type: 'game_over', stats });
+    } catch (e) {
+      console.error('[room] abortGame broadcast', e);
+    }
+    for (const p of this.players) p.ready = p.isHost;
+    this.promoteSpectators();
+    this.broadcastLobby();
   }
 
   // Construye la ReplayData de la partida que acaba de terminar. Pequeña: los

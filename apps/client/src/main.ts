@@ -17,6 +17,23 @@ import type { ReplayData } from '@td/shared';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
+// Anuncio grande de oleada en el centro de la pantalla.
+let waveAnnounceTimer: ReturnType<typeof setTimeout> | null = null;
+function showWaveAnnounce(wave: number): void {
+  const el = $('wave-announce');
+  if (!el) return;
+  if (waveAnnounceTimer) { clearTimeout(waveAnnounceTimer); waveAnnounceTimer = null; }
+  el.textContent = `🌊 OLEADA ${String(wave).padStart(2, '0')}`;
+  el.classList.remove('show');
+  // fuerza reflow para reiniciar la animación
+  void el.offsetWidth;
+  el.classList.add('show');
+  waveAnnounceTimer = setTimeout(() => {
+    el.classList.remove('show');
+    waveAnnounceTimer = null;
+  }, 2700);
+}
+
 // duración del vuelo VISUAL de la bala del francotirador (puro teatro; el daño en
 // el sim ya se aplicó al instante). CORTO a propósito: como el daño es instantáneo,
 // un vuelo largo hace que el enemigo pierda la vida (o muera y desaparezca) ANTES
@@ -201,6 +218,7 @@ function processEvents(events: GameEvent[]): void {
         waveGold = emptyWaveGold(); // arranca el desglose de la nueva oleada
         toast(`⚔️ ¡Oleada ${ev.wave}!`, 'info');
         sfx.wave();
+        showWaveAnnounce(ev.wave);
         break;
       case 'wave_end': {
         sfx.coin();

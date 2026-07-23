@@ -323,9 +323,10 @@ let surroundFar = '#0b0c12'; // tono "lejano": borde del decorado y fondo del ca
 const SURROUND_CELLS = 10; // celdas de marco decorativo alrededor del mapa
 
 // ---------- minimapa ----------
+// Desactivado: el recuadro estorbaba. Se reactiva cambiando miniOn a true.
 // recuadro en coordenadas de PANTALLA calculado en cada frame (o null si oculto)
 let miniRect: { x: number; y: number; w: number; h: number; s: number } | null = null;
-let miniOn = localStorage.getItem('td_minimap') !== '0'; // visible por defecto
+let miniOn = false; // desactivado
 
 export function isMinimapOn(): boolean {
   return miniOn;

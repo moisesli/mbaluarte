@@ -1641,13 +1641,10 @@ declare const __BUILD_VER__: string;
 declare const __BUILD_DATE__: string;
 
 // Muestra la versión de compilación en la esquina inferior izquierda.
-// Se llama una vez al arrancar el HUD.
 export function initVersion(): void {
   const el = $('hud-version');
   if (el) {
-    const ver = typeof __BUILD_VER__ !== 'undefined' ? __BUILD_VER__ : 'dev';
-    const date = typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '';
-    el.textContent = `${ver}${date ? ` · ${date}` : ''}`;
+    el.textContent = typeof __BUILD_VER__ !== 'undefined' ? __BUILD_VER__ : 'dev';
   }
 }
 

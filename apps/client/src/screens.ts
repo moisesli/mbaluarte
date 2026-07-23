@@ -256,10 +256,9 @@ function setSeg(id: string, value: string, disabled = false): void {
 // DENTRO de la sala (lobby); la VISIBILIDAD, en cambio, se decide en la portada.
 const homeSel: RoomSettings = { mapId: MAPS[0].id, mode: 'classic', difficulty: 'normal' };
 
-// Visibilidad elegida en la portada: SIN valor por defecto a propósito — crear
-// la sala exige decidir consciente si será 🔒 privada o 🌐 pública. El botón
-// «Crear sala» queda deshabilitado (con hint del porqué) hasta que se elige.
-let homeVisibility: 'private' | 'public' | null = null;
+// Visibilidad elegida en la portada: pública por defecto para que al entrar
+// de una se cree sala visible. El usuario puede cambiarla antes de crear.
+let homeVisibility: 'private' | 'public' | null = 'public';
 
 // ---------- pestañas del panel lateral (Salas · Récords · Repeticiones) ----------
 // Antes las tres secciones se apilaban siempre (mostraban/ocultaban según si
@@ -369,6 +368,9 @@ export function initHome(): void {
     setSeg('home-visibility', v);
     updateCreateState();
   });
+  // Pre-marcar "Pública" por defecto
+  setSeg('home-visibility', 'public');
+  updateCreateState();
   nameInput.addEventListener('input', updateCreateState);
   updateCreateState();
 

@@ -3502,11 +3502,11 @@ console.log('— F9a · Niveles 5→10: veteranía con oro+madera, tope clásico
   }
 }
 
-console.log('— F9a · Reparar fortaleza: solo infinito/horda, precio compuesto de equipo —');
+console.log('— Reparar fortaleza: todos los modos, vidas progresivas (3→5→7→10) —');
 {
   const map = getMap('sendero');
   const simCtx = makeSimContext(map, makePlacementContext(map));
-  // (a) endless: +1 vida, precio 500 → ×1.5 compuesto
+  // (a) endless: +3 vidas (1ª compra), +5 (2ª), +7 (3ª), +10 (4ª)
   {
     const st = createGame('sendero', 'endless', 'normal', 404040, [{ id: 'p1', name: 'A', color: '#fff' }]);
     st.wave = 5; st.waveState = 'active'; st.pendingWave = [];
@@ -3516,29 +3516,31 @@ console.log('— F9a · Reparar fortaleza: solo infinito/horda, precio compuesto
     st.players[0].gold = 5000;
     assert(repairCost(st) === REPAIR_COST_BASE, `precio inicial ${REPAIR_COST_BASE}`);
     stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'repair' } }]);
-    assert(st.lives === 21 && st.players[0].gold === 5000 - REPAIR_COST_BASE, `repara +1 vida cobrando ${REPAIR_COST_BASE}`);
+    assert(st.lives === 23 && st.players[0].gold === 5000 - REPAIR_COST_BASE, '1ª reparación: +3 vidas');
     const second = Math.round(REPAIR_COST_BASE * REPAIR_COST_STEP);
     assert(repairCost(st) === second, `la 2.ª reparación cuesta ${second} (×${REPAIR_COST_STEP} compuesto)`);
     stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'repair' } }]);
-    assert(st.lives === 22 && st.repairsBought === 2, 'la 2.ª compra también entra');
+    assert(st.lives === 28 && st.repairsBought === 2, '2ª reparación: +5 vidas (total 28)');
     assert(buildSnap(st).repairCost === Math.round(REPAIR_COST_BASE * REPAIR_COST_STEP * REPAIR_COST_STEP), 'el snapshot expone el precio vivo');
-    // Sin tope: se puede reparar incluso con vidas al máximo (se acumulan)
+    // Sin tope: reparar incluso con vidas al máximo
     st.lives = st.maxLives;
     st.players[0].gold = 99999;
     const evs = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'repair' } }]);
-    assert(st.lives === st.maxLives + 1, `reparar funciona incluso con vidas al tope (${st.maxLives} → ${st.lives})`);
-    assert(!evs.some((e) => e.e === 'reject'), 'no se rechaza: se acumula por encima del tope');
+    // 3ª compra = +7 vidas (REPAIR_LIVES[2])
+    assert(st.lives === st.maxLives + 7, `reparar funciona al tope (+7 vidas: ${st.maxLives} → ${st.lives})`);
+    assert(!evs.some((e) => e.e === 'reject'), 'sin rechazo: se acumula sin límite');
   }
-  // (b) clásico: JAMÁS (los récords y la carrera cerrada de 36 se protegen)
-  // Nota: lives sube según el número de oleada (wave 5 = +5 vidas).
+  // (b) clásico: ahora SÍ se permite reparar en todos los modos.
+  // Nota: la oleada también da +5 vidas por wave=5 escalado.
   {
     const st = createGame('sendero', 'classic', 'normal', 404041, [{ id: 'p1', name: 'A', color: '#fff' }]);
     st.wave = 5; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
     st.lives = 10;
     st.players[0].gold = 99999;
     const evs = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'repair' } }]);
-    assert(evs.some((e) => e.e === 'reject' && e.reason.includes('infinito')), 'en CLÁSICO reparar se rechaza');
-    assert(st.lives === 15 && st.repairsBought === 0, 'reparar se rechazó pero la oleada (w5) dio +5 vidas');
+    // reparación = +3 (1ª compra) + oleada w5 = +5 → total +8 → 18
+    assert(evs.some((e) => e.e === 'repair'), 'reparar en clásico ahora funciona');
+    assert(st.lives === 18 && st.repairsBought === 1, 'reparó +3 + oleada +5 = 18');
   }
   // (c) horda: +1 de AFORO de saturación (el equivalente coherente de +1 vida)
   {
@@ -3635,7 +3637,7 @@ console.log('— F9a · Poder Vital: +20% con ≥25 vidas; se apaga al fugar; re
     stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'repair' } }]);
     for (let i = 0; i < 10 && st.projectiles.length === 0; i++) stepGame(st, simCtx, []);
     const dmg = st.projectiles.find((p) => p.towerId === 9104)?.damage ?? 0;
-    assert(st.lives === VITAL_LIVES_MIN && dmg === Math.round(specDmg * 1.2), `REPARAR reenciende el Poder Vital (${dmg})`);
+    assert(st.lives === VITAL_LIVES_MIN + 2 && dmg === Math.round(specDmg * 1.2), `REPARAR (+3 vidas) reenciende el Poder Vital (${dmg})`);
   }
 }
 

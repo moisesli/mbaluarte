@@ -1589,7 +1589,7 @@ export function renderShop(): void {
   const snap = gs.latest;
   const grid = $('shop-grid');
   const mode = gs.init.mode;
-  const wantRepair = mode !== 'classic';
+  const wantRepair = true; // disponible en todos los modos
   const wantCount = SHOP_ITEMS.length + (wantRepair ? 1 : 0);
   if (grid.childElementCount !== wantCount) {
     const repairHtml = wantRepair
@@ -1597,8 +1597,8 @@ export function renderShop(): void {
         <span class="shop-icon">🏰</span>
         <span class="shop-info"><b>Reparar fortaleza</b><span class="shop-desc">${
           mode === 'horde'
-            ? 'Refuerza las murallas: +1 de AFORO de saturación (aguantáis un enemigo más a la vez). El precio sube ×1.35 con cada compra del equipo.'
-            : '+1 vida para el equipo (sin tope: se acumula por encima de 30). El precio sube ×1.35 con cada compra del equipo.'
+            ? 'Refuerza las murallas: +1 de AFORO de saturación. El precio sube ×1.25 con cada compra.'
+            : 'Compra vidas en lote: 3→5→7→10 (máx). El precio sube ×1.25 por compra del equipo.'
         }</span></span>
         <span class="shop-cost" data-repair-cost>🪙…</span>
       </button>`

@@ -267,13 +267,15 @@ export const ELITE_LEVEL_HASTE = 0.04; // +4% cadencia por nivel (compuesto)
 export const ELITE_LEVEL_CAP_CLASSIC = 6; // pasos máx en clásico (= nivel 10)
 export const ELITE_LEVEL_OPEN_STEP = 1.5; // endless/horda: coste compuesto tras el paso 6
 
-// ---------- F9a (v19) · REPARAR FORTALEZA (solo infinito/horda) ----------
-// Compra de EQUIPO en la 🛒 Tienda: +1 vida (infinito) o +1 de AFORO de saturación
-// (horda — su "vida" es el cupo de enemigos vivos, así que reforzar murallas =
-// aguantar un enemigo más). Coste inicial 200 escalando ×1.35 compuesto por compra.
-// Disponible para todos → los récords siguen justos. En clásico NO existe.
+// ---------- REPARAR FORTALEZA ----------
+// Compra en la 🛒 Tienda: +vidas progresivas (3→5→7→10 máx) para el equipo.
+// En horda: +1 de AFORO de saturación (su "vida" real). Coste inicial 200
+// escalando ×1.25 compuesto por compra del equipo. Disponible en todos los modos.
 export const REPAIR_COST_BASE = 200;
-export const REPAIR_COST_STEP = 1.35;
+export const REPAIR_COST_STEP = 1.25;
+// Vidas ganadas por compra según cuántas veces se ha reparado (índice).
+// Tope en 10: a partir de la 4ª compra siempre da 10 vidas.
+export const REPAIR_LIVES = [3, 5, 7, 10];
 
 // ---------- F9a (v19) · specs de identidad ----------
 // Poder Vital: +20% de daño mientras el EQUIPO conserve ≥25 vidas (de 30). El

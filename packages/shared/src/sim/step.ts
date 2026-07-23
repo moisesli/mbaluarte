@@ -1357,15 +1357,11 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
       p.stats.goldEarned += bonus;
     }
 
-    // Vidas por oleada: escalan con el número de oleada (oleada 1 = +1,
-    // oleada 2 = +2, etc.). Sin tope: se acumulan por encima de 30.
+    // Vidas por oleada: siempre +2 al completar cualquier oleada.
     // En horda las vidas son aforo de saturación, así que no aplica.
     if (state.mode !== 'horde') {
-      const livesGain = state.wave;
-      if (livesGain > 0) {
-        state.lives += livesGain;
-        events.push({ e: 'sys', msg: `❤️ Vidas restauradas: +${livesGain} (oleada ${state.wave})` });
-      }
+      state.lives += 2;
+      events.push({ e: 'sys', msg: `❤️ Vidas restauradas: +2 (oleada ${state.wave})` });
     }
     // ingresos de las minas (la Casa de Moneda reparte a todo el equipo)
     for (const tower of state.towers) {

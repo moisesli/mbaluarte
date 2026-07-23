@@ -2699,6 +2699,17 @@ body.q-lite *::after {
   z-index: 22;
 }
 
+/* versión en pantalla de inicio */
+.home-version {
+  display: block;
+  text-align: right;
+  font-size: 9px;
+  color: var(--h-muted);
+  opacity: 0.3;
+  margin-top: 6px;
+  padding-right: 2px;
+}
+
 /* móvil apaisado muy angosto: hasta Ping/Jugadores ceden el sitio al «⋯» (ya
    quedan también ahí dentro, ver #hamburger-menu en index.html) — la isla de
    acciones queda reducida a lo mínimo cuando el alto apenas deja sitio. */

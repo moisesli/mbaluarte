@@ -1,13 +1,14 @@
 import { defineConfig } from 'vite';
 import pkg from '../../package.json' with { type: 'json' };
 
-const BUILD_DATE = JSON.stringify(new Date().toISOString().slice(0, 19).replace('T', ' '));
-const BUILD_VER = JSON.stringify(`v${pkg.version}`);
+const now = new Date();
+const pad = (n: number) => String(n).padStart(2, '0');
+const ts = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+const BUILD_VER = JSON.stringify(`v${pkg.version} · ${ts}`);
 
 export default defineConfig({
   define: {
     __BUILD_VER__: BUILD_VER,
-    __BUILD_DATE__: BUILD_DATE,
   },
   server: {
     port: 5173,

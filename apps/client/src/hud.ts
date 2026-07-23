@@ -1636,15 +1636,20 @@ function syncShop(now: number): void {
   renderShop();
 }
 
-// Constantes de compilación inyectadas por Vite (vite.config.ts).
+// Constante de compilación inyectada por Vite (vite.config.ts).
 declare const __BUILD_VER__: string;
-declare const __BUILD_DATE__: string;
 
 // Muestra la versión de compilación en la esquina inferior izquierda.
+// También se llama desde el home.
 export function initVersion(): void {
   const el = $('hud-version');
   if (el) {
     el.textContent = typeof __BUILD_VER__ !== 'undefined' ? __BUILD_VER__ : 'dev';
+  }
+  // También en el home si existe
+  const homeEl = document.getElementById('home-version');
+  if (homeEl) {
+    homeEl.textContent = typeof __BUILD_VER__ !== 'undefined' ? __BUILD_VER__ : 'dev';
   }
 }
 

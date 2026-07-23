@@ -2688,6 +2688,18 @@ body.q-lite *::after {
 /* en pantalla completa el botón queda "presionado" y con acento */
 .btn-fullscreen.fs-active { background: var(--h-card-2); border-color: var(--h-accent); color: var(--h-accent-hi); }
 
+/* versión de compilación: esquina inferior izquierda, semi-transparente */
+.hud-version {
+  position: absolute;
+  left: 10px; bottom: 10px;
+  font-size: 11px;
+  color: var(--h-muted);
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 22;
+  font-variant-numeric: tabular-nums;
+}
+
 /* móvil apaisado muy angosto: hasta Ping/Jugadores ceden el sitio al «⋯» (ya
    quedan también ahí dentro, ver #hamburger-menu en index.html) — la isla de
    acciones queda reducida a lo mínimo cuando el alto apenas deja sitio. */

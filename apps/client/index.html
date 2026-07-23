@@ -269,9 +269,10 @@
           <button id="btn-ping" class="btn small ghost" title="Marcar un punto para tu equipo (ALT+clic, mantener pulsado el mapa, o arma este botón)" aria-label="Ping"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="10.2" r="2.9"/><path d="M12 21S5.2 13.8 5.2 9.4a6.8 6.8 0 0 1 13.6 0C18.8 13.8 12 21 12 21Z"/></svg><span class="blabel">Ping</span></button>
           <button id="btn-scoreboard" class="btn small ghost" title="Tabla de jugadores: oro, madera, daño y bajas de la partida" aria-haspopup="true" aria-expanded="false" aria-label="Jugadores"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20v-8.5M12 20V4M19 20v-6"/></svg><span class="blabel">Jugadores</span></button>
           <button id="btn-shop" class="btn small ghost" title="Tienda: items especiales (Sentry para revelar invisibles)" aria-haspopup="true" aria-expanded="false">🛒<span class="blabel">Tienda</span></button>
-          <span id="hud-lives-bottom" class="stat lives-bottom">❤️ 30</span>
           <button id="btn-guide" class="btn small ghost" title="Guía: enemigos, élites y fusiones">📖<span class="blabel">Guía</span></button>
+          <!-- Minimapa oculto temporalmente (estorba). Se reactiva si se necesita.
           <button id="btn-minimap" class="btn small ghost" title="Mostrar/ocultar el minimapa">🗺<span class="blabel">Minimapa</span></button>
+          -->
           <button id="btn-speed" class="btn small ghost" hidden>▶ x1</button>
           <button id="btn-pause" class="btn small ghost" hidden>⏸<span class="blabel">Pausa</span></button>
           <button id="btn-mute" class="btn small ghost" title="Silenciar todo (efectos y música)"><span id="mute-icon">🔊</span><span class="blabel">Sonido</span></button>
@@ -295,7 +296,9 @@
         <button id="hamburger-scoreboard" class="btn ghost" role="menuitem"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20v-8.5M12 20V4M19 20v-6"/></svg>Jugadores</button>
         <button id="hamburger-shop" class="btn ghost" role="menuitem"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.2 5h2.1l1.4 10.4A2 2 0 0 0 9.7 17h7.6a2 2 0 0 0 2-1.7L20.5 8H6.6"/><circle cx="10" cy="20.3" r="1.3"/><circle cx="17" cy="20.3" r="1.3"/></svg>Tienda</button>
         <button id="hamburger-guide" class="btn ghost" role="menuitem"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.3C10.3 4.8 7.6 4 3.7 4v14.8c3.9 0 6.6.8 8.3 2.3 1.7-1.5 4.4-2.3 8.3-2.3V4c-3.9 0-6.6.8-8.3 2.3Z"/><path d="M12 6.3v14.8"/></svg>Guía</button>
+        <!-- Minimapa oculto (ver btn-minimap)
         <button id="hamburger-minimap" class="btn ghost" role="menuitem"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4.2 3.5 6v13.8L9 18l6 2 5.5-1.8V4.4L15 6.2 9 4.2Z"/><path d="M9 4.2v13.8M15 6.2V20"/></svg>Minimapa</button>
+        -->
         <button id="hamburger-mute" class="btn ghost" role="menuitem"><span id="hamburger-mute-icon">🔊</span> Sonido</button>
         <button id="hamburger-settings" class="btn ghost" role="menuitem"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 4v2.4M12 17.6V20M20 12h-2.4M6.4 12H4M17.3 6.7l-1.7 1.7M8.4 15.6l-1.7 1.7M17.3 17.3l-1.7-1.7M8.4 8.4 6.7 6.7"/></svg>Ajustes</button>
       </div>
@@ -442,6 +445,9 @@
            teclado: la 'F' ya es Fijar objetivo en el keymap) -->
       <button id="btn-fullscreen" class="btn-fullscreen" title="Pantalla completa" aria-label="Pantalla completa"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 9V6.8a2.3 2.3 0 0 1 2.3-2.3H9M15 4.5h2.2a2.3 2.3 0 0 1 2.3 2.3V9M19.5 15v2.2a2.3 2.3 0 0 1-2.3 2.3H15M9 19.5H6.8a2.3 2.3 0 0 1-2.3-2.3V15"/></svg></button>
     </section>
+
+    <!-- Versión de compilación (esquina inferior izquierda) -->
+    <span id="hud-version" class="hud-version"></span>
 
     <div id="overlay-reconnect" class="overlay" hidden>
       <div class="overlay-card panel"><h2>📡 Reconectando…</h2></div>

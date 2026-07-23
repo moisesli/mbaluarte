@@ -275,14 +275,6 @@ export const ELITE_LEVEL_OPEN_STEP = 1.5; // endless/horda: coste compuesto tras
 export const REPAIR_COST_BASE = 200;
 export const REPAIR_COST_STEP = 1.35;
 
-// Vidas que se recuperan por oleada completada, según dificultad.
-// Es la recompensa por sobrevivir: fácil da más, difícil da menos pero ayuda.
-export const WAVE_LIVES_BONUS: Record<string, number> = {
-  easy: 5,
-  normal: 3,
-  hard: 3,
-};
-
 // ---------- F9a (v19) · specs de identidad ----------
 // Poder Vital: +20% de daño mientras el EQUIPO conserve ≥25 vidas (de 30). El
 // umbral alto crea el drama de "defended la racha"; reparar (item 7) lo reenciende.

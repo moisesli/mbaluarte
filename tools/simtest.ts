@@ -3530,8 +3530,7 @@ console.log('— F9a · Reparar fortaleza: solo infinito/horda, precio compuesto
     assert(!evs.some((e) => e.e === 'reject'), 'no se rechaza: se acumula por encima del tope');
   }
   // (b) clásico: JAMÁS (los récords y la carrera cerrada de 36 se protegen)
-  // Nota: lives sube +1 por WAVE_LIVES_BONUS (al completarse la oleada fantasma),
-  // así que verificamos que subió 1 en vez de 0.
+  // Nota: lives sube según el número de oleada (wave 5 = +5 vidas).
   {
     const st = createGame('sendero', 'classic', 'normal', 404041, [{ id: 'p1', name: 'A', color: '#fff' }]);
     st.wave = 5; st.waveState = 'active'; st.spawnQueue = []; st.pendingWave = [];
@@ -3539,7 +3538,7 @@ console.log('— F9a · Reparar fortaleza: solo infinito/horda, precio compuesto
     st.players[0].gold = 99999;
     const evs = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'repair' } }]);
     assert(evs.some((e) => e.e === 'reject' && e.reason.includes('infinito')), 'en CLÁSICO reparar se rechaza');
-    assert(st.lives === 13 && st.repairsBought === 0, 'reparar se rechazó pero la oleada dio +3 vidas');
+    assert(st.lives === 15 && st.repairsBought === 0, 'reparar se rechazó pero la oleada (w5) dio +5 vidas');
   }
   // (c) horda: +1 de AFORO de saturación (el equivalente coherente de +1 vida)
   {

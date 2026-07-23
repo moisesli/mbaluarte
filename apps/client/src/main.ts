@@ -5,7 +5,7 @@ import { pushFrame, roomPrevToken, saveName, saveRoomToken, seedRoomPrevToken, s
 import { activeTier, addPing, addShake, flashDanger, getQualityMode, initRenderer, isMinimapOn, resetRenderer, setQualityMode, toggleMinimap, towerFired, type QualityMode } from './renderer.js';
 import { initInput } from './input.js';
 import { initBestiary } from './bestiary.js';
-import { applySpectatorUI, buildTowerBar, hidePanel, initMarket, initScoreboard, initShop, onTick, toast, addChat, refreshPanel, syncSpeedButton, syncTowerBar, toggleSpectatorTowers } from './hud.js';
+import { applySpectatorUI, buildTowerBar, hidePanel, initMarket, initScoreboard, initShop, initVersion, onTick, toast, addChat, refreshPanel, syncSpeedButton, syncTowerBar, toggleSpectatorTowers } from './hud.js';
 import { hideEnd, homeError, initHome, initLobby, renderLobby, showEnd, switchScreen } from './screens.js';
 import { beam, bulletTrail, burst, clearParticles, floatText, fx, line, ring } from './particles.js';
 import { sfx, setMuted, setSfxVolume, setMusicVolume, unlockAudio } from './audio.js';
@@ -689,14 +689,14 @@ function wireHudButtons(): void {
   // espectador en móvil (issue #5): 🏗 muestra/esconde la barra de torres
   $('btn-towers-toggle').addEventListener('click', () => toggleSpectatorTowers());
 
-  // minimapa: mostrar/ocultar (persistido en localStorage vía el renderer)
-  const miniBtn = $('btn-minimap');
-  const syncMini = () => miniBtn.classList.toggle('off', !isMinimapOn());
-  syncMini();
-  miniBtn.addEventListener('click', () => {
-    toggleMinimap();
-    syncMini();
-  });
+  // minimapa DESACTIVADO (oculto temporalmente, comentado en index.html).
+  // const miniBtn = $('btn-minimap');
+  // const syncMini = () => miniBtn.classList.toggle('off', !isMinimapOn());
+  // syncMini();
+  // miniBtn.addEventListener('click', () => {
+  //   toggleMinimap();
+  //   syncMini();
+  // });
 
   const muteBtn = $('btn-mute');
   // solo se toca el ICONO (span #mute-icon): escribir textContent en el botón
@@ -803,7 +803,7 @@ function wireHudButtons(): void {
     ['hamburger-scoreboard', 'btn-scoreboard'],
     ['hamburger-shop', 'btn-shop'],
     ['hamburger-guide', 'btn-guide'],
-    ['hamburger-minimap', 'btn-minimap'],
+    // ['hamburger-minimap', 'btn-minimap'], // minimapa desactivado
     ['hamburger-mute', 'btn-mute'],
     ['hamburger-settings', 'btn-settings'],
   ];
@@ -991,6 +991,7 @@ initBestiary();
 initMarket();
 initScoreboard();
 initShop();
+initVersion();
 wireHudButtons();
 wireNet();
 // el reproductor de repeticiones reusa el MISMO pipeline de eventos que la red

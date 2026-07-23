@@ -20,7 +20,6 @@ import {
   rank2Cost,
   SELL_REFUND,
   SENTRY_DURATION_SEC,
-  START_LIVES,
   statsOf,
   TARGET_MODES,
   TICK_RATE,
@@ -1352,11 +1351,6 @@ export function onTick(snap: Snap): void {
     lives.hidden = false;
     lives.textContent = `❤️ ${snap.lives}`;
     lives.classList.toggle('danger', snap.lives <= 5);
-    const livesBottom = $('hud-lives-bottom');
-    if (livesBottom) {
-      livesBottom.textContent = `❤️ ${snap.lives}`;
-      livesBottom.classList.toggle('danger', snap.lives <= 5);
-    }
     aliveChip.classList.remove('warn', 'danger');
     // enemigos vivos durante la oleada
     if (snap.active && snap.enemies.length > 0) {
@@ -1640,6 +1634,21 @@ function syncShop(now: number): void {
   if (now - lastShopSync < 250) return;
   lastShopSync = now;
   renderShop();
+}
+
+// Constantes de compilación inyectadas por Vite (vite.config.ts).
+declare const __BUILD_VER__: string;
+declare const __BUILD_DATE__: string;
+
+// Muestra la versión de compilación en la esquina inferior izquierda.
+// Se llama una vez al arrancar el HUD.
+export function initVersion(): void {
+  const el = $('hud-version');
+  if (el) {
+    const ver = typeof __BUILD_VER__ !== 'undefined' ? __BUILD_VER__ : 'dev';
+    const date = typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '';
+    el.textContent = `${ver}${date ? ` · ${date}` : ''}`;
+  }
 }
 
 // Cablea la tienda: 🛒 la abre/cierra; ✕ o un toque fuera la cierran; comprar un

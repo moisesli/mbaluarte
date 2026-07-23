@@ -1352,6 +1352,11 @@ export function onTick(snap: Snap): void {
     lives.hidden = false;
     lives.textContent = `❤️ ${snap.lives}`;
     lives.classList.toggle('danger', snap.lives <= 5);
+    const livesBottom = $('hud-lives-bottom');
+    if (livesBottom) {
+      livesBottom.textContent = `❤️ ${snap.lives}`;
+      livesBottom.classList.toggle('danger', snap.lives <= 5);
+    }
     aliveChip.classList.remove('warn', 'danger');
     // enemigos vivos durante la oleada
     if (snap.active && snap.enemies.length > 0) {
@@ -1598,8 +1603,8 @@ export function renderShop(): void {
         <span class="shop-icon">🏰</span>
         <span class="shop-info"><b>Reparar fortaleza</b><span class="shop-desc">${
           mode === 'horde'
-            ? 'Refuerza las murallas: +1 de AFORO de saturación (aguantáis un enemigo más a la vez). El precio sube ×1.5 con cada compra del equipo.'
-            : '+1 vida para el equipo. El precio sube ×1.5 con cada compra del equipo. Reencender el Poder Vital puede valer cada moneda.'
+            ? 'Refuerza las murallas: +1 de AFORO de saturación (aguantáis un enemigo más a la vez). El precio sube ×1.35 con cada compra del equipo.'
+            : '+1 vida para el equipo (sin tope: se acumula por encima de 30). El precio sube ×1.35 con cada compra del equipo.'
         }</span></span>
         <span class="shop-cost" data-repair-cost>🪙…</span>
       </button>`
@@ -1620,14 +1625,13 @@ export function renderShop(): void {
     el.classList.toggle('poor', gold < TOWERS[type].levels[0].cost);
     el.classList.toggle('selected', gs.selection?.kind === 'placing' && gs.selection.towerType === type);
   }
-  // F9a · reparación: precio vivo del snapshot + estados (sin oro / vidas al máximo)
+  // reparación: precio vivo del snapshot + estado sin oro
   const repairBtn = grid.querySelector<HTMLButtonElement>('[data-action="repair"]');
   if (repairBtn && snap) {
     const cost = snap.repairCost;
-    const full = mode === 'endless' && snap.lives >= START_LIVES;
     const costEl = repairBtn.querySelector<HTMLElement>('[data-repair-cost]');
-    if (costEl) costEl.textContent = full ? 'intacta' : `🪙${cost}`;
-    repairBtn.classList.toggle('poor', full || gold < cost);
+    if (costEl) costEl.textContent = `🪙${cost}`;
+    repairBtn.classList.toggle('poor', gold < cost);
   }
 }
 

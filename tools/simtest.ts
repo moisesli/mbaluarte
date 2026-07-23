@@ -3522,11 +3522,12 @@ console.log('— F9a · Reparar fortaleza: solo infinito/horda, precio compuesto
     stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'repair' } }]);
     assert(st.lives === 22 && st.repairsBought === 2, 'la 2.ª compra también entra');
     assert(buildSnap(st).repairCost === Math.round(REPAIR_COST_BASE * REPAIR_COST_STEP * REPAIR_COST_STEP), 'el snapshot expone el precio vivo');
-    // vidas al máximo → rechazo (no se puede "acumular" por encima del tope)
+    // Sin tope: se puede reparar incluso con vidas al máximo (se acumulan)
     st.lives = st.maxLives;
     st.players[0].gold = 99999;
     const evs = stepGame(st, simCtx, [{ playerId: 'p1', cmd: { kind: 'repair' } }]);
-    assert(evs.some((e) => e.e === 'reject' && e.reason.includes('intacta')), 'con la fortaleza intacta se rechaza');
+    assert(st.lives === st.maxLives + 1, `reparar funciona incluso con vidas al tope (${st.maxLives} → ${st.lives})`);
+    assert(!evs.some((e) => e.e === 'reject'), 'no se rechaza: se acumula por encima del tope');
   }
   // (b) clásico: JAMÁS (los récords y la carrera cerrada de 36 se protegen)
   // Nota: lives sube +1 por WAVE_LIVES_BONUS (al completarse la oleada fantasma),

@@ -490,19 +490,13 @@ export function applyCommands(
         break;
       }
 
-      // F9a (v19) · REPARAR FORTALEZA — SOLO infinito/horda (el clásico de 36 es
+      // REPARAR FORTALEZA — SOLO infinito/horda (el clásico de 36 es
       // una carrera cerrada: comprar vidas lo trivializaría). En infinito: +1 vida
-      // (tope maxLives). En horda: +1 de AFORO de saturación (su "vida" real).
-      // El precio escala ×1.5 compuesto POR EQUIPO y lo calcula el server del
-      // estado — el comando no lleva precio que falsificar. Disponible para todos
-      // los jugadores → los récords siguen comparables.
+      // SIN tope (se puede acumular por encima de 30). En horda: +1 de AFORO de
+      // saturación (su "vida" real). El precio escala ×1.35 compuesto POR EQUIPO.
       case 'repair': {
         if (state.mode === 'classic') {
           reject(events, playerId, 'Reparar la fortaleza solo existe en infinito y horda');
-          break;
-        }
-        if (state.mode === 'endless' && state.lives >= state.maxLives) {
-          reject(events, playerId, 'La fortaleza está intacta');
           break;
         }
         const cost = repairCost(state);
@@ -515,7 +509,7 @@ export function applyCommands(
         state.repairsBought += 1;
         let lives: number;
         if (state.mode === 'endless') {
-          state.lives = Math.min(state.maxLives, state.lives + 1);
+          state.lives += 1;
           lives = state.lives;
         } else {
           // horda: el aforo efectivo = HORDE_CAP + repairsBought (lo lee stepEnemies);

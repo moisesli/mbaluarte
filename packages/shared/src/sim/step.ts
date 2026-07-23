@@ -1359,11 +1359,12 @@ function stepWaves(state: GameState, ctx: SimContext, events: GameEvent[]): void
     }
 
     // Vidas por oleada completada: recompensa según dificultad.
-    // En horda las vidas son aforo de saturación, así que no aplica.
+    // Sin tope: se acumulan por encima de 30. En horda las vidas son aforo
+    // de saturación, así que no aplica.
     if (state.mode !== 'horde') {
       const livesGain = WAVE_LIVES_BONUS[state.difficulty] ?? 1;
       if (livesGain > 0) {
-        state.lives = Math.min(state.maxLives, state.lives + livesGain);
+        state.lives += livesGain;
         events.push({ e: 'sys', msg: `❤️ Vidas restauradas: +${livesGain} (oleada ${state.wave})` });
       }
     }

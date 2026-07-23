@@ -216,7 +216,6 @@ function processEvents(events: GameEvent[]): void {
         break;
       case 'wave_start':
         waveGold = emptyWaveGold(); // arranca el desglose de la nueva oleada
-        toast(`⚔️ ¡Oleada ${ev.wave}!`, 'info');
         sfx.wave();
         showWaveAnnounce(ev.wave);
         break;
